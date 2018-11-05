@@ -111,6 +111,9 @@ if (CZL_BLOCK_BEGIN == pc->flag) \
 else if (CZL_LOGIC_JUMP == pc->flag) \
     pc = pc->msg.bp.pc;
 
+//判断变量是否是对象
+#define CZL_IS_OBJ(var) (var->type >= CZL_STRING && var->type <= CZL_LIST)
+
 //与、或运算检查跳跃: and or operator check jump
 #define CZL_AO_CJ(gp, lo, pc) \
 if (CZL_EIT(lo)) { \
@@ -131,22 +134,30 @@ else { \
 } \
 ++pc;
 
+//执行三目运算符指令: run three opt
+#define CZL_RTO(lo, pc) \
+pc += (CZL_EIT(lo) ? 1 : pc->rt);
+
+//三目运算符结果搬移: three opt res move
+#define CZL_TORM(gp, res, pc, lo) \
+if (res) { \
+    CZL_SLB_CF(gp, res); \
+    *res = *lo; \
+    if (CZL_ARRBUF_VAR == lo->quality) \
+        lo->quality = CZL_DYNAMIC_VAR; \
+    else if (CZL_FUNRET_VAR == lo->quality) \
+        lo->type = CZL_INT; \
+} \
+pc += pc->rt;
+
 //检查操作数尾: check opr tail
 #define CZL_COT(gp, lo, pc) \
 switch (pc->lt) \
 { \
 case CZL_OPERAND: ++pc; break; \
 case CZL_CONDITION: CZL_AO_CJ(gp, lo, pc); break; \
-case CZL_THREE_OPT: pc += (CZL_EIT(lo) ? 1 : pc->rt); break; \
-default: \
-    if (pc->lo) { \
-        CZL_SLB_CF(gp, pc->lo); \
-        *pc->lo = *lo; \
-        if (CZL_FUNRET_VAR == lo->quality) \
-            lo->type = CZL_INT; \
-    } \
-    pc += pc->rt; \
-    break; \
+case CZL_THREE_OPT: CZL_RTO(lo, pc); break; \
+default: CZL_TORM(gp, pc->lo, pc, lo); break; \
 }
 
 //获取操作数: get opr res
@@ -296,22 +307,6 @@ if (CZL_STR_ELE == lo->quality) \
 ++pc; \
 CZL_GNO(pc);
 
-//执行三目运算符指令: run three opt
-#define CZL_RTO(lo, pc) \
-pc += (CZL_EIT(lo) ? 1 : pc->rt);
-
-//三目运算符结果搬移: three opt res move
-#define CZL_TORM(gp, pc, lo) \
-if (pc->res) { \
-    CZL_SLB_CF(gp, pc->res); \
-    *pc->res = *lo; \
-    if (CZL_ARRBUF_VAR == lo->quality) \
-        lo->quality = CZL_DYNAMIC_VAR; \
-    else if (CZL_FUNRET_VAR == lo->quality) \
-        lo->type = CZL_INT; \
-} \
-pc += pc->rt;
-
 //执行foreach语句: run foreach sentence
 #define CZL_RFS(gp, pc) \
 switch (pc->kind ? \
@@ -378,6 +373,13 @@ if (!CZL_2POCF(gp, pc->kind, pc->res, lo)) \
 lo = (pc++)->res; \
 CZL_GNO(pc);
 
+//检查释放函数返回值: check free fun ret
+#define CZL_CF_FR(gp, var) \
+if (CZL_FUNRET_VAR == var->quality && CZL_IS_OBJ(var)) { \
+    czl_val_del(gp, var); \
+    var->type = CZL_INT; \
+}
+
 //执行函数双目运算符指令: run fun binary opt
 #define CZL_RFBO(gp, lo, ro, pc) \
 if (!CZL_2POCF(gp, pc->kind, lo, ro)) { \
@@ -387,6 +389,7 @@ if (!CZL_2POCF(gp, pc->kind, lo, ro)) { \
 } \
 if (CZL_STR_ELE == lo->quality) \
     czl_set_char(gp); \
+CZL_CF_FR(gp, ro); \
 ++pc; \
 CZL_GNO(pc);
 
@@ -394,6 +397,7 @@ CZL_GNO(pc);
 #define CZL_RFB2O(gp, lo, ro, pc) \
 if (!CZL_2POCF(gp, pc->kind, lo, ro)) \
     goto CZL_EXCEPTION_CATCH; \
+CZL_CF_FR(gp, ro); \
 ++pc; \
 CZL_GNO(pc);
 
@@ -485,20 +489,21 @@ switch (pc->flag) \
 case CZL_OPERAND: \
     lo = &cur->fun->ret; \
     CZL_COT(gp, lo, pc); \
-    goto CZL_BEGIN; \
+    break; \
 case CZL_UNARY_OPT: \
     lo = &cur->fun->ret; \
     CZL_RFUO(gp, lo, pc); \
-    goto CZL_BEGIN; \
+    break; \
 case CZL_ASS_OPT: case CZL_BINARY_OPT: \
     CZL_SFBOO(gp, lo, ro, pc, cur); \
     CZL_RFBO(gp, lo, ro, pc); \
-    goto CZL_BEGIN; \
+    break; \
 default: \
     CZL_SFB2OO(gp, lo, ro, pc, cur, index); \
     CZL_RFB2O(gp, lo, ro, pc); \
-    goto CZL_BEGIN; \
-}
+    break; \
+} \
+goto CZL_BEGIN;
 
 //执行用户函数: run usr fun
 #define CZL_RUF(gp, index, size, stack, cur, pc, bp, lo) \

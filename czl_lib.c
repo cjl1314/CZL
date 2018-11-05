@@ -247,7 +247,7 @@ const czl_sys_lib czl_syslibs[] =
 };
 const unsigned long czl_syslibs_num = sizeof(czl_syslibs)/sizeof(czl_sys_lib);
 ///////////////////////////////////////////////////////////////
-void czl_print_obj(const czl_var*, FILE*);
+char czl_print_obj(czl_gp *gp, const czl_var*, FILE*);
 char czl_sizeof_obj(czl_gp*, char, const czl_var*, unsigned long*);
 char* czl_get_obj_buf(czl_gp*, const czl_var*, char*);
 char* czl_analysis_ele_buf(czl_gp*, char*, czl_var*);
@@ -382,7 +382,7 @@ char* czl_print_modify_check
     return s-1;
 }
 
-void czl_print_ins(czl_ins *ins, FILE *fout)
+void czl_print_ins(czl_gp *gp, czl_ins *ins, FILE *fout)
 {
     czl_var *var = CZL_GIV(ins);
     czl_class_var *v = ins->pclass->vars;
@@ -395,9 +395,9 @@ void czl_print_ins(czl_ins *ins, FILE *fout)
     {
         fprintf(fout, "%s=", v->Name);
         if (CZL_STATIC_VAR == v->quality)
-            czl_print_obj((czl_var*)v, fout);
+            czl_print_obj(gp, (czl_var*)v, fout);
         else
-            czl_print_obj(var++, fout);
+            czl_print_obj(gp, var++, fout);
         v = v->next;
         if (v)
             fprintf(fout, ", ");
@@ -411,11 +411,11 @@ void czl_print_ins(czl_ins *ins, FILE *fout)
             fprintf(fout, "*");
         else if (CZL_PRIVATE == p->permission)
             fprintf(fout, "!");
-        czl_print_ins(*parents++, fout);
+        czl_print_ins(gp, *parents++, fout);
     }
 }
 
-void czl_print_tab(const czl_table *tab, FILE *fout)
+void czl_print_tab(czl_gp *gp, const czl_table *tab, FILE *fout)
 {
 	czl_tabkv *p;
 
@@ -433,7 +433,7 @@ void czl_print_tab(const czl_table *tab, FILE *fout)
             mode[len+1] = '\0';
             fprintf(fout, mode, p->key.inum);
         }
-        czl_print_obj((czl_var*)p, fout);
+        czl_print_obj(gp, (czl_var*)p, fout);
         if (p->next)
             fprintf(fout, ", ");
     }
@@ -441,7 +441,7 @@ void czl_print_tab(const czl_table *tab, FILE *fout)
     fprintf(fout, "}");
 }
 
-void czl_print_arr(const czl_array *arr, FILE *fout)
+void czl_print_arr(czl_gp *gp, const czl_array *arr, FILE *fout)
 {
     unsigned long i;
     czl_var *var;
@@ -450,21 +450,21 @@ void czl_print_arr(const czl_array *arr, FILE *fout)
     for (i = 0; i < arr->cnt; i++)
     {
         var = arr->vars + i;
-        czl_print_obj(var, fout);
+        czl_print_obj(gp, var, fout);
         if (i+1 < arr->cnt)
             fprintf(fout, ", ");
     }
     fprintf(fout, "]");
 }
 
-void czl_print_sql(const czl_sql *sql, FILE *fout)
+void czl_print_sql(czl_gp *gp, const czl_sql *sql, FILE *fout)
 {
     czl_glo_var *ele;
 
     fprintf(fout, "<");
     for (ele = sql->eles_head; ele; ele = ele->next)
     {
-        czl_print_obj((czl_var*)ele, fout);
+        czl_print_obj(gp, (czl_var*)ele, fout);
         if (ele->next)
             fprintf(fout, ", ");
     }
@@ -481,7 +481,7 @@ char czl_print_arr_list(czl_gp *gp, const czl_array_list *list, FILE *fout)
     {
         if (!(ret=czl_exp_cac(gp, para->para)))
             return 0;
-        czl_print_obj(ret, fout);
+        czl_print_obj(gp, ret, fout);
         if (para->next)
             fprintf(fout, ", ");
     }
@@ -507,11 +507,11 @@ char czl_print_tab_list(czl_gp *gp, const czl_table_list *ele, FILE *fout)
         }
         else if (tmp.type != CZL_INT && tmp.type != CZL_STRING)
             return 0;
-        czl_print_obj(&tmp, fout);
+        czl_print_obj(gp, &tmp, fout);
         fprintf(fout, ":");
         if (!(ret=czl_exp_cac(gp, ele->val)))
             return 0;
-        czl_print_obj(ret, fout);
+        czl_print_obj(gp, ret, fout);
         if (ele->next)
             fprintf(fout, ", ");
         ele = ele->next;
@@ -521,7 +521,7 @@ char czl_print_tab_list(czl_gp *gp, const czl_table_list *ele, FILE *fout)
     return 1;
 }
 
-void czl_print_obj(const czl_var *obj, FILE *fout)
+char czl_print_obj(czl_gp *gp, const czl_var *obj, FILE *fout)
 {
     char mode[8];
 
@@ -537,30 +537,36 @@ void czl_print_obj(const czl_var *obj, FILE *fout)
     case CZL_STRING:
         fprintf(fout, "\"%s\"", obj->val.str.s->str);
         break;
-    case CZL_FUN_REF:
-        fprintf(fout, "%d", (int)obj->val.obj);
-        break;
     case CZL_INSTANCE:
-        czl_print_ins((czl_ins*)obj->val.obj, fout);
+        czl_print_ins(gp, (czl_ins*)obj->val.obj, fout);
         break;
     case CZL_TABLE:
-        czl_print_tab((czl_table*)obj->val.obj, fout);
+        czl_print_tab(gp, (czl_table*)obj->val.obj, fout);
         break;
     case CZL_ARRAY:
-        czl_print_arr((czl_array*)obj->val.obj, fout);
+        czl_print_arr(gp, (czl_array*)obj->val.obj, fout);
         break;
     case CZL_STACK: case CZL_QUEUE: case CZL_LIST:
-        czl_print_sql((czl_sql*)obj->val.obj, fout);
+        czl_print_sql(gp, (czl_sql*)obj->val.obj, fout);
+        break;
+    case CZL_FUN_REF:
+        fprintf(fout, "%d", (int)obj->val.obj);
         break;
     case CZL_FILE:
         fprintf(fout, "%d[%d]", (int)obj->val.file.fp, obj->val.file.mode);
         break;
+    case CZL_ARRAY_LIST:
+        return czl_print_arr_list(gp, (czl_array_list*)obj->val.obj, fout);
+    case CZL_TABLE_LIST:
+        return czl_print_tab_list(gp, (czl_table_list*)obj->val.obj, fout);
     default:
         break;
     }
+
+    return 1;
 }
 
-char czl_modify_print
+void czl_modify_print
 (
     czl_gp *gp,
     char *modify,
@@ -598,25 +604,10 @@ char czl_modify_print
         else
             fprintf(fout, "%lf", res->val.fnum);
         break;
-    case CZL_STRING:
+    default: //CZL_STRING
         fprintf(fout, "%s", res->val.str.s->str);
         break;
-    case CZL_FUN_REF:
-        fprintf(fout, "%d", (int)res->val.obj);
-        break;
-    case CZL_FILE:
-        fprintf(fout, "%d[%d]", (int)res->val.file.fp, res->val.file.mode);
-        break;
-    case CZL_ARRAY_LIST:
-        return czl_print_arr_list(gp, (czl_array_list*)res->val.obj, fout);
-    case CZL_TABLE_LIST:
-        return czl_print_tab_list(gp, (czl_table_list*)res->val.obj, fout);
-    default:
-        czl_print_obj(res, fout);
-        break;
     }
-
-    return 1;
 }
 
 char czl_sys_echo(czl_gp *gp, czl_fun *fun)
@@ -647,7 +638,7 @@ char czl_sys_echo(czl_gp *gp, czl_fun *fun)
     for (p = (czl_para*)fun->vars; p; p = p->next)
     {
         if (!(res=czl_exp_cac(gp, p->para)) ||
-            !czl_modify_print(gp, NULL, res->type, res, fout))
+            !czl_print_obj(gp, res, fout))
         {
             ret = 0;
             break;
@@ -673,7 +664,8 @@ char czl_sys_print(czl_gp *gp, czl_fun *fun)
 	char *s;
     char modify_type;
     char modify[16] = "%";
-    czl_var *res1, *res2;
+    czl_var *res;
+    czl_str str;
     czl_para *p;
     char ret = 1;
 
@@ -697,14 +689,16 @@ char czl_sys_print(czl_gp *gp, czl_fun *fun)
 
     for (p = (czl_para*)fun->vars; p; p = p->next)
     {
-        if (!(res1=czl_exp_cac(gp, p->para)))
+        if (!(res=czl_exp_cac(gp, p->para)))
         {
             ret = 0;
             goto CZL_END;
         }
-        if (CZL_STRING == res1->type)
+        if (CZL_STRING == res->type)
         {
-            for (s = res1->val.str.s->str; *s; s++)
+            str = res->val.str;
+            CZL_SRCA1(str); //引用计数加一保证不被释放
+            for (s = str.s->str; *s; s++)
             {
                 if ('%' == *s)
                 {
@@ -713,22 +707,24 @@ char czl_sys_print(czl_gp *gp, czl_fun *fun)
                     else
                     {
                         if (!(p=p->next) ||
-                            !(res2=czl_exp_cac(gp, p->para)) ||
+                            !(res=czl_exp_cac(gp, p->para)) ||
                             !(s=czl_print_modify_check(s+1, modify+1,
                                                        &modify_type,
-                                                       res2->type)))
+                                                       res->type)))
                         {
                             ret = 0;
+                            CZL_SRCD1(gp, str);
                             goto CZL_END;
                         }
-                        czl_modify_print(gp, modify, modify_type, res2, fout);
+                        czl_modify_print(gp, modify, modify_type, res, fout);
                     }
                 }
                 else
                     fputc(*s, fout);
             }
+            CZL_SRCD1(gp, str);
         }
-        else if (!czl_modify_print(gp, NULL, res1->type, res1, fout))
+        else if (!czl_print_obj(gp, res, fout))
         {
             ret = 0;
             goto CZL_END;
@@ -1211,13 +1207,6 @@ char* czl_get_obj_buf
         *((unsigned long*)buf) = obj->val.str.s->len;
         memcpy(buf+4, obj->val.str.s->str, obj->val.str.s->len);
         return buf+4+obj->val.str.s->len;
-    case CZL_FUN_REF:
-        memcpy(buf, obj->val.obj, 4);
-        return buf+4;
-    case CZL_FILE:
-        memcpy(buf, obj->val.file.fp, 4);
-        *((int*)buf+4) = (int)obj->val.file.mode;
-        return buf+sizeof(czl_file);
     case CZL_INSTANCE:
         len = strlen(((czl_ins*)obj->val.obj)->pclass->name);
         *((unsigned char*)buf++) = len;
@@ -1229,6 +1218,13 @@ char* czl_get_obj_buf
         return czl_get_arr_buf(gp, (czl_array*)obj->val.obj, buf);
     case CZL_STACK: case CZL_QUEUE: case CZL_LIST:
         return czl_get_sql_buf(gp, (czl_sql*)obj->val.obj, buf);
+    case CZL_FUN_REF:
+        memcpy(buf, obj->val.obj, 4);
+        return buf+4;
+    case CZL_FILE:
+        memcpy(buf, obj->val.file.fp, 4);
+        *((int*)buf+4) = (int)obj->val.file.mode;
+        return buf+sizeof(czl_file);
     case CZL_ARRAY_LIST:
         *(buf-1) = CZL_ARRAY;
         return czl_get_arr_list_buf(gp, (czl_array_list*)obj->val.obj, buf);
@@ -1774,9 +1770,9 @@ char czl_sys_float(czl_gp *gp, czl_fun *fun)
 char czl_sys_abs(czl_gp *gp, czl_fun *fun)
 {
 	if (fun->vars->val.inum >= 0)
-		fun->ret.val.inum = fun->vars->val.inum;
+        fun->ret.val.inum = fun->vars->val.inum;
 	else
-		fun->ret.val.inum = -fun->vars->val.inum;
+        fun->ret.val.inum = -fun->vars->val.inum;
     return 1;
 }
 

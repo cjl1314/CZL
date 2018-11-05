@@ -984,6 +984,12 @@ static czl_var* czl_exp_fun_run(czl_gp *gp, czl_exp_fun *exp_fun)
             gp->exceptionCode = CZL_EXCEPTION_NO;
         else if (!ret && CZL_EXCEPTION_NO == gp->exceptionCode)
             gp->exceptionCode = CZL_EXCEPTION_SYSFUN_RUN_ERROR;
+        if (gp->fun_ret)
+        {
+            czl_val_del(gp, gp->fun_ret);
+            gp->fun_ret->type = CZL_INT;
+            gp->fun_ret = NULL;
+        }
     }
     else if (!(ret=czl_fun_run(gp, fun->pc ? fun->pc : fun->opcode)))
     {
@@ -2492,10 +2498,24 @@ static void czl_runtime_error_report(czl_gp *gp, czl_exp_ele *err)
     }
 }
 
+static void czl_fun_ret_check_free(czl_gp *gp, czl_var *lo, czl_var *ro)
+{
+    if (lo && CZL_FUNRET_VAR == lo->quality)
+    {
+        czl_val_del(gp, lo);
+        lo->type = CZL_INT;
+    }
+    if (ro && CZL_FUNRET_VAR == ro->quality)
+    {
+        czl_val_del(gp, ro);
+        ro->type = CZL_INT;
+    }
+}
+
 //表达式指令栈计算函数
 static czl_var* czl_exp_stack_cac(czl_gp *gp, czl_exp_stack pc)
 {
-    czl_var *lo = NULL, *ro;
+    czl_var *lo = NULL, *ro = NULL;
 
     if (CZL_EIO(pc))
     {
@@ -2531,23 +2551,39 @@ static czl_var* czl_exp_stack_cac(czl_gp *gp, czl_exp_stack pc)
             CZL_RTO(lo, pc);
             break;
         default: //CZL_THREE_END
-            CZL_TORM(gp, pc, lo);
+            CZL_TORM(gp, pc->res, pc, lo);
             break;
         }
+        if (ro)
+            CZL_CF_FR(gp, ro);
     } while (pc->flag != CZL_OP_END);
 
     return lo;
 
 CZL_EXCEPTION_CATCH: CZL_RUN_FUN:
+    czl_fun_ret_check_free(gp, lo, ro);
     czl_runtime_error_report(gp, pc);
     return NULL;
 }
 
 czl_var* czl_exp_cac(czl_gp *gp, czl_exp_stack exp)
 {
-    czl_var *ret = czl_exp_stack_cac(gp, exp);
-    if (!ret)
+    czl_var *ret;
+
+    if (gp->fun_ret)
+    {
+        czl_val_del(gp, gp->fun_ret);
+        gp->fun_ret->type = CZL_INT;
+        gp->fun_ret = NULL;
+    }
+
+    if (!(ret=czl_exp_stack_cac(gp, exp)))
         return NULL;
+
+    //把对象类型的函数返回值标记下来，方便实时回收其内存
+    if (CZL_FUNRET_VAR == ret->quality && CZL_IS_OBJ(ret))
+        gp->fun_ret = ret;
+
     return (CZL_OBJ_REF == ret->type ? CZL_GRV(ret) : ret);
 }
 ///////////////////////////////////////////////////////////////
@@ -3142,6 +3178,11 @@ czl_tabkv* czl_create_inx_str_tabkv
         res->quality = CZL_DYNAMIC_VAR;
         czl_str_resize(gp, &res->val.str);
         p->key = res->val;
+    }
+    else if (CZL_FUNRET_VAR == res->quality)
+    {
+        p->key.str = res->val.str;
+        res->type = CZL_INT;
     }
     else if (res->val.str.size != res->val.str.s->len + 1)
     {
@@ -8199,7 +8240,7 @@ CZL_BEGIN:
             CZL_RTO(lo, pc);
             break;
         case CZL_THREE_END:
-            CZL_TORM(gp, pc, lo);
+            CZL_TORM(gp, pc->res, pc, lo);
             break;
         default: //CZL_TRY_BLOCK
             CZL_RTS(gp, pc, bp, stack, size);
@@ -8214,6 +8255,7 @@ CZL_RUN_FUN:
     CZL_RUF(gp, index, size, stack, cur, pc, bp, lo);
 
 CZL_EXCEPTION_CATCH:
+    czl_fun_ret_check_free(gp, lo, ro);
     czl_runtime_error_report(gp, pc);
 
     if ((pc=czl_exception_handle(gp, gp->exit_code, pc, stack, &index, &bp)))

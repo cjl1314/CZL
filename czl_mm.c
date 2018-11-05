@@ -9,8 +9,8 @@
     //一级: 1 ~ 128B ->  4KB/page very good
     //二级: 129~256B -> 20KB/page good
     //三级: 257~512B -> 40KB/page just so so
-    //数据结构： 链表分配，AVL树回收；
-    //算法： AVL树节点指向链表节点，着色标记；
+    //数据结构： 链表分配，链表回收；
+    //算法： 分配节点和回收节点融合；
     //特点： 分配速度快，内存利用率高，频繁alloc/free稳定性一般；
     //内存不常驻，任意页完全空闲立即释放交还系统，页数量(limit)可配置；
 //小块内存(513B~1MB)采用slab机制；
@@ -1347,6 +1347,18 @@ static void czl_var_list_gc(czl_gp *gp, czl_glo_var *p)
     }
 }
 
+static void czl_fun_list_gc(czl_gp *gp, czl_fun *f)
+{
+    while (f)
+    {
+        unsigned long i;
+        czl_vars_gc(gp, f->vars, f->dynamic_vars_cnt+f->static_vars_cnt);
+        for (i = 0; i < f->backup_cnt; ++i)
+            czl_vars_gc(gp, f->backup_vars[i], f->dynamic_vars_cnt);
+        f = f->next;
+    }
+}
+
 //全局扫描整理各个内存池的外部碎片，压缩内存池使内存更连续，将多余内存释放给操作系统
 void czl_mm_sp_pool_gc(czl_gp *gp)
 {
@@ -1371,7 +1383,10 @@ void czl_mm_sp_pool_gc(czl_gp *gp)
     }
 
     for (c = gp->class_head; c; c = c->next)
+    {
         czl_var_list_gc(gp, (czl_glo_var*)c->vars);
+        czl_fun_list_gc(gp, c->funs);
+    }
 }
 //////////////////////////////////////////////////////////////////
 static void czl_mm_sp_pool_init

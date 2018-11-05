@@ -1323,6 +1323,8 @@ typedef struct czl_gp
     //
     czl_char_var *ch_head;      //字符串元素缓冲区链表头
     //
+    czl_var *fun_ret;           //函数返回值
+    //
     char log_buf[CZL_LOG_BUF_SIZE]; //log缓冲区
     char exceptionCode;             //运行时异常码
     //

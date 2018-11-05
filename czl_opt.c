@@ -174,6 +174,11 @@ char czl_val_copy(czl_gp *gp, czl_var *left, czl_var *right)
     return 1;
 
 CZL_TYPE_ERROR:
+    if (CZL_FUNRET_VAR == right->quality)
+    {
+        czl_val_del(gp, right);
+        right->type = CZL_INT;
+    }
     gp->exceptionCode = CZL_EXCEPTION_COPY_TYPE_NOT_MATCH;
     return 0;
 }
@@ -214,8 +219,8 @@ char czl_logic_not_cac(czl_gp *gp, czl_var *res, czl_var *opr)
     switch (opr->type) // !
     {
     case CZL_INT: res->val.inum = !opr->val.inum; return 1;
-    case CZL_FLOAT: res->val.fnum = !opr->val.fnum; return 1;
-    default: return 0;
+    case CZL_FLOAT: res->val.inum = !opr->val.fnum; return 1;
+    default: res->val.inum = 0; return 1;
     }
 }
 
@@ -225,7 +230,7 @@ char czl_logic_flit_cac(czl_gp *gp, czl_var *res, czl_var *opr)
     switch (opr->type) // ~
     {
     case CZL_INT: res->val.inum = ~opr->val.inum; return 1;
-    case CZL_FLOAT: res->val.fnum = ~(czl_long)opr->val.fnum; return 1;
+    case CZL_FLOAT: res->val.inum = ~(czl_long)opr->val.fnum; return 1;
     default: return 0;
     }
 }
