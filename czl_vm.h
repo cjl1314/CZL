@@ -1128,20 +1128,20 @@ typedef struct czl_coroutine
 
 #ifdef CZL_MULT_THREAD
 //线程间通信管道带宽实测在1M/s，这里的1M单位是数组元素
-typedef struct czl_thread_piple
+typedef struct czl_thread_pipe
 {
 #ifdef CZL_SYSTEM_WINDOWS
     CRITICAL_SECTION report_lock;
     CRITICAL_SECTION notify_lock;
     HANDLE report_event;
     HANDLE notify_event;
-    HANDLE piple_event;
+    HANDLE pipe_event;
 #elif defined CZL_SYSTEM_LINUX
     pthread_mutex_t report_lock;
     pthread_mutex_t notify_lock;
     sem_t report_event;
     sem_t notify_event;
-    sem_t piple_event;
+    sem_t pipe_event;
 #endif
     //
     czl_var *report_buf;
@@ -1153,7 +1153,7 @@ typedef struct czl_thread_piple
     unsigned long nb_size;
     //
     unsigned char alive;
-} czl_thread_piple;
+} czl_thread_pipe;
 
 //线程节点结构
 typedef struct czl_thread
@@ -1163,7 +1163,7 @@ typedef struct czl_thread
 #elif defined CZL_SYSTEM_LINUX
     pthread_t id;
 #endif
-    czl_thread_piple *piple;
+    czl_thread_pipe *pipe;
     struct czl_thread *next;
     struct czl_thread *last;
 } czl_thread;
@@ -1344,7 +1344,7 @@ typedef struct czl_gp
 #ifdef CZL_MULT_THREAD
     czl_sys_hash threads_hash;
     czl_thread *threads_head;
-    czl_thread_piple *thread_piple;
+    czl_thread_pipe *thread_pipe;
 #endif //#ifdef CZL_MULT_THREAD
 } czl_gp;
 ///////////////////////////////////////////////////////////////

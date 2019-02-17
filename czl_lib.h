@@ -49,8 +49,8 @@ void czl_event_send
     sem_t*
 #endif
 );
-char czl_notify_paras_create(czl_gp*, czl_var*, czl_thread_piple*);
-void czl_thread_piple_delete(czl_thread_piple*);
+char czl_notify_paras_create(czl_gp*, czl_var*, czl_thread_pipe*);
+void czl_thread_pipe_delete(czl_thread_pipe*);
 #endif //#ifdef CZL_MULT_THREAD
 //
 #ifndef CZL_CONSOLE

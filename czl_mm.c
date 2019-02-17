@@ -493,7 +493,7 @@ static void czl_mm_set_black
 //////////////////////////////////////////////////////////////////
 static void* czl_mm_sys_alloc(czl_gp *gp, czl_ulong size)
 {
-	void *buf;
+    void *buf;
 
     if (gp->mm_cnt+size > gp->mm_limit)
         return NULL;
@@ -1029,7 +1029,7 @@ static void czl_mm_free
     czl_mm_sp_pool *pool
 )
 {
-	czl_mm_sp *page;
+    czl_mm_sp *page;
 
     if (0 == pool->len)
     {

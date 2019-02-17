@@ -3855,12 +3855,12 @@ char czl_sys_init(czl_gp *gp, char flag)
     if (!flag)
     {
         char ret = 1;
-        czl_thread_lock(&gp->thread_piple->notify_lock); //lock
-        if (gp->thread_piple->notify_buf)
+        czl_thread_lock(&gp->thread_pipe->notify_lock); //lock
+        if (gp->thread_pipe->notify_buf)
             ret = czl_notify_paras_create(gp, &gp->enter_var,
-                                          gp->thread_piple);
-        czl_thread_unlock(&gp->thread_piple->notify_lock); //unlock
-        czl_event_send(&gp->thread_piple->piple_event);
+                                          gp->thread_pipe);
+        czl_thread_unlock(&gp->thread_pipe->notify_lock); //unlock
+        czl_event_send(&gp->thread_pipe->pipe_event);
         if (!ret)
             return 0;
     }

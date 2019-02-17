@@ -3299,7 +3299,7 @@ void czl_event_destroy
 #endif
 }
 
-void czl_piple_buf_delete(czl_var *vars, unsigned long cnt, char flag)
+void czl_pipe_buf_delete(czl_var *vars, unsigned long cnt, char flag)
 {
     unsigned long i;
     for (i = 0; i < cnt; ++i)
@@ -3310,7 +3310,7 @@ void czl_piple_buf_delete(czl_var *vars, unsigned long cnt, char flag)
         free(vars);
 }
 
-char czl_piple_buf_create
+char czl_pipe_buf_create
 (
     czl_var *vars,
     const czl_array *arr
@@ -3345,7 +3345,7 @@ char czl_piple_buf_create
 
 char czl_report_buf_create
 (
-    czl_thread_piple *piple,
+    czl_thread_pipe *pipe,
     const czl_var *var
 )
 {
@@ -3364,16 +3364,16 @@ char czl_report_buf_create
         return 1;
     }
     
-    if (piple->rb_cnt + cnt > piple->rb_size)
+    if (pipe->rb_cnt + cnt > pipe->rb_size)
     {
-        if (!(buf=(czl_var*)realloc(piple->report_buf,
-                          2*(piple->rb_cnt+cnt)*sizeof(czl_var))))
+        if (!(buf=(czl_var*)realloc(pipe->report_buf,
+                          2*(pipe->rb_cnt+cnt)*sizeof(czl_var))))
             return 0;
-        piple->report_buf = buf;
-        piple->rb_size = 2*(piple->rb_cnt+cnt);
-        memset(buf+piple->rb_cnt, 0, cnt*sizeof(czl_var));
+        pipe->report_buf = buf;
+        pipe->rb_size = 2*(pipe->rb_cnt+cnt);
+        memset(buf+pipe->rb_cnt, 0, cnt*sizeof(czl_var));
     }
-    buf = piple->report_buf + piple->rb_cnt;
+    buf = pipe->report_buf + pipe->rb_cnt;
 
     switch (var->type)
     {
@@ -3390,21 +3390,21 @@ char czl_report_buf_create
         buf->type = CZL_STRING;
         break;
     default: //CZL_ARRAY
-        if (!czl_piple_buf_create(buf, (czl_array*)var->val.obj))
+        if (!czl_pipe_buf_create(buf, (czl_array*)var->val.obj))
         {
-            czl_piple_buf_delete(buf, cnt, 0);
+            czl_pipe_buf_delete(buf, cnt, 0);
             return 0;
         }
         break;
     }
 
-    piple->rb_cnt += cnt;
+    pipe->rb_cnt += cnt;
     return 1;
 }
 
 char czl_notify_buf_create
 (
-    czl_thread_piple *piple,
+    czl_thread_pipe *pipe,
     const czl_var *var
 )
 {
@@ -3423,18 +3423,18 @@ char czl_notify_buf_create
         return 1;
     }
 
-    czl_thread_lock(&piple->notify_lock); //lock
+    czl_thread_lock(&pipe->notify_lock); //lock
 
-    if (piple->nb_cnt + cnt > piple->nb_size)
+    if (pipe->nb_cnt + cnt > pipe->nb_size)
     {
-        if (!(buf=(czl_var*)realloc(piple->notify_buf,
-                          2*(piple->nb_cnt+cnt)*sizeof(czl_var))))
+        if (!(buf=(czl_var*)realloc(pipe->notify_buf,
+                          2*(pipe->nb_cnt+cnt)*sizeof(czl_var))))
             goto CZL_END;
-        piple->notify_buf = buf;
-        piple->nb_size = 2*(piple->nb_cnt+cnt);
-        memset(buf+piple->nb_cnt, 0, cnt*sizeof(czl_var));
+        pipe->notify_buf = buf;
+        pipe->nb_size = 2*(pipe->nb_cnt+cnt);
+        memset(buf+pipe->nb_cnt, 0, cnt*sizeof(czl_var));
     }
-    buf = piple->notify_buf + piple->nb_cnt;
+    buf = pipe->notify_buf + pipe->nb_cnt;
 
     switch (var->type)
     {
@@ -3451,23 +3451,23 @@ char czl_notify_buf_create
         buf->type = CZL_STRING;
         break;
     default: //CZL_ARRAY
-        if (!czl_piple_buf_create(buf, (czl_array*)var->val.obj))
+        if (!czl_pipe_buf_create(buf, (czl_array*)var->val.obj))
         {
-            czl_piple_buf_delete(buf, cnt, 0);
+            czl_pipe_buf_delete(buf, cnt, 0);
             goto CZL_END;
         }
         break;
     }
 
-    piple->nb_cnt += cnt;
+    pipe->nb_cnt += cnt;
     ret = 1;
 
 CZL_END:
-    czl_thread_unlock(&piple->notify_lock); //unlock
+    czl_thread_unlock(&pipe->notify_lock); //unlock
     return ret;
 }
 
-czl_array* czl_piple_paras_create
+czl_array* czl_pipe_paras_create
 (
     czl_gp *gp,
     czl_var *vars,
@@ -3509,16 +3509,16 @@ char czl_report_paras_create
 (
     czl_gp *gp,
     czl_var *var,
-    czl_thread_piple *piple
+    czl_thread_pipe *pipe
 )
 {
-    czl_array *arr = czl_piple_paras_create(gp,
-                                            piple->report_buf,
-                                            piple->rb_cnt);
+    czl_array *arr = czl_pipe_paras_create(gp,
+                                            pipe->report_buf,
+                                            pipe->rb_cnt);
 
-    czl_piple_buf_delete(piple->report_buf, piple->rb_cnt, 1);
-    piple->report_buf = NULL;
-    piple->rb_cnt = piple->rb_size = 0;
+    czl_pipe_buf_delete(pipe->report_buf, pipe->rb_cnt, 1);
+    pipe->report_buf = NULL;
+    pipe->rb_cnt = pipe->rb_size = 0;
 
     if (!arr)
     {
@@ -3535,16 +3535,16 @@ char czl_notify_paras_create
 (
     czl_gp *gp,
     czl_var *var,
-    czl_thread_piple *piple
+    czl_thread_pipe *pipe
 )
 {
-    czl_array *arr = czl_piple_paras_create(gp,
-                                            piple->notify_buf,
-                                            piple->nb_cnt);
+    czl_array *arr = czl_pipe_paras_create(gp,
+                                            pipe->notify_buf,
+                                            pipe->nb_cnt);
 
-    czl_piple_buf_delete(piple->notify_buf, piple->nb_cnt, 1);
-    piple->notify_buf = NULL;
-    piple->nb_cnt = piple->nb_size = 0;
+    czl_pipe_buf_delete(pipe->notify_buf, pipe->nb_cnt, 1);
+    pipe->notify_buf = NULL;
+    pipe->nb_cnt = pipe->nb_size = 0;
 
     if (!arr)
     {
@@ -3557,17 +3557,17 @@ char czl_notify_paras_create
     return 1;
 }
 
-void czl_thread_piple_delete(czl_thread_piple *piple)
+void czl_thread_pipe_delete(czl_thread_pipe *pipe)
 {
-    czl_piple_buf_delete(piple->report_buf, piple->rb_cnt, 1);
-    piple->report_buf = NULL;
-    piple->rb_cnt = piple->rb_size = 0;
-    czl_piple_buf_delete(piple->notify_buf, piple->nb_cnt, 1);
-    piple->notify_buf = NULL;
-    piple->nb_cnt = piple->nb_size = 0;
-    czl_lock_destroy(&piple->notify_lock);
-    czl_lock_destroy(&piple->report_lock);
-    free(piple);
+    czl_pipe_buf_delete(pipe->report_buf, pipe->rb_cnt, 1);
+    pipe->report_buf = NULL;
+    pipe->rb_cnt = pipe->rb_size = 0;
+    czl_pipe_buf_delete(pipe->notify_buf, pipe->nb_cnt, 1);
+    pipe->notify_buf = NULL;
+    pipe->nb_cnt = pipe->nb_size = 0;
+    czl_lock_destroy(&pipe->notify_lock);
+    czl_lock_destroy(&pipe->report_lock);
+    free(pipe);
 }
 
 void czl_thread_delete(czl_gp *gp, czl_thread *p)
@@ -3575,7 +3575,7 @@ void czl_thread_delete(czl_gp *gp, czl_thread *p)
 #ifdef CZL_SYSTEM_WINDOWS
     CloseHandle(p->id);
 #endif
-    czl_thread_piple_delete(p->piple);
+    czl_thread_pipe_delete(p->pipe);
 
     czl_sys_hash_delete(gp, (unsigned long)p, &gp->threads_hash);
 
@@ -3605,7 +3605,7 @@ czl_thread* czl_thread_create(czl_gp *gp)
 #ifdef CZL_SYSTEM_WINDOWS
     p->id = NULL;
 #endif
-    p->piple = NULL;
+    p->pipe = NULL;
 
     p->last = NULL;
     p->next = gp->threads_head;
@@ -3616,50 +3616,50 @@ czl_thread* czl_thread_create(czl_gp *gp)
     return p;
 }
 
-czl_thread_piple* czl_thread_piple_create(czl_var *var)
+czl_thread_pipe* czl_thread_pipe_create(czl_var *var)
 {
-    czl_thread_piple *piple = (czl_thread_piple*)malloc(sizeof(czl_thread_piple));
-    if (!piple)
+    czl_thread_pipe *pipe = (czl_thread_pipe*)malloc(sizeof(czl_thread_pipe));
+    if (!pipe)
         return NULL;
 
-    czl_lock_init(&piple->notify_lock);
-    czl_lock_init(&piple->report_lock);
+    czl_lock_init(&pipe->notify_lock);
+    czl_lock_init(&pipe->report_lock);
 
-    if (!czl_event_init(&piple->notify_event))
+    if (!czl_event_init(&pipe->notify_event))
     {
-        free(piple);
-        return NULL;
-    }
-    if (!czl_event_init(&piple->report_event))
-    {
-        czl_event_destroy(&piple->notify_event);
-        free(piple);
+        free(pipe);
         return NULL;
     }
-    if (!czl_event_init(&piple->piple_event))
+    if (!czl_event_init(&pipe->report_event))
     {
-        czl_event_destroy(&piple->notify_event);
-        czl_event_destroy(&piple->report_event);
-        free(piple);
+        czl_event_destroy(&pipe->notify_event);
+        free(pipe);
         return NULL;
     }
-
-    piple->alive = 1;
-    piple->notify_buf = NULL;
-    piple->nb_cnt = piple->nb_size = 0;
-    piple->report_buf = NULL;
-    piple->rb_cnt = piple->rb_size = 0;
-
-    if (!czl_notify_buf_create(piple, var))
+    if (!czl_event_init(&pipe->pipe_event))
     {
-        czl_event_destroy(&piple->notify_event);
-        czl_event_destroy(&piple->report_event);
-        czl_event_destroy(&piple->piple_event);
-        free(piple);
+        czl_event_destroy(&pipe->notify_event);
+        czl_event_destroy(&pipe->report_event);
+        free(pipe);
         return NULL;
     }
 
-    return piple;
+    pipe->alive = 1;
+    pipe->notify_buf = NULL;
+    pipe->nb_cnt = pipe->nb_size = 0;
+    pipe->report_buf = NULL;
+    pipe->rb_cnt = pipe->rb_size = 0;
+
+    if (!czl_notify_buf_create(pipe, var))
+    {
+        czl_event_destroy(&pipe->notify_event);
+        czl_event_destroy(&pipe->report_event);
+        czl_event_destroy(&pipe->pipe_event);
+        free(pipe);
+        return NULL;
+    }
+
+    return pipe;
 }
 
 #ifdef CZL_SYSTEM_WINDOWS
@@ -3670,7 +3670,7 @@ void*
 czl_sys_thread(void *argv)
 {
 	czl_gp *gp;
-    czl_thread_piple *piple = (czl_thread_piple*)((void**)argv)[0];
+    czl_thread_pipe *pipe = (czl_thread_pipe*)((void**)argv)[0];
     char *shell_path = (char*)((void**)argv)[1];
 #ifndef CZL_CONSOLE
     char *log_path = (char*)((void**)argv)[2];
@@ -3681,7 +3681,7 @@ czl_sys_thread(void *argv)
         goto CZL_END;
     memset(gp, 0, sizeof(czl_gp));
 
-    gp->thread_piple = piple;
+    gp->thread_pipe = pipe;
 #ifndef CZL_CONSOLE
     if (log_path)
     {
@@ -3692,7 +3692,7 @@ czl_sys_thread(void *argv)
 #endif
     if (!czl_sys_init(gp, 0))
     {
-        czl_event_send(&gp->thread_piple->piple_event);
+        czl_event_send(&gp->thread_pipe->pipe_event);
         czl_val_del(gp, &gp->enter_var);
         czl_init_free(gp, 1);
         free(gp);
@@ -3708,14 +3708,14 @@ CZL_END:
 #ifndef CZL_CONSOLE
     free(log_path);
 #endif
-    czl_event_send(&piple->report_event); //防止主线程阻塞等待已经退出的子线程
-    czl_event_destroy(&piple->notify_event);
-    czl_event_destroy(&piple->report_event);
-    czl_event_destroy(&piple->piple_event);
-    if (piple->alive)
-        piple->alive = 0;
+    czl_event_send(&pipe->report_event); //防止主线程阻塞等待已经退出的子线程
+    czl_event_destroy(&pipe->notify_event);
+    czl_event_destroy(&pipe->report_event);
+    czl_event_destroy(&pipe->pipe_event);
+    if (pipe->alive)
+        pipe->alive = 0;
     else
-        czl_thread_piple_delete(piple);
+        czl_thread_pipe_delete(pipe);
     return 0;
 }
 
@@ -3733,13 +3733,13 @@ char czl_sys_newshl(czl_gp *gp, czl_fun *fun)
     if (!(p=czl_thread_create(gp)))
         return 1;
 
-    if (!(p->piple=czl_thread_piple_create(fun->vars+1)))
+    if (!(p->pipe=czl_thread_pipe_create(fun->vars+1)))
         goto CZL_END;
 
     if (!(argv=(void**)calloc(3, sizeof(void*))))
         goto CZL_END;
 
-    argv[0] = p->piple;
+    argv[0] = p->pipe;
 
     if (!(shell_path=(char*)malloc(fun->vars->val.str.s->len)))
         goto CZL_END;
@@ -3771,7 +3771,7 @@ char czl_sys_newshl(czl_gp *gp, czl_fun *fun)
 #endif
 
     //防止线程参数被notify参数覆盖，所以设置事件等待
-    czl_event_wait(&p->piple->piple_event);
+    czl_event_wait(&p->pipe->pipe_event);
     fun->ret.val.inum = (unsigned long)p;
     return 1;
 
@@ -3781,11 +3781,11 @@ CZL_END:
 #ifndef CZL_CONSOLE
     free(log_path);
 #endif
-    if (p->piple)
+    if (p->pipe)
     {
-        czl_event_destroy(&p->piple->notify_event);
-        czl_event_destroy(&p->piple->report_event);
-        czl_event_destroy(&p->piple->piple_event);
+        czl_event_destroy(&p->pipe->notify_event);
+        czl_event_destroy(&p->pipe->report_event);
+        czl_event_destroy(&p->pipe->pipe_event);
     }
     czl_thread_delete(gp, p);
 
@@ -3809,8 +3809,8 @@ czl_thread* czl_thread_find(czl_gp *gp, unsigned long id, czl_fun *fun)
     if (pthread_kill(p->id, 0) == ESRCH)
 #endif
     {
-        if (fun && p->piple->report_buf)
-            czl_report_paras_create(gp, &fun->ret, p->piple);
+        if (fun && p->pipe->report_buf)
+            czl_report_paras_create(gp, &fun->ret, p->pipe);
         czl_thread_delete(gp, p);
         return NULL;
     }
@@ -3822,25 +3822,25 @@ char czl_sys_wait(czl_gp *gp, czl_fun *fun)
 {
     if (0 == fun->vars->val.inum)
     {
-        if (!gp->thread_piple)
+        if (!gp->thread_pipe)
         {
             fun->ret.val.inum = 0;
             return 1;
         }
-        czl_thread_lock(&gp->thread_piple->notify_lock); //lock
-        if (gp->thread_piple->notify_buf)
-            czl_notify_paras_create(gp, &fun->ret, gp->thread_piple);
+        czl_thread_lock(&gp->thread_pipe->notify_lock); //lock
+        if (gp->thread_pipe->notify_buf)
+            czl_notify_paras_create(gp, &fun->ret, gp->thread_pipe);
         else
         {
-            czl_thread_unlock(&gp->thread_piple->notify_lock); //unlock
-            czl_event_wait(&gp->thread_piple->notify_event);
-            czl_thread_lock(&gp->thread_piple->notify_lock); //lock
-            if (gp->thread_piple->notify_buf)
-                czl_notify_paras_create(gp, &fun->ret, gp->thread_piple);
+            czl_thread_unlock(&gp->thread_pipe->notify_lock); //unlock
+            czl_event_wait(&gp->thread_pipe->notify_event);
+            czl_thread_lock(&gp->thread_pipe->notify_lock); //lock
+            if (gp->thread_pipe->notify_buf)
+                czl_notify_paras_create(gp, &fun->ret, gp->thread_pipe);
             else
                 fun->ret.val.inum = 0;
         }
-        czl_thread_unlock(&gp->thread_piple->notify_lock); //unlock
+        czl_thread_unlock(&gp->thread_pipe->notify_lock); //unlock
     }
     else
     {
@@ -3851,26 +3851,26 @@ char czl_sys_wait(czl_gp *gp, czl_fun *fun)
                 fun->ret.val.inum = 0;
             return 1;
         }
-        czl_thread_lock(&p->piple->report_lock); //lock
-        if (p->piple->report_buf)
+        czl_thread_lock(&p->pipe->report_lock); //lock
+        if (p->pipe->report_buf)
         {
-            czl_report_paras_create(gp, &fun->ret, p->piple);
-            czl_event_send(&p->piple->piple_event);
+            czl_report_paras_create(gp, &fun->ret, p->pipe);
+            czl_event_send(&p->pipe->pipe_event);
         }
         else
         {
-            czl_thread_unlock(&p->piple->report_lock); //unlock
-            czl_event_wait(&p->piple->report_event);
-            czl_thread_lock(&p->piple->report_lock); //lock
-            if (p->piple->report_buf)
+            czl_thread_unlock(&p->pipe->report_lock); //unlock
+            czl_event_wait(&p->pipe->report_event);
+            czl_thread_lock(&p->pipe->report_lock); //lock
+            if (p->pipe->report_buf)
             {
-                czl_report_paras_create(gp, &fun->ret, p->piple);
-                czl_event_send(&p->piple->piple_event);
+                czl_report_paras_create(gp, &fun->ret, p->pipe);
+                czl_event_send(&p->pipe->pipe_event);
             }
             else
                 fun->ret.val.inum = 0;
         }
-        czl_thread_unlock(&p->piple->report_lock); //unlock
+        czl_thread_unlock(&p->pipe->report_lock); //unlock
     }
 
     return 1;
@@ -3885,15 +3885,15 @@ char czl_sys_listen(czl_gp *gp, czl_fun *fun)
             fun->ret.val.inum = 0;
         return 1;
     }
-    czl_thread_lock(&p->piple->report_lock); //lock
-    if (p->piple->report_buf)
+    czl_thread_lock(&p->pipe->report_lock); //lock
+    if (p->pipe->report_buf)
     {
-        czl_report_paras_create(gp, &fun->ret, p->piple);
-        czl_event_send(&p->piple->piple_event);
+        czl_report_paras_create(gp, &fun->ret, p->pipe);
+        czl_event_send(&p->pipe->pipe_event);
     }
     else
         fun->ret.val.inum = 0;
-    czl_thread_unlock(&p->piple->report_lock); //unlock
+    czl_thread_unlock(&p->pipe->report_lock); //unlock
 
     return 1;
 }
@@ -3908,8 +3908,8 @@ char czl_sys_waitshl(czl_gp *gp, czl_fun *fun)
     #elif defined CZL_SYSTEM_LINUX
         pthread_join(p->id, NULL);
     #endif
-        if (p->piple->report_buf)
-            czl_report_paras_create(gp, &fun->ret, p->piple);
+        if (p->pipe->report_buf)
+            czl_report_paras_create(gp, &fun->ret, p->pipe);
         czl_thread_delete(gp, p);
     }
     else
@@ -3920,39 +3920,39 @@ char czl_sys_waitshl(czl_gp *gp, czl_fun *fun)
 
 char czl_sys_report(czl_gp *gp, czl_fun *fun)
 {
-    if (!gp->thread_piple)
+    if (!gp->thread_pipe)
     {
         fun->ret.val.inum = 0;
         return 1;
     }
 
-    czl_thread_lock(&gp->thread_piple->report_lock); //lock
-    if (czl_report_buf_create(gp->thread_piple, fun->vars))
+    czl_thread_lock(&gp->thread_pipe->report_lock); //lock
+    if (czl_report_buf_create(gp->thread_pipe, fun->vars))
         fun->ret.val.inum = 1;
     else
         fun->ret.val.inum = 0;
-    czl_thread_unlock(&gp->thread_piple->report_lock); //unlock
-    czl_event_send(&gp->thread_piple->report_event);
-    czl_event_wait(&gp->thread_piple->piple_event);
+    czl_thread_unlock(&gp->thread_pipe->report_lock); //unlock
+    czl_event_send(&gp->thread_pipe->report_event);
+    czl_event_wait(&gp->thread_pipe->pipe_event);
 
     return 1;
 }
 
 char czl_sys_send(czl_gp *gp, czl_fun *fun)
 {
-    if (!gp->thread_piple)
+    if (!gp->thread_pipe)
     {
         fun->ret.val.inum = 0;
         return 1;
     }
 
-    czl_thread_lock(&gp->thread_piple->report_lock); //lock
-    if (czl_report_buf_create(gp->thread_piple, fun->vars))
+    czl_thread_lock(&gp->thread_pipe->report_lock); //lock
+    if (czl_report_buf_create(gp->thread_pipe, fun->vars))
         fun->ret.val.inum = 1;
     else
         fun->ret.val.inum = 0;
-    czl_thread_unlock(&gp->thread_piple->report_lock); //unlock
-    czl_event_send(&gp->thread_piple->report_event);
+    czl_thread_unlock(&gp->thread_pipe->report_lock); //unlock
+    czl_event_send(&gp->thread_pipe->report_event);
 
     return 1;
 }
@@ -3965,11 +3965,11 @@ char czl_sys_notify(czl_gp *gp, czl_fun *fun)
         fun->ret.val.inum = 0;
         return 1;
     }
-    if (czl_notify_buf_create(p->piple, fun->vars + 1))
+    if (czl_notify_buf_create(p->pipe, fun->vars + 1))
         fun->ret.val.inum = 1;
     else
         fun->ret.val.inum = 0;
-    czl_event_send(&p->piple->notify_event);
+    czl_event_send(&p->pipe->notify_event);
 
     return 1;
 }
@@ -3995,9 +3995,9 @@ char czl_sys_notifyall(czl_gp *gp, czl_fun *fun)
             p = q;
             continue;
         }
-        if (!czl_notify_buf_create(p->piple, fun->vars))
+        if (!czl_notify_buf_create(p->pipe, fun->vars))
             fun->ret.val.inum = 0;
-        czl_event_send(&p->piple->notify_event);
+        czl_event_send(&p->pipe->notify_event);
         p = p->next;
     }
 

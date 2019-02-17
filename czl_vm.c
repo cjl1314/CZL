@@ -9544,7 +9544,7 @@ char czl_first_main_run(czl_gp *gp, czl_fun *fun)
     if (fun->enter_vars_count)
     {
     #ifdef CZL_MULT_THREAD
-        if (gp->thread_piple)
+        if (gp->thread_pipe)
         {
             fun->vars->type = gp->enter_var.type;
             fun->vars->val = gp->enter_var.val;
@@ -9897,15 +9897,15 @@ void czl_thread_list_delete(czl_gp *gp, czl_thread *p)
     #ifdef CZL_SYSTEM_WINDOWS
         CloseHandle(p->id);
     #endif
-        if (p->piple->alive)
+        if (p->pipe->alive)
         {
-            p->piple->alive = 0;
-            czl_event_send(&p->piple->notify_event);
-            czl_event_send(&p->piple->piple_event);
+            p->pipe->alive = 0;
+            czl_event_send(&p->pipe->notify_event);
+            czl_event_send(&p->pipe->pipe_event);
         }
         else
         {
-            czl_thread_piple_delete(p->piple);
+            czl_thread_pipe_delete(p->pipe);
         }
         CZL_THREAD_FREE(gp, p);
         p = q;
