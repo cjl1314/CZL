@@ -650,10 +650,153 @@ char* czl_string_match(czl_gp *gp, char *code, czl_exp_node **node)
     return code;
 }
 
+char* czl_numstr_ignore_sign_filt(char *code)
+{
+    while (' ' == *code || '\t' == *code ||
+           '\n' == *code || '\r' == *code)
+        code++;
+
+    return code;
+}
+
+int czl_get_numstr_len(czl_gp *gp, char *code)
+{
+    int len = 0;
+    int cnt;
+
+    code = czl_numstr_ignore_sign_filt(code);
+
+    do {
+        if (*(code++) != '0')
+            goto CZL_SYNTAX_ERROR;
+
+        switch (*(code++))
+        {
+        case 'x': case 'X':
+            while (((*code >= '0' && *code <= '9') ||
+                    (*code >= 'a' && *code <= 'f') ||
+                    (*code >= 'A' && *code <= 'F')) &&
+                   ((*(code+1) >= '0' && *(code+1) <= '9') ||
+                    (*(code+1) >= 'a' && *(code+1) <= 'f') ||
+                    (*(code+1) >= 'A' && *(code+1) <= 'F')))
+            {
+                len++;
+                code += 2;
+            }
+            break;
+        case 'b': case 'B':
+            cnt = 0;
+            while ('0' == *code || '1' == *code)
+            {
+                cnt++;
+                code++;
+            }
+            if (cnt%8 != 0)
+                goto CZL_SYNTAX_ERROR;
+            len += cnt/8;
+            break;
+        default:
+            goto CZL_SYNTAX_ERROR;
+        }
+
+        code = czl_numstr_ignore_sign_filt(code);
+    } while (*code != '\'');
+
+    if ('\n' == *code)
+    {
+        sprintf(gp->log_buf, "missed '\'' for end defined numstr, ");
+        return -1;
+    }
+
+    return len;
+
+CZL_SYNTAX_ERROR:
+    sprintf(gp->log_buf, "numstr error, ");
+    return -1;
+}
+
+char* czl_get_numstr(char *code, char *val)
+{
+    int cnt = 0;
+    unsigned char h, l;
+    const unsigned char bTable[] = {128, 64, 32, 16, 8, 4, 2, 1};
+
+    code = czl_numstr_ignore_sign_filt(code);
+
+    do {
+        switch (*(code++))
+        {
+        case 'x': case 'X':
+            while (!(' ' == *code || '\t' == *code ||
+                     '\n' == *code || '\r' == *code))
+            {
+                if (*code >= '0' && *code <= '9')
+                    h = *code - '0';
+                else if (*code >= 'a' && *code <= 'z')
+                    h = *code - 'a' + 10;
+                else
+                    h = *code - 'A' + 10;
+                code++;
+                if (*code >= '0' && *code <= '9')
+                    l = *code - '0';
+                else if (*code >= 'a' && *code <= 'z')
+                    l = *code - 'a' + 10;
+                else
+                    l = *code - 'A' + 10;
+                code++;
+                *(val++) = h*16 + l;
+            }
+            break;
+        case 'b': case 'B':
+            cnt = 0;
+            while ('0' == *code || '1' == *code)
+            {
+                *val += ('0' == *code ? 0 : bTable[cnt]);
+                if (++cnt == 8)
+                {
+                    val++;
+                    cnt = 0;
+                }
+                code++;
+            }
+            break;
+        default:
+            break;
+        }
+
+        code = czl_numstr_ignore_sign_filt(code);
+    } while (*code != '\'');
+
+    return code+1;
+}
+
+char* czl_numstr_match(czl_gp *gp, char *code, czl_exp_node **node)
+{
+    //'0x0a 0b11110000'
+    czl_value val;
+    long size = czl_get_numstr_len(gp, ++code);
+    if (size < 0)
+        return NULL;
+
+    if (!czl_str_create(gp, &val.str, size+1, size, NULL))
+        return NULL;
+    code = czl_get_numstr(code, val.str.s->str);
+
+    if (!(*node=czl_opr_node_create(gp, CZL_STRING, &val)))
+        return NULL;
+
+    return code;
+}
+
 char czl_is_constant(czl_gp *gp, char **code, czl_exp_node **node)
 {
     if ('\'' == **code)
-        *code = czl_char_match(gp, *code, node);
+    {
+        if ('\'' == *(*code+2) || ('\\' == *(*code+1) && '\'' == *(*code+3)))
+            *code = czl_char_match(gp, *code, node);
+        else
+            *code = czl_numstr_match(gp, *code, node);
+    }
     else if ('\"' == **code)
         *code = czl_string_match(gp, *code, node);
     else if ((**code >= '0' && **code <= '9') ||

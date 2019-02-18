@@ -7816,7 +7816,7 @@ static char czl_foreach_string
         return 0;
 
     ro.type = CZL_INT;
-    ro.val.inum = str[loop->para.inx++];
+    ro.val.inum = (unsigned char)str[loop->para.inx++];
 
     return czl_ass_cac(gp, lo, &ro) ? 1 : -1;
 }

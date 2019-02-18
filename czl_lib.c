@@ -285,24 +285,26 @@ char czl_set_ret_str
 ///////////////////////////////////////////////////////////////
 int czl_get_int_mode(char *mode)
 {
+    while (*(++mode) != 'd') ;
+
 #ifdef CZL_SYSTEM_LINUX
     #ifdef CZL_SYSTEM_64bit
-        strcpy(mode, "%lld");
+        strcpy(mode, "lld");
         return 4;
     #else
-        strcpy(mode, "%ld");
+        strcpy(mode, "ld");
         return 3;
     #endif
 #elif defined CZL_SYSTEM_WINDOWS
     #ifdef CZL_SYSTEM_64bit
-        strcpy(mode, "%I64d");
+        strcpy(mode, "I64d");
         return 5;
     #else
-        strcpy(mode, "%ld");
+        strcpy(mode, "ld");
         return 3;
     #endif
 #else
-    strcpy(mode, "%ld");
+    strcpy(mode, "ld");
     return 3;
 #endif
 }
@@ -317,24 +319,26 @@ char* czl_print_modify_check
 {
     //%-1.2d
     //%-1.2f
-    //%s %c %d %f
+    //%o %x %b %c %d %f
 
-    if ('s' == *s)
+    switch (*s)
     {
+    case 'o':
+        s++;
+        *modify_type = CZL_OBJ_REF;
+        break;
+    case 'x': case 'b': case 'X': case 'B':
         if (value_type != CZL_STRING)
             return NULL;
-        *(modify++) = *(s++);
-        *modify_type = CZL_STRING;
-    }
-    else if ('c' == *s)
-    {
+        *modify_type = *s++;
+        break;
+    case 'c':
         if (value_type != CZL_INT && value_type != CZL_FLOAT)
             return NULL;
         *(modify++) = *(s++);
         *modify_type = CZL_CHAR;
-    }
-    else //%d %f
-    {
+        break;
+    default: //%d %f
         if (value_type != CZL_INT && value_type != CZL_FLOAT)
             return NULL;
         if ('-' == *s)
@@ -375,6 +379,7 @@ char* czl_print_modify_check
         }
         else
             return NULL;
+        break;
     }
 
     *modify = '\0';
@@ -427,7 +432,7 @@ void czl_print_tab(czl_gp *gp, const czl_table *tab, FILE *fout)
             fprintf(fout, "\"%s\":", p->key.str.s->str);
         else
         {
-            char mode[8];
+            char mode[8] = "%d";
             int len = czl_get_int_mode(mode);
             mode[len] = ':';
             mode[len+1] = '\0';
@@ -523,7 +528,7 @@ char czl_print_tab_list(czl_gp *gp, const czl_table_list *ele, FILE *fout)
 
 char czl_print_obj(czl_gp *gp, const czl_var *obj, FILE *fout)
 {
-    char mode[8];
+    char mode[8] = "%d";
 
     switch (obj->type)
     {
@@ -566,7 +571,48 @@ char czl_print_obj(czl_gp *gp, const czl_var *obj, FILE *fout)
     return 1;
 }
 
-void czl_modify_print
+void czl_print_str_hex(czl_string *str, char modify_type, FILE *fout)
+{
+    char *s = str->str;
+    unsigned long i, j = str->len;
+
+    for (i = 0; i < j; i++, s++)
+    {
+        unsigned char ch = *s;
+        char h = ch/16;
+        char l = ch - h*16;
+        if (h >= 0 && h <= 9)
+            h += '0';
+        else
+            h = h - 10 + 'A';
+        if (l >= 0 && l <= 9)
+            l += '0';
+        else
+            l = l - 10 + 'A';
+        if ('x' == modify_type && i+1 < j)
+            fprintf(fout, "%c%c ", h, l);
+        else
+            fprintf(fout, "%c%c", h, l);
+    }
+}
+
+void czl_print_str_bin(czl_string *str, char modify_type, FILE *fout)
+{
+    char *s = str->str;
+    unsigned long i, j = str->len;
+
+    for (i = 0; i < j; i++, s++)
+    {
+        unsigned char ch = *s;
+        unsigned char cnt;
+        for (cnt = 0; cnt < 8; cnt++, ch <<= 1)
+            fprintf(fout, "%d", (ch&0x80 ? 1:0));
+        if ('b' == modify_type && i+1 < j)
+            fprintf(fout, " ");
+    }
+}
+
+char czl_modify_print
 (
     czl_gp *gp,
     char *modify,
@@ -575,38 +621,30 @@ void czl_modify_print
     FILE *fout
 )
 {
-    if (modify && strcmp("%d", modify) == 0)
-        czl_get_int_mode(modify);
-
-    switch (res->type)
+    switch (modify_type)
     {
-    case CZL_INT:
-        if (modify)
-            if (CZL_FLOAT == modify_type)
-                fprintf(fout, modify, (double)res->val.inum);
-            else //CHAR/INT
-                fprintf(fout, modify, res->val.inum);
+    case CZL_CHAR: case CZL_INT:
+        if (CZL_INT == modify_type)
+            czl_get_int_mode(modify);
+        if (CZL_INT == res->type)
+            fprintf(fout, modify, res->val.inum);
         else
-        {
-            char mode[8];
-            czl_get_int_mode(mode);
-            fprintf(fout, mode, res->val.inum);
-        }
-        break;
+            fprintf(fout, modify, res->val.fnum);
+        return 1;
     case CZL_FLOAT:
-        if (modify)
-            if (CZL_CHAR == modify_type)
-                fprintf(fout, modify, res->val.fnum);
-            else if (CZL_INT == modify_type)
-                fprintf(fout, modify, res->val.fnum);
-            else //DOUBLE
-                fprintf(fout, modify, res->val.fnum);
+        if (CZL_INT == res->type)
+            fprintf(fout, modify, (double)res->val.inum);
         else
-            fprintf(fout, "%lf", res->val.fnum);
-        break;
-    default: //CZL_STRING
-        fprintf(fout, "%s", res->val.str.s->str);
-        break;
+            fprintf(fout, modify, res->val.fnum);
+        return 1;
+    case 'x': case 'X':
+        czl_print_str_hex(res->val.str.s, modify_type, fout);
+        return 1;
+    case 'b': case 'B':
+        czl_print_str_bin(res->val.str.s, modify_type, fout);
+        return 1;
+    default: //CZL_OBJ_REF
+        return czl_print_obj(gp, res, fout);
     }
 }
 
@@ -716,7 +754,11 @@ char czl_sys_print(czl_gp *gp, czl_fun *fun)
                             CZL_SRCD1(gp, str);
                             goto CZL_END;
                         }
-                        czl_modify_print(gp, modify, modify_type, res, fout);
+                        if (!czl_modify_print(gp, modify, modify_type, res, fout))
+                        {
+                            ret = 0;
+                            goto CZL_END;
+                        }
                     }
                 }
                 else
