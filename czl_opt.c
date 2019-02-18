@@ -294,6 +294,40 @@ char czl_and_and_cac(czl_gp *gp, czl_var *res, czl_var *opr)
     }
 }
 
+char czl_xor_xor_cac(czl_gp *gp, czl_var *left, czl_var *right)
+{
+    switch (left->type) // ^^
+    {
+    case CZL_INT: case CZL_FLOAT:
+        switch (right->type)
+        {
+        case CZL_INT: case CZL_FLOAT:
+            left->val.inum = (left->val.inum ?
+                              (right->val.inum ? 0 : 1) :
+                              (right->val.inum ? 1 : 0));
+            break;
+        default:
+            left->val.inum = (left->val.inum ? 1 : 0);
+            break;
+        }
+        break;
+    default:
+        switch (right->type)
+        {
+        case CZL_INT: case CZL_FLOAT:
+            left->val.inum = (right->val.inum ? 1 : 0);
+            break;
+        default:
+            left->val.inum = 0;
+            break;
+        }
+        break;
+    }
+
+    left->type = CZL_INT;
+    return 1;
+}
+
 char czl_swap_cac_num_type(czl_var *left, czl_var *right)
 {
     czl_value tmp;
@@ -1851,6 +1885,7 @@ char (*const czl_2p_opt_cac_funs[])(czl_gp*, czl_var*, czl_var*) =
     czl_or_or_cac,
     czl_and_and_cac,
     //双参双目运算符函数
+    czl_xor_xor_cac,
     czl_swap_cac,
     czl_ass_cac,
     czl_add_a_cac,

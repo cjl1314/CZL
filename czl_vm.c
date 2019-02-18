@@ -34,6 +34,7 @@ const czl_binary_operator czl_binary_opt_table[] =
     //
     {"||",  CZL_OR_OR,      6,   CZL_LEFT_TO_RIGHT},
     {"&&",  CZL_AND_AND,    7,   CZL_LEFT_TO_RIGHT},
+    {"^^",  CZL_XOR_XOR,    6,   CZL_LEFT_TO_RIGHT},
     //
     {">>",  CZL_L_SHIFT,    11,  CZL_LEFT_TO_RIGHT},
     {"<<",  CZL_R_SHIFT,    11,  CZL_LEFT_TO_RIGHT},

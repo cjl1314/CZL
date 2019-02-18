@@ -89,6 +89,7 @@ typedef enum czl_opt_enum
     //|| && 在运行时转为单目执行
     CZL_OR_OR,		// ||
     CZL_AND_AND,	// &&
+    CZL_XOR_XOR,    // ^^
     //双目运算符
     CZL_SWAP,       // ><
     CZL_ASS,		// =
