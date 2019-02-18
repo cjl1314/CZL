@@ -346,6 +346,9 @@ if (pc->res) { \
     else if (!czl_val_copy(gp, pc->res, lo)) \
         goto CZL_EXCEPTION_CATCH; \
 } \
+else { \
+    pc->ro->val.inum = 0; \
+} \
 goto CZL_FUN_RETURN;
 
 //执行try语句: run try sentence

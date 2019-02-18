@@ -8775,6 +8775,7 @@ czl_exp_ele* czl_compile_block
             buf->flag = p->type;
             if (p->sentence.exp)
                 buf->msg.em = (buf-1)->msg.em;
+            buf->ro = &gp->cur_fun->ret;
             buf->res = (p->sentence.exp ? &gp->cur_fun->ret : NULL);
             ++buf; //CZL_RETURN_SENTENCE/CZL_YEILD_SENTENCE
             break;
@@ -8820,6 +8821,7 @@ czl_exp_ele* czl_compile_block
     case CZL_FUN_BLOCK:
         buf->flag = CZL_RETURN_SENTENCE;
         buf->res = NULL;
+        buf->ro = &gp->cur_fun->ret;
         break;
     case CZL_LOOP_BLOCK:
         if (CZL_FOREACH_LOOP == cur->type)
