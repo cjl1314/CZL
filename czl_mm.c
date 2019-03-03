@@ -1126,7 +1126,7 @@ static char czl_val_gc(czl_gp *gp, czl_var *var)
         break;
     }
 
-    return (((czl_ins*)var->val.obj)->rf || CZL_OBJ_IS_LOCK(var));
+    return (CZL_OBJ_IS_LOCK(var));
 }
 
 static void czl_str_gc(czl_gp *gp, czl_str *str)
@@ -1166,7 +1166,7 @@ static czl_ins* czl_ins_gc(czl_gp *gp, czl_ins *ins)
         if (czl_val_gc(gp, var++) && 0 == flag)
             flag = 1;
 
-    if (1 == ins->rc && 0 == flag)
+    if (1 == ins->rc && 0 == ins->rf && 0 == flag)
     {
         unsigned long size = CZL_IL(ins->pclass->parents_count,
                                     ins->pclass->vars_count);
@@ -1196,7 +1196,7 @@ static void czl_tab_gc(czl_gp *gp, czl_value *val)
     czl_table *tab = (czl_table*)val->obj;
     unsigned long size;
 
-    if (1 == tab->rc)
+    if (1 == tab->rc && 0 == tab->rf)
     {
         size = sizeof(czl_table);
         if (CZL_MM_SP_CHECK(size, gp->mmp_tab))
@@ -1262,7 +1262,7 @@ static void czl_arr_gc(czl_gp *gp, czl_value *val)
 {
     czl_array *arr = (czl_array*)val->obj;
 
-    if (1 == arr->rc)
+    if (1 == arr->rc && 0 == arr->rf)
     {
         unsigned long size = sizeof(czl_array);
         if (CZL_MM_SP_CHECK(size, gp->mmp_arr))
@@ -1286,7 +1286,7 @@ static void czl_sql_gc(czl_gp *gp, czl_value *val)
     czl_sql *sql = (czl_sql*)val->obj;
     unsigned long size;
 
-    if (1 == sql->rc)
+    if (1 == sql->rc && 0 == sql->rf)
     {
         size = sizeof(czl_sql);
         if (CZL_MM_SP_CHECK(size, gp->mmp_sql))

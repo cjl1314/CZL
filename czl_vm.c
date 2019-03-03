@@ -6450,16 +6450,20 @@ static czl_var* czl_get_arr_member_res
 (
     czl_gp *gp,
     const czl_member_index *inx,
-    czl_array *arr,
+    czl_var *obj,
     unsigned char flag
 )
 {
+    czl_array *arr;
     czl_long i = czl_get_exp_number(gp, inx->index.arr.exp);
     if (i < 0)
     {
         gp->exceptionCode = CZL_EXCEPTION_OBJECT_MEMBER_NOT_FIND;
         return NULL;
     }
+
+    //防止czl_get_exp_number后obj的arr地址发生改变
+    arr = (czl_array*)obj->val.obj;
 
     if ((unsigned long)i >= arr->cnt)
     {
@@ -6492,16 +6496,20 @@ static czl_var* czl_get_tab_member_res
 (
     czl_gp *gp,
     const czl_array_index *inx,
-    czl_value *val,
+    czl_var *obj,
     unsigned char flag
 )
 {
 	czl_tabkv *ele;
-	czl_table *tab = (czl_table*)val->obj;
-    unsigned long count = tab->count;
+    czl_table *tab;
+    unsigned long count;
     czl_var *res = czl_exp_stack_cac(gp, inx->exp);
     if (!res)
         return NULL;
+
+    //防止czl_exp_stack_cac后obj的tab地址或count发生改变
+    tab = (czl_table*)obj->val.obj;
+    count = tab->count;
 
     if (!(ele=czl_create_tabkv(gp, tab, res)))
         return NULL;
@@ -6513,7 +6521,7 @@ static czl_var* czl_get_tab_member_res
         if (count != tab->count && flag != CZL_ASS)
         {
             gp->exceptionCode = CZL_EXCEPTION_OBJECT_MEMBER_NOT_FIND;
-            czl_delete_tabkv(gp, val, res);
+            czl_delete_tabkv(gp, &obj->val, res);
             return NULL;
         }
         return (czl_var*)ele;
@@ -6695,10 +6703,10 @@ static czl_var* czl_get_member_res(czl_gp *gp, const czl_obj_member *member)
 	czl_var *var;
 	czl_var tmp;
     unsigned char circle_ref_flag = 0;
-    unsigned long i = 1, cnt = 0;
-	unsigned char quality;
-	czl_var *objs[CZL_MAX_MEMBER_INDEX_LAYER];
+    unsigned long i = 0, cnt = 0;
 	czl_member_index *inx;
+    czl_var *objs[CZL_MAX_MEMBER_INDEX_LAYER];
+    unsigned char locks[CZL_MAX_MEMBER_INDEX_LAYER] = {0};
 
     czl_var *obj = (czl_var*)member->obj;
     if (CZL_INS_VAR == member->type)
@@ -6708,7 +6716,6 @@ static czl_var* czl_get_member_res(czl_gp *gp, const czl_obj_member *member)
     else if (CZL_OBJ_REF == obj->type)
         obj = CZL_GRV(obj);
 
-	quality = obj->quality;
     var = (CZL_REF_VAR == member->flag ? obj : gp->cur_var);
     
     if (CZL_ASS == member->flag &&
@@ -6725,7 +6732,10 @@ static czl_var* czl_get_member_res(czl_gp *gp, const czl_obj_member *member)
 
     inx = member->index;
     do {
-        CZL_LOCK_OBJ(obj);
+        if (CZL_OBJ_IS_LOCK(obj))
+            locks[cnt] = 1;
+        else
+            CZL_LOCK_OBJ(obj);
         objs[cnt++] = obj;
         if (1 == circle_ref_flag && var->val.obj == obj->val.obj)
         {
@@ -6751,9 +6761,7 @@ static czl_var* czl_get_member_res(czl_gp *gp, const czl_obj_member *member)
                  !czl_array_fork(gp, (czl_array*)obj->val.obj, &obj->val, 1))
                 goto CZL_ERROR_END;
             if (inx->type != CZL_ARRAY_INDEX ||
-                !(obj=czl_get_arr_member_res(gp, inx,
-                                             (czl_array*)obj->val.obj,
-                                             member->flag)))
+                !(obj=czl_get_arr_member_res(gp, inx, obj, member->flag)))
                 goto CZL_ERROR_END;
             break;
         case CZL_TABLE:
@@ -6763,8 +6771,7 @@ static czl_var* czl_get_member_res(czl_gp *gp, const czl_obj_member *member)
                 goto CZL_ERROR_END;
             if (inx->type != CZL_ARRAY_INDEX ||
                 !(obj=czl_get_tab_member_res(gp, &inx->index.arr,
-                                             &obj->val,
-                                             member->flag)))
+                                             obj, member->flag)))
                 goto CZL_ERROR_END;
             break;
         case CZL_STRING:
@@ -6796,15 +6803,13 @@ static czl_var* czl_get_member_res(czl_gp *gp, const czl_obj_member *member)
             obj = &gp->tmp_var;
     }
 
-    objs[0]->quality = quality;
-    CZL_UNLOCK_OBJS(objs, i, cnt);
+    CZL_UNLOCK_OBJS(objs, locks, i, cnt);
     return obj;
 
 CZL_ERROR_END:
     if (2 == circle_ref_flag)
         czl_val_del(gp, &tmp);
-    objs[0]->quality = quality;
-    CZL_UNLOCK_OBJS(objs, i, cnt);
+    CZL_UNLOCK_OBJS(objs, locks, i, cnt);
     return NULL;
 }
 ///////////////////////////////////////////////////////////////

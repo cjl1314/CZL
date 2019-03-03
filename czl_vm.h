@@ -66,8 +66,8 @@
 #define CZL_UNLOCK_OBJ(obj, Quality) ((obj)->quality = Quality)
 
 //解锁对象集合: unlock objs
-#define CZL_UNLOCK_OBJS(objs, i, j) \
-while (i < j) objs[i++]->quality = CZL_OBJ_ELE;
+#define CZL_UNLOCK_OBJS(objs, locks, i, j) \
+do { if (!locks[i]) objs[i]->quality = CZL_OBJ_ELE; } while (++i < j);
 ///////////////////////////////////////////////////////////////
 #define CZL_INT_SWAP(a, b) { a=a^b; b=b^a; a=a^b; }
 #define CZL_VAL_SWAP(a, b, t) { t=a; a=b; b=t; }
