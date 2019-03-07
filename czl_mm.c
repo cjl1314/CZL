@@ -955,7 +955,7 @@ static void* czl_mm_realloc
 #ifdef CZL_MM_SLAB
         if (gp->mm_cache && new_size <= CZL_MM_1MB)
             return czl_mm_slab_resize(gp, heap, new_size, old_size, pools);
-        else if (old_size > CZL_MM_1MB)
+        else if (old_size > CZL_MM_1MB && new_size > CZL_MM_1MB)
             return czl_mm_sys_realloc(gp, heap, new_size, old_size);
         else
             return czl_mm_different_page_resize(gp, heap, new_size,
