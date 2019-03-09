@@ -4260,7 +4260,7 @@ char czl_clean(czl_gp *gp)
     gp->stack->count = 0;
 
     czl_mm_sp_destroy(gp, &gp->stack->pool);
-    czl_mm_pool_init(&gp->stack->pool, sizeof(czl_glo_var), 0);
+    czl_mm_pool_init(&gp->stack->pool, sizeof(czl_glo_var));
 
     return 1;
 }
