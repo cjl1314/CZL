@@ -4244,9 +4244,10 @@ unsigned long czl_size(czl_gp *gp)
     return gp->stack->count;
 }
 
+#ifdef CZL_MM_MODULE
 char czl_clean(czl_gp *gp)
 {
-	czl_glo_var *p;
+    czl_glo_var *p;
 
     if (!gp->stack) return 0;
 
@@ -4254,13 +4255,35 @@ char czl_clean(czl_gp *gp)
     {
         czl_val_del(gp, (czl_var*)p);
     }
-    czl_mm_sp_destroy(gp, &gp->stack->pool);
 
     gp->stack->eles_head = NULL;
     gp->stack->count = 0;
-    czl_mm_pool_init(&gp->stack->pool, sizeof(czl_glo_var));
+
+    czl_mm_sp_destroy(gp, &gp->stack->pool);
+    czl_mm_pool_init(&gp->stack->pool, sizeof(czl_glo_var), 0);
+
     return 1;
 }
+#else
+char czl_clean(czl_gp *gp)
+{
+    czl_glo_var *p, *q;
+
+    if (!gp->stack) return 0;
+
+    for (p = gp->stack->eles_head; p; p = q)
+    {
+        q = p->next;
+        czl_val_del(gp, (czl_var*)p);
+        czl_free(gp, p, sizeof(czl_glo_var));
+    }
+
+    gp->stack->eles_head = NULL;
+    gp->stack->count = 0;
+
+    return 1;
+}
+#endif
 
 char czl_exec(czl_gp *gp)
 {

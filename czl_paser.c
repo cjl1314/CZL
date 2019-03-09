@@ -3906,7 +3906,7 @@ char czl_exec_shell(czl_gp *gp, char *path)
 
 void czl_mm_print(czl_gp *gp)
 {
-    char mode[8];
+    char mode[8] = "%d";
     char modify[64];
 
 //    czl_get_int_mode(mode);
@@ -3918,6 +3918,7 @@ void czl_mm_print(czl_gp *gp)
 
     if (gp->mm_cnt != 0)
     {
+        mode[1] = 'd';
         czl_get_int_mode(mode);
         strcpy(modify, "memory error, ");
         strcat(modify, mode);
