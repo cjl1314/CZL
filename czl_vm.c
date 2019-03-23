@@ -6778,7 +6778,7 @@ static czl_var* czl_get_member_res(czl_gp *gp, const czl_obj_member *member)
             if (CZL_REF_VAR == member->flag)
                 goto CZL_ERROR_END;
             if (member->flag &&
-                ((czl_string*)obj->val.obj)->rc > 1 &&
+                ((czl_string*)obj->val.str.s)->rc > 1 &&
                  !czl_string_fork(gp, &obj->val.str))
                 goto CZL_ERROR_END;
             if (inx->type != CZL_ARRAY_INDEX ||
