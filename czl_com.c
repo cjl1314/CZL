@@ -1,4 +1,4 @@
-﻿#include "czl_com.h"
+#include "czl_com.h"
 
 #ifdef CZL_LIB_COM
 //库函数声明，其中gp是CZL运行时用到的全局参数，fun是函数。
@@ -29,6 +29,7 @@ char czl_com_list(czl_gp *gp, czl_fun *fun)
     unsigned long pcReturned = 0;	//载入缓冲区的结构数量（用于那些能返回多个结构的函数）
     PORT_INFO_2 *pPort;
     czl_array *arr = NULL;
+	void **obj;
     char ret = 0;
 
     //获取端口信息，能得到端口信息的大小 pcbNeeded
@@ -52,18 +53,22 @@ char czl_com_list(czl_gp *gp, czl_fun *fun)
             if (hCom != INVALID_HANDLE_VALUE)
             {
                 CloseHandle(hCom);
-                if (!arr && !(arr=czl_array_create(gp, 1, 0)))
-                    goto CZL_END;
+				 if (!obj)
+				{
+					if (!(obj=czl_array_create(gp, 1, 0)))
+						goto CZL_END;
+					arr = CZL_ARR(obj);
+				}
                 if (++arr->cnt > arr->sum &&
                     !czl_array_resize(gp, arr, arr->cnt))
                 {
-                    czl_array_delete(gp, arr);
+                    czl_array_delete(gp, obj);
                     goto CZL_END;
                 }
                 if (!czl_str_create(gp, &arr->vars[arr->cnt-1].val.str,
                                     len+1, len, portName))
                 {
-                    czl_array_delete(gp, arr);
+                    czl_array_delete(gp, obj);
                     goto CZL_END;
                 }
                 arr->vars[arr->cnt-1].type = CZL_STRING;
@@ -73,10 +78,15 @@ char czl_com_list(czl_gp *gp, czl_fun *fun)
 
     if (arr)
     {
-        arr->vars = CZL_TMP_REALLOC(gp, arr->vars,
-                                    arr->cnt*sizeof(czl_var),
-                                    arr->sum*sizeof(czl_var));
-        arr->sum = arr->cnt;
+		czl_var *vars;
+        vars = CZL_TMP_REALLOC(gp, arr->vars,
+							   arr->cnt*sizeof(czl_var),
+							   arr->sum*sizeof(czl_var));
+		if (vars)
+		{
+			arr->vars = vars;
+			arr->sum = arr->cnt;
+		}
         ret = 1;
     }
 
@@ -84,7 +94,7 @@ CZL_END:
     if (ret)
     {
         fun->ret.type = CZL_ARRAY;
-        fun->ret.val.obj = arr;
+        fun->ret.val.Obj = obj;
     }
     else
     {
@@ -96,12 +106,13 @@ CZL_END:
 
 char czl_com_open(czl_gp *gp, czl_fun *fun)
 {
+	void **obj;
     czl_array *arr;
     czl_str str1, str2;
     HANDLE event1 = NULL, event2 = NULL;
     DCB sDcb;
     COMMTIMEOUTS timeOuts;
-    char *portName = fun->vars[0].val.str.s->str;
+    char *portName = CZL_STR(fun->vars[0].val.str.Obj)->str;
     DWORD baudRate = (unsigned long)fun->vars[1].val.inum;
     unsigned long timeOut = (unsigned long)fun->vars[2].val.inum;
     DWORD type = (timeOut ? FILE_FLAG_OVERLAPPED : 0);
@@ -143,12 +154,13 @@ char czl_com_open(czl_gp *gp, czl_fun *fun)
     sDcb.Parity = NOPARITY;     //设置校验模式
     SetCommState(hCom, &sDcb);  //设置DCB结构参数
 
-    if (!(arr=czl_array_create(gp, 3, 3)))
+    if (!(obj=czl_array_create(gp, 3, 3)))
     {
         CloseHandle(hCom);
         fun->ret.val.inum = 0;
         return 1;
     }
+	arr = CZL_ARR(obj);
 
     if (type)
     {
@@ -157,7 +169,7 @@ char czl_com_open(czl_gp *gp, czl_fun *fun)
         {
             CloseHandle(hCom);
             CloseHandle(event1);
-            czl_array_delete(gp, arr);
+            czl_array_delete(gp, obj);
             fun->ret.val.inum = 0;
             return 1;
         }
@@ -169,14 +181,14 @@ char czl_com_open(czl_gp *gp, czl_fun *fun)
             CloseHandle(hCom);
             CloseHandle(event1);
             CloseHandle(event2);
-            czl_array_delete(gp, arr);
+            czl_array_delete(gp, obj);
             fun->ret.val.inum = 0;
             return 1;
         }
-        memset(str1.s->str, 0, sizeof(OVERLAPPED));
-        memcpy(str1.s->str+sizeof(OVERLAPPED)-4, &event1, 4);
-        memset(str2.s->str, 0, sizeof(OVERLAPPED));
-        memcpy(str2.s->str+sizeof(OVERLAPPED)-4, &event2, 4);
+        memset(CZL_STR(str1.Obj)->str, 0, sizeof(OVERLAPPED));
+        memcpy(CZL_STR(str1.Obj)->str+sizeof(OVERLAPPED)-4, &event1, 4);
+        memset(CZL_STR(str2.Obj)->str, 0, sizeof(OVERLAPPED));
+        memcpy(CZL_STR(str2.Obj)->str+sizeof(OVERLAPPED)-4, &event2, 4);
     }
 
     arr->vars[0].val.inum = (unsigned long)hCom;
@@ -189,7 +201,7 @@ char czl_com_open(czl_gp *gp, czl_fun *fun)
     }
 
     fun->ret.type = CZL_ARRAY;
-    fun->ret.val.obj = arr;
+    fun->ret.val.Obj = obj;
 
     return 1;
 }
@@ -201,19 +213,19 @@ char czl_com_close(czl_gp *gp, czl_fun *fun)
     if (!h)
         return 0; //返回0表示入参不正确，系统抛出异常
 
-    arr = h->val.obj; //获取数组指针
+    arr = CZL_ARR(h->val.Obj); //获取数组指针
     if (3 == arr->cnt && CZL_INT == arr->vars[0].type)
     {
         CloseHandle((HANDLE)((unsigned long)arr->vars[0].val.inum));
         if (CZL_STRING == arr->vars[1].type &&
-            sizeof(OVERLAPPED) == arr->vars[1].val.str.s->len &&
+            sizeof(OVERLAPPED) == CZL_STR(arr->vars[1].val.str.Obj)->len &&
             CZL_STRING == arr->vars[2].type &&
-            sizeof(OVERLAPPED) == arr->vars[2].val.str.s->len)
+            sizeof(OVERLAPPED) == CZL_STR(arr->vars[2].val.str.Obj)->len)
         {
             HANDLE event;
-            memcpy(&event, arr->vars[1].val.str.s->str+sizeof(OVERLAPPED)-4, 4);
+            memcpy(&event, CZL_STR(arr->vars[1].val.str.Obj)->str+sizeof(OVERLAPPED)-4, 4);
             CloseHandle(event);
-            memcpy(&event, arr->vars[2].val.str.s->str+sizeof(OVERLAPPED)-4, 4);
+            memcpy(&event, CZL_STR(arr->vars[2].val.str.Obj)->str+sizeof(OVERLAPPED)-4, 4);
             CloseHandle(event);
         }
         fun->ret.val.inum = 1; //"close"函数返回值是1
@@ -232,22 +244,22 @@ char czl_com_write(czl_gp *gp, czl_fun *fun)
     if (!h)
         return 0;
 
-    arr = h->val.obj;
+    arr = CZL_ARR(h->val.Obj);
     if (3 == arr->cnt && CZL_INT == arr->vars[0].type)
     {
         HANDLE hCom = (HANDLE)((unsigned long)arr->vars[0].val.inum);
-        char *buf = fun->vars[1].val.str.s->str;
-        DWORD len = fun->vars[1].val.str.s->len;
+        char *buf = CZL_STR(fun->vars[1].val.str.Obj)->str;
+        DWORD len = CZL_STR(fun->vars[1].val.str.Obj)->len;
         if (CZL_INT == arr->vars[1].type)
         {
             char ret = WriteFile(hCom, buf, len, &len, NULL);
             fun->ret.val.inum = (ret ? 1 : 0);
         }
         else if (CZL_STRING == arr->vars[1].type &&
-                 sizeof(OVERLAPPED) == arr->vars[1].val.str.s->len)
+                 sizeof(OVERLAPPED) == CZL_STR(arr->vars[1].val.str.Obj)->len)
         {
             OVERLAPPED ov;
-            memcpy(&ov, arr->vars[1].val.str.s->str, sizeof(OVERLAPPED));
+            memcpy(&ov, CZL_STR(arr->vars[1].val.str.Obj)->str, sizeof(OVERLAPPED));
             if (!WriteFile(hCom, buf, len, &len, &ov))
             {
                 if (GetLastError() != ERROR_IO_PENDING)
@@ -259,7 +271,7 @@ char czl_com_write(czl_gp *gp, czl_fun *fun)
                     fun->ret.val.inum = 1;
                 }
             }
-            memcpy(arr->vars[1].val.str.s->str, &ov, sizeof(OVERLAPPED));
+            memcpy(CZL_STR(arr->vars[1].val.str.Obj)->str, &ov, sizeof(OVERLAPPED));
         }
         else
             fun->ret.val.inum = 0;
@@ -278,7 +290,7 @@ char czl_com_read(czl_gp *gp, czl_fun *fun)
     if (!h)
         return 0;
 
-    arr = h->val.obj;
+    arr = CZL_ARR(h->val.Obj);
     if (3 == arr->cnt && CZL_INT == arr->vars[0].type)
     {
         DWORD size;
@@ -305,10 +317,10 @@ char czl_com_read(czl_gp *gp, czl_fun *fun)
                 CZL_TMP_FREE(gp, buf, len);
         }
         else if (CZL_STRING == arr->vars[2].type &&
-                 sizeof(OVERLAPPED) == arr->vars[2].val.str.s->len)
+                 sizeof(OVERLAPPED) == CZL_STR(arr->vars[2].val.str.Obj)->len)
         {
             OVERLAPPED ov;
-            memcpy(&ov, arr->vars[2].val.str.s->str, sizeof(OVERLAPPED));
+            memcpy(&ov, CZL_STR(arr->vars[2].val.str.Obj)->str, sizeof(OVERLAPPED));
             if (!ReadFile(hCom, buf, 1024, &size, &ov))
             {
                 if (GetLastError() != ERROR_IO_PENDING)
@@ -323,7 +335,7 @@ char czl_com_read(czl_gp *gp, czl_fun *fun)
                         fun->ret.val.inum = 0;
                 }
             }
-            memcpy(arr->vars[2].val.str.s->str, &ov, sizeof(OVERLAPPED));
+            memcpy(CZL_STR(arr->vars[2].val.str.Obj)->str, &ov, sizeof(OVERLAPPED));
         }
         else
             fun->ret.val.inum = 0;

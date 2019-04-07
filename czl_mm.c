@@ -1,342 +1,341 @@
-﻿#include <stdlib.h>
+#include <stdlib.h>
 #include <string.h>
 #include <assert.h>
 #include "czl_mm.h"
 #include "czl_vm.h"
 
 #ifdef CZL_MM_MODULE
-//碎片内存(1~512B)采用页管理方式；
-    //一级: 1 ~ 128B ->  4KB/page very good
-    //二级: 129~256B -> 20KB/page good
-    //三级: 257~512B -> 40KB/page just so so
+//非定长小堆内存(1~515B)和定长堆内存采用页管理方式；
+    //非定长小堆内存将515B划分为40个范围等级，每个等级定长分配；
     //数据结构： 链表分配，链表回收；
-    //算法： 分配节点和回收节点融合；
-    //特点： 分配速度快，内存利用率高，频繁alloc/free稳定性一般；
-    //内存不常驻，任意页完全空闲立即释放交还系统，页数量(limit)可配置；
-//小块内存(513B~1MB)采用slab机制；
-    //数据结构： 链表分配，HASH回收；
-    //算法： 链表节点与HASH节点融合，着色标记；
-    //特点： 分配速度快，内存利用率稍低，频繁alloc/free稳定性高；
-    //内存常驻，cache大小可配置
+    //算法： 页间和页内均采用链表组织，空闲链表，复制对其；
+    //特点： 分配和回收时间复杂度固定为O(1)，内存利用率定长100%、非定长统计平均95%，外部碎片自动整理；
+    //说明： 内存不常驻，任意页完全空闲立即释放交还系统；
+//中等大小堆内存(516B~1MB)采用cache机制；
+    //数据结构： 链表分配，链表回收；
+    //算法： 空闲节点在链表头部，繁忙节点在链表尾部，范围分级；
+    //特点： 分配和回收时间复杂度固定为O(1)，内存利用率统计平均大于90%；
+    //说明： 内存常驻，cache大小可配置
 //大块内存(>1MB)暂时由系统管理。
-
 //////////////////////////////////////////////////////////////////
 static void* czl_mm_sys_alloc(czl_gp*, czl_ulong);
-static void* czl_mm_sys_realloc(czl_gp*, void*, czl_ulong, czl_ulong);
-static void* czl_mm_different_page_resize(czl_gp*, void*, czl_ulong,
-                                          czl_ulong, czl_mm_sp_pool*);
+static void czl_mm_sys_free(czl_gp*, char*);
+static void* czl_mm_diff_page_resize(czl_gp*, char*, czl_ulong,
+                                     czl_ulong, czl_mm_sp_pool*);
 //////////////////////////////////////////////////////////////////
-#ifdef CZL_MM_SLAB
-static unsigned long czl_mm_hash_index(void *heap, long mask)
-{
-    long index = (unsigned long)heap | mask;
-
-    if (index < 0)
-        index = -index;
-
-    return index-1;
-}
-
-static char czl_mm_hash_resize
-(
-    czl_gp *gp,
-    unsigned long new_size,
-    czl_mm_hash *table
-)
-{
-	unsigned long i;
-    unsigned long index;
-    czl_mm_heap *p, *q;
-    czl_mm_heap **datas = (czl_mm_heap**)calloc(new_size,
-                                         sizeof(czl_mm_heap*));
-    if (!datas)
-        return 0;
-
-    table->mask = -new_size;
-
-    for (i = 0; i < table->size; i++)
-    {
-        for (p = table->datas[i]; p; p = q)
-        {
-            q = p->hash_next;
-            index = czl_mm_hash_index(p->heap, table->mask);
-            p->hash_next = datas[index];
-            datas[index] = p;
-        }
-    }
-
-    free(table->datas);
-
-    gp->mm_cnt -= (table->size*sizeof(czl_mm_heap*));
-    gp->mm_cnt += (new_size*sizeof(czl_mm_heap*));
-
-    table->size = new_size;
-    table->datas = datas;
-
-    return 1;
-}
-
-static char czl_mm_hash_insert(czl_gp *gp, czl_mm_heap *node, czl_mm_hash *table)
-{
-	unsigned long index;
-
-    if (table->count >= table->size &&
-        !czl_mm_hash_resize(gp, table->size<<1, table))
-        return 0;
-
-    index = czl_mm_hash_index(node->heap, table->mask);
-    node->hash_next = table->datas[index];
-    table->datas[index] = node;
-    table->count++;
-
-    return 1;
-}
-
-static czl_mm_heap* czl_mm_hash_find(void *heap, czl_mm_hash *table)
-{
-    unsigned long index = czl_mm_hash_index(heap, table->mask);
-    czl_mm_heap *p = table->datas[index];
-
-    while (p && heap != p->heap)
-        p = p->hash_next;
-
-    return p;
-}
-
-char czl_mm_hash_init(czl_gp *gp, czl_mm_hash *table)
-{
-    if (!(table->datas=calloc(1, sizeof(czl_mm_heap*))))
-        return 0;
-
-    table->size = 1;
-    table->mask = -table->size;
-    table->count = 0;
-
-    gp->slab_pool.count += sizeof(czl_mm_heap*);
-    gp->mm_cnt += sizeof(czl_mm_heap*);
-
-    return 1;
-}
-
-static czl_mm_heap* czl_mm_heap_create
+#ifdef CZL_MM_CACHE
+static czl_mm_cache* czl_mm_cache_create
 (
     czl_gp *gp,
     unsigned short index,
-    czl_mm_slab *slab
+    czl_mm_cache_pool *pool
 )
 {
-    czl_mm_heap *p = malloc(16+slab->size);
+    czl_mm_cache *p = malloc(CZL_MM_CACHE_HEAD_SIZE+pool->size);
     if (!p)
         return NULL;
 
-    p->color = CZL_MM_COLOR_BLACK;
+    p->state = 1;
     p->index = index;
-    p->hash_next = NULL;
 
     p->next = NULL;
-    if (NULL == slab->head)
+    if (NULL == pool->head)
     {
-        slab->head = p;
+        pool->head = p;
         p->last = NULL;
     }
     else
     {
-        slab->tail->next = p;
-        p->last = slab->tail;
+        pool->tail->next = p;
+        p->last = pool->tail;
     }
-    slab->tail = p;
+    pool->tail = p;
 
-    gp->slab_pool.count += (16+slab->size);
-    gp->mm_cnt += (16+slab->size);
+    gp->mm_cache.count += (CZL_MM_CACHE_HEAD_SIZE+pool->size);
+    gp->mm_cnt += (CZL_MM_CACHE_HEAD_SIZE+pool->size);
 
     return p;
 }
 
-static void czl_mm_heap_delete
-(
-    czl_mm_heap **head,
-    czl_mm_heap **tail,
-    czl_mm_heap *node
-)
-{
-    if (node->last)
-        node->last->next = node->next;
-    else
-        *head = node->next;
-
-    if (node->next)
-        node->next->last = node->last;
-    else
-        *tail = node->last;
-}
-
-char czl_mm_slabs_init(czl_gp *gp)
+char czl_mm_cache_pools_init(czl_gp *gp)
 {
 	int i;
 
-    if (!czl_mm_hash_init(gp, &gp->slab_pool.gc))
+    gp->mm_cache.pools = calloc(CZL_MM_CACHE_RANGE, sizeof(czl_mm_cache_pool));
+    if (!gp->mm_cache.pools)
         return 0;
 
-    gp->slab_pool.array = calloc(CZL_MM_SLAB_RANGE, sizeof(czl_mm_slab));
-    if (!gp->slab_pool.array)
-        return 0;
-
-    for (i = 0; i < CZL_MM_SLAB_RANGE; i++)
+    for (i = 0; i < CZL_MM_CACHE_RANGE; i++)
     {
-        gp->slab_pool.array[i].head = NULL;
-        gp->slab_pool.array[i].tail = NULL;
-        gp->slab_pool.array[i].size = CZL_MM_SP_512B +
-                                      (i+1)*CZL_MM_SLAB_GAP;
-        gp->slab_pool.array[i].freq = 0;
-        gp->slab_pool.array[i].count = 0;
+        gp->mm_cache.pools[i].head = NULL;
+        gp->mm_cache.pools[i].tail = NULL;
+        gp->mm_cache.pools[i].size = CZL_MM_SP_515B + (i+1)*CZL_MM_CACHE_GAP;
     }
 
-    gp->slab_pool.count += (CZL_MM_SLAB_RANGE*sizeof(czl_mm_slab));
-    gp->mm_cnt += (CZL_MM_SLAB_RANGE*sizeof(czl_mm_slab));
+    gp->mm_cnt += (CZL_MM_CACHE_RANGE*sizeof(czl_mm_cache_pool));
+    gp->mm_cache.flag = 1;
 
     return 1;
 }
 
-void czl_mm_slabs_destroy(czl_gp *gp, czl_mm_slab_pool *pool)
+void czl_mm_cache_pools_destroy(czl_gp *gp, czl_mm_cache_handle *handle)
 {
 	int i;
-	czl_mm_heap *p, *q;
-    czl_mm_slab *a = pool->array;
+    czl_mm_cache *p, *q;
+    czl_mm_cache_pool *a = handle->pools;
 
     if (!a)
         return;
 
-    free(pool->gc.datas);
-    gp->mm_cnt -= (pool->gc.size*sizeof(czl_mm_heap*));
-
-    for (i = 0; i < CZL_MM_SLAB_RANGE; i++)
+    for (i = 0; i < CZL_MM_CACHE_RANGE; i++)
     {
         for (p = a[i].head; p; p = q)
         {
             q = p->next;
             free(p);
-            gp->mm_cnt -= (16+a[i].size);
+            gp->mm_cnt -= (CZL_MM_CACHE_HEAD_SIZE+a[i].size);
         }
     }
 
-    free(pool->array);
-    gp->mm_cnt -= (CZL_MM_SLAB_RANGE*sizeof(czl_mm_slab));
+    free(handle->pools);
+    gp->mm_cnt -= (CZL_MM_CACHE_RANGE*sizeof(czl_mm_cache_pool));
 }
 
-static void* czl_mm_slab_alloc(czl_gp *gp, unsigned long size)
+static int czl_mm_cache_index(czl_gp *gp, unsigned long size)
 {
-	czl_mm_slab *s;
-	czl_mm_heap *node;
-	int l = 0, h = CZL_MM_SLAB_RANGE-1, m;
+    czl_mm_cache_pool *pool;
+    int l = 0, h = CZL_MM_CACHE_RANGE-1, m;
 
-    if (!gp->slab_pool.count && !czl_mm_slabs_init(gp))
-        return NULL;
-
-    s = gp->slab_pool.array;
+    pool = gp->mm_cache.pools;
     do {
         m = (l+h)/2;
-        if (size <= s[m].size - CZL_MM_SLAB_GAP)
+        if (size <= pool[m].size - CZL_MM_CACHE_GAP)
             h = m-1;
-        else if (size > s[m].size)
+        else if (size > pool[m].size)
             l = m+1;
         else
-            break;
+            return m;
     } while (l <= h);
 
-    s += m;
-    node = s->head;
-    if (node && CZL_MM_COLOR_WHITE == node->color)
+    return -1;
+}
+
+static void* czl_mm_cache_alloc(czl_gp *gp, unsigned long size)
+{
+    int inx;
+    czl_mm_cache *node;
+    czl_mm_cache_pool *pool;
+
+    if (!gp->mm_cache.flag && !czl_mm_cache_pools_init(gp))
+        return NULL;
+
+    inx = czl_mm_cache_index(gp, size);
+    pool = gp->mm_cache.pools + inx;
+    node = pool->head;
+    if (node && !node->state)
     {
-        node->color = CZL_MM_COLOR_BLACK;
+        node->state = 1;
         if (node->next)
         {
             node->next->last = NULL;
-            s->head = node->next;
+            pool->head = node->next;
             node->next = NULL;
-            node->last = s->tail;
-            s->tail->next = node;
-            s->tail = node;
+            node->last = pool->tail;
+            pool->tail->next = node;
+            pool->tail = node;
         }
     }
     else
     {
-        if (gp->mm_cache < gp->slab_pool.count + 16 + size)
+        if (gp->mm_cache_size < gp->mm_cache.count + CZL_MM_CACHE_HEAD_SIZE + size)
             return czl_mm_sys_alloc(gp, size);
-        if (!(node=czl_mm_heap_create(gp, m, s)))
+        if (!(node=czl_mm_cache_create(gp, inx, pool)))
             return NULL;
-        if (!czl_mm_hash_insert(gp, node, &gp->slab_pool.gc))
-            return NULL;
-        s->count++;
     }
-
-    s->freq++;
 
     return node->heap;
 }
 
-static void* czl_mm_slab_resize
+static char czl_mm_cache_scan(czl_gp *gp, unsigned long size)
+{
+    int inx;
+    czl_mm_cache *node;
+    czl_mm_cache_pool *pool;
+
+    if (size > CZL_MM_1MB || !gp->mm_cache.count)
+        return 0;
+
+    inx = czl_mm_cache_index(gp, size);
+    do {
+        pool = gp->mm_cache.pools + inx;
+        if (CZL_MM_CACHE_HEAD_SIZE+pool->size >= size)
+        {
+            node = pool->head;
+            if (node && !node->state)
+            {
+                pool->head = node->next;
+                if (pool->head)
+                    pool->head->last = NULL;
+                else
+                    pool->tail = NULL;
+                free(node);
+                gp->mm_cache.count -= (CZL_MM_CACHE_HEAD_SIZE+pool->size);
+                gp->mm_cnt -= (CZL_MM_CACHE_HEAD_SIZE+pool->size);
+                return 1;
+            }
+        }
+    } while(++inx < CZL_MM_CACHE_RANGE);
+
+    return 0;
+}
+
+static void czl_mm_cache_gc(czl_gp *gp, unsigned long size)
+{
+    void *buf = NULL;
+    unsigned long i;
+    czl_mm_cache *node;
+    czl_mm_cache_pool *pool;
+    czl_ulong cnt = gp->mm_cnt;
+
+    if (!gp->mm_cache.count)
+        return;
+
+    for (i = 0; i < CZL_MM_CACHE_RANGE; ++i)
+    {
+        pool = gp->mm_cache.pools + i;
+        for (node = pool->head; node && !node->state; node = pool->head)
+        {
+            pool->head = node->next;
+            if (pool->head)
+                pool->head->last = NULL;
+            else
+                pool->tail = NULL;
+            free(node);
+            gp->mm_cache.count -= (CZL_MM_CACHE_HEAD_SIZE+pool->size);
+            gp->mm_cnt -= (CZL_MM_CACHE_HEAD_SIZE+pool->size);
+            if ((cnt - gp->mm_cnt >= gp->mmp_gc_size) || (buf=malloc(size)))
+                goto CZL_END;
+        }
+    }
+
+CZL_END:
+    free(buf);
+}
+
+static void* czl_mm_cache_resize
 (
     czl_gp *gp,
-    void *heap,
+    char *heap,
     czl_ulong new_size,
     czl_ulong old_size,
     czl_mm_sp_pool *pool
 )
 {
 	unsigned long size;
-    czl_mm_heap *node = czl_mm_hash_find(heap, &gp->slab_pool.gc);
-    if (!node)
-        return czl_mm_different_page_resize(gp, heap, new_size, old_size, pool);
+    czl_mm_cache *node;
+    char *tmp = (CZL_MM_OBJ_SP == pool->type ? *((char**)heap) : heap);
 
-    size = CZL_MM_SP_512B + node->index*CZL_MM_SLAB_GAP;
-    if (new_size > size && new_size <= size+CZL_MM_SLAB_GAP)
+    if (-1 == *((short*)(tmp-2)))
+        return czl_mm_diff_page_resize(gp, heap, new_size, old_size, pool);
+
+    node = (czl_mm_cache*)CZL_MM_CACHE_GET(tmp);
+    size = CZL_MM_SP_515B + node->index*CZL_MM_CACHE_GAP;
+    if (new_size > size && new_size <= size+CZL_MM_CACHE_GAP)
         return heap;
     else
-        return czl_mm_different_page_resize(gp, heap, new_size, old_size, pool);
+        return czl_mm_diff_page_resize(gp, heap, new_size, old_size, pool);
 }
 
-static void czl_mm_slab_free(czl_gp *gp, void *heap, unsigned long size)
+static void czl_mm_cache_free(czl_gp *gp, char *heap)
 {
-	czl_mm_slab *s;
-    czl_mm_heap *node = czl_mm_hash_find(heap, &gp->slab_pool.gc);
-    if (!node)
+    czl_mm_cache *node;
+    czl_mm_cache_pool *pool;
+
+    if (-1 == *((short*)(heap-2)))
     {
-        free(heap);
-        gp->mm_cnt -= size;
+        czl_mm_sys_free(gp, heap);
         return;
     }
 
-    node->color = CZL_MM_COLOR_WHITE;
-    s = gp->slab_pool.array + node->index;
-    if (node->last && node->last->color != CZL_MM_COLOR_WHITE)
+    node = (czl_mm_cache*)CZL_MM_CACHE_GET(heap);
+    node->state = 0;
+    pool = gp->mm_cache.pools + node->index;
+    if (node->last && node->last->state)
     {
-        czl_mm_heap_delete(&s->head, &s->tail, node);
+        node->last->next = node->next;
+        if (node->next)
+            node->next->last = node->last;
+        else
+            pool->tail = node->last;
         node->last = NULL;
-        node->next = s->head;
-        s->head->last = node;
-        s->head = node;
+        node->next = pool->head;
+        pool->head = node;
     }
 }
-#endif //#ifdef CZL_MM_SLAB
+#endif //#ifdef CZL_MM_CACHE
 //////////////////////////////////////////////////////////////////
 static void czl_mm_free(czl_gp*, char*, czl_ulong, czl_mm_sp_pool*);
+static void czl_mm_free_heap(czl_gp*, char*, czl_mm_sp_pool*);
+static void* czl_mm_malloc_heap(czl_gp*, czl_mm_sp_pool*);
 //////////////////////////////////////////////////////////////////
-static czl_mm_sp* czl_mm_sp_create(czl_mm_sp_pool *pool)
+static void* czl_mm_sp_create
+(
+    czl_gp *gp,
+    czl_mm_sp_pool *pool
+)
 {
-    czl_mm_sp *p = (czl_mm_sp*)malloc(CZL_MM_SP_HEAD_SIZE+pool->size);
-    if (!p)
+    czl_mm_sp *p;
+    char **obj = NULL;
+    unsigned char rank = 0;
+    unsigned long pageSize;
+
+CZL_AGAIN:
+    switch (pool->type)
+    {
+    case CZL_MM_OBJ_SP:
+        pageSize = CZL_MM_OBJ_SP_SIZE(pool->max, pool->num);
+        break;
+    case CZL_MM_VAR_SP:
+        pageSize = CZL_MM_VAR_SP_SIZE(pool->max, pool->num);
+        break;
+    default: //CZL_MM_BUF_SP
+        pageSize = CZL_MM_BUF_SP_SIZE(pool->max, pool->num);
+        break;
+    }
+    if (gp->mm_cnt + pageSize > gp->mm_limit || !(p=(czl_mm_sp*)malloc(pageSize)))
+    {
+        if (pool->num/2 == 0)
+        {
+            pool->num = CZL_MM_SP_HEAP_NUM_MIN;
+            return NULL;
+        }
+        pool->num /= 2;
+        goto CZL_AGAIN;
+    }
+
+    if (CZL_MM_OBJ_SP == pool->type &&
+        !(obj=(char**)czl_mm_malloc_heap(gp, &gp->mmp_obj)))
+    {
+        free(p);
         return NULL;
+    }
 
-    if (pool->size <= CZL_MM_SP_4KB)
-        p->id = 0;
-    else if (pool->size <= CZL_MM_SP_20KB)
-        p->id = 1;
-    else //<= CZL_MM_SP_40KB
-        p->id = 2;
+    gp->mm_cnt += pageSize;
 
-    p->state = 1;
-    p->rest = p->piece = pool->size;
-    p->checksum = CZL_MM_SP_CHECKSUM;
+    if (pool->type != CZL_MM_BUF_SP)
+    {
+        rank = ((gp->mmp_selfAdapt && pool->cnt) ? pool->sum/pool->cnt : gp->mmp_rank);
+        ++pool->cnt;
+        pool->sum += rank;
+    }
+
+    p->heapNum = pool->num;
+    p->freeNum = 0;
+    p->rank = rank;
+    p->threshold = CZL_MM_SP_THRESHOLD(rank, pool->num);
+    p->useHead = 1;
+    p->freeHead = 0;
+    p->restHead = (pool->num > 1 ? 2 : 0);
 
     p->last = NULL;
     p->next = pool->head;
@@ -344,24 +343,70 @@ static czl_mm_sp* czl_mm_sp_create(czl_mm_sp_pool *pool)
         pool->head->last = p;
     pool->head = p;
 
-    return p;
+    if (pool->num+1 <= CZL_MM_SP_HEAP_NUM_MAX) //每页heap上限个数
+        ++pool->num;
+
+    if (CZL_MM_BUF_SP == pool->type)
+    {
+        p->heap[0] = 1; //current id
+        return p->heap+CZL_MM_BUF_HEAP_MSG_SIZE;
+    }
+    else
+    {
+        p->heap[0] = 0; //   last id
+        p->heap[1] = 1; //current id
+        p->heap[2] = 0; //   next id
+        if (CZL_MM_VAR_SP == pool->type)
+            return p->heap+CZL_MM_VAR_HEAP_MSG_SIZE;
+        else
+        {
+            char *heap = p->heap;
+            *obj = heap+CZL_MM_OBJ_HEAP_MSG_SIZE;
+            *((char***)(heap+3)) = obj;
+            return obj;
+        }
+    }
 }
 
 static void czl_mm_sp_delete
+(
+    czl_gp *gp,
+    czl_mm_sp_pool *pool,
+    czl_mm_sp *node
+)
+{
+    if (CZL_MM_BUF_SP == pool->type)
+        gp->mm_cnt -= CZL_MM_BUF_SP_SIZE(pool->max, node->heapNum);
+    else
+    {
+        --pool->cnt;
+        pool->sum -= node->rank;
+        if (CZL_MM_OBJ_SP == pool->type)
+            gp->mm_cnt -= CZL_MM_OBJ_SP_SIZE(pool->max, node->heapNum);
+        else
+            gp->mm_cnt -= CZL_MM_VAR_SP_SIZE(pool->max, node->heapNum);
+    }
+
+    if (node->last)
+        node->last->next = node->next;
+    else
+        pool->head = node->next;
+    if (node->next)
+        node->next->last = node->last;
+    free(node);
+}
+
+static void czl_mm_sp_insert
 (
     czl_mm_sp_pool *pool,
     czl_mm_sp *node
 )
 {
-    if (node->last)
-        node->last->next = node->next;
-    else
-        pool->head = node->next;
-
-    if (node->next)
-        node->next->last = node->last;
-
-    free(node);
+    node->freeLast = NULL;
+    node->freeNext = pool->freeHead;
+    if (pool->freeHead)
+        pool->freeHead->freeLast = node;
+    pool->freeHead = node;
 }
 
 static void czl_mm_sp_break
@@ -370,347 +415,336 @@ static void czl_mm_sp_break
     czl_mm_sp *node
 )
 {
-    if (node->state)
+    if (node->freeLast)
+        node->freeLast->freeNext = node->freeNext;
+    else
+        pool->freeHead = node->freeNext;
+    if (node->freeNext)
+        node->freeNext->freeLast = node->freeLast;
+}
+//////////////////////////////////////////////////////////////////
+static void czl_mm_sys_free(czl_gp *gp, char *heap)
+{
+    czl_mm_sys_heap *node;
+
+#ifdef CZL_MM_CACHE
+    if (*((short*)(heap-2)) != -1)
+    {
+        czl_mm_cache_free(gp, heap);
         return;
+    }
+#endif //#ifdef CZL_MM_CACHE
 
-    node->state = 1;
+    node = CZL_MM_SYS_HEAP_GET(heap);
 
-    if (node->Last)
-        node->Last->Next = node->Next;
+    gp->mm_cnt -= node->size;
+
+    if (node->last)
+        node->last->next = node->next;
     else
-        pool->Head = node->Next;
-
-    if (node->Next)
-        node->Next->Last = node->Last;
-
-    if (node == pool->at)
-    {
-        pool->at = node->Next;
-        pool->addr = NULL;
-    }
+        gp->mmp_sh_head = node->next;
+    if (node->next)
+        node->next->last = node->last;
+    free(node);
 }
 
-static void czl_mm_sp_insert(czl_mm_sp **Head, czl_mm_sp *node)
-{
-    node->state = 0;
-
-    node->Last = NULL;
-    node->Next = *Head;
-    if (*Head)
-        (*Head)->Last = node;
-    *Head = node;
-}
-
-void czl_mm_sp_destroy(czl_gp *gp, czl_mm_sp_pool *pool)
-{
-    czl_mm_sp *p = pool->head, *q;
-    const unsigned long size = CZL_MM_SP_HEAD_SIZE + pool->size;
-
-    while (p)
-    {
-        q = p->next;
-        free(p);
-        p = q;
-        gp->mm_cnt -= size;
-    }
-}
-//////////////////////////////////////////////////////////////////
-static void czl_mm_set_white
-(
-    char *heap,
-    czl_mm_sp_pool *pool,
-    czl_mm_sp *page
-)
-{
-	char *here, *end;
-
-    //前向合并
-    if (CZL_MM_COLOR_BLACK == *(heap-1))
-        *(heap-1) = CZL_MM_COLOR_WHITE;
-    else //CZL_MM_COLOR_RED
-    {
-        unsigned short size = *((unsigned short*)heap);
-        unsigned short len = *((unsigned short*)(heap-3));
-        heap -= len;
-        *((unsigned short*)heap) += (CZL_MM_HEAP_MSG_SIZE+size);
-        if (page == pool->at && (heap+len-1) == pool->addr)
-            pool->addr = heap - 1;
-    }
-
-    //后向合并
-    here = heap + 4 + *((unsigned short*)heap);
-    end = page->heap + pool->size;
-    if (here == end)
-    {
-        page->rest = CZL_MM_HEAP_MSG_SIZE + *((unsigned short*)heap);
-    }
-    else
-    {
-        if (CZL_MM_COLOR_WHITE == *here)
-        {
-			char *tmp;
-            *((unsigned short*)heap) += (CZL_MM_HEAP_MSG_SIZE +
-                                         *((unsigned short*)(here+1)));
-            tmp = heap + *((unsigned short*)heap);
-            if (end == tmp+4)
-                page->rest = CZL_MM_HEAP_MSG_SIZE +
-                             *((unsigned short*)heap);
-            else
-                *((unsigned short*)(tmp+2)) = CZL_MM_HEAP_MSG_SIZE +
-                                              *((unsigned short*)heap);
-            if (page == pool->at && here == pool->addr)
-                pool->addr = heap - 1;
-        }
-        else //CZL_MM_COLOR_BLACK
-        {
-            *here = CZL_MM_COLOR_RED;
-            *((unsigned short*)(here-2)) = CZL_MM_HEAP_MSG_SIZE +
-                                           *((unsigned short*)heap);
-        }
-    }
-}
-
-static void czl_mm_set_black
-(
-    char *page,
-    char *old_here,
-    char *new_here,
-    unsigned short size,
-    unsigned short rest
-)
-{
-    *old_here = CZL_MM_COLOR_BLACK;
-    *((unsigned short*)(old_here+1)) = size;
-    *((unsigned short*)(old_here+3)) = old_here - page;
-
-    if (rest)
-    {
-        *new_here = CZL_MM_COLOR_WHITE;
-        *((unsigned short*)(new_here+1)) = rest - CZL_MM_HEAP_MSG_SIZE;
-        *((unsigned short*)(new_here+3)) = new_here - page;
-    }
-}
-//////////////////////////////////////////////////////////////////
 static void* czl_mm_sys_alloc(czl_gp *gp, czl_ulong size)
 {
-    void *buf;
+    char *buf;
+    czl_mm_sys_heap *p;
 
-    if (gp->mm_cnt+size > gp->mm_limit)
+    size += CZL_MM_SH_HEAD_SIZE;
+
+    if (gp->mm_cnt+size > gp->mm_limit || !(buf=malloc(size)))
         return NULL;
 
-    if ((buf=malloc(size)))
-        gp->mm_cnt += size;
-    return buf;
+    p = (czl_mm_sys_heap*)buf;
+    p->last = NULL;
+    p->next = gp->mmp_sh_head;
+    if (gp->mmp_sh_head)
+        gp->mmp_sh_head->last = p;
+    gp->mmp_sh_head = p;
+
+    p->flag = -1; //必须小于0
+    p->size = size;
+
+    gp->mm_cnt += size;
+
+    return buf+CZL_MM_SH_HEAD_SIZE;
 }
 
-static void* czl_mm_sp_rest_alloc
+static void* czl_mm_sys_realloc
 (
-    czl_mm_sp_pool *pool,
-    czl_mm_sp *page,
-    unsigned short size
+    czl_gp *gp,
+    char *heap,
+    czl_ulong new_size,
+    czl_ulong old_size,
+    czl_mm_sp_pool *pool
 )
 {
-    char *heap = page->heap + pool->size - page->rest;
-    page->rest -= (CZL_MM_HEAP_MSG_SIZE+size);
-    page->piece -= (CZL_MM_HEAP_MSG_SIZE+size);
-    pool->rest -= (CZL_MM_HEAP_MSG_SIZE+size);
-    if (page->rest < CZL_MM_HEAP_MIN_SIZE)
+    char *buf, *old;
+    czl_mm_sys_heap *p;
+
+    if (new_size-old_size+gp->mm_cnt > gp->mm_limit)
+        return NULL;
+
+    old = (CZL_MM_OBJ_SP == pool->type ? *((char**)heap) : heap);
+    if (*((short*)(old-2)) != -1)
+        return czl_mm_diff_page_resize(gp, heap, new_size, old_size, pool);
+
+    old -= CZL_MM_SH_HEAD_SIZE;
+    if (!(buf=realloc(old, CZL_MM_SH_HEAD_SIZE+new_size)))
+        return NULL;
+
+    gp->mm_cnt += (new_size-old_size);
+
+    p = (czl_mm_sys_heap*)buf;
+    p->size = CZL_MM_SH_HEAD_SIZE+new_size;
+
+    if (buf == old)
+        return heap;
+
+    if (p->last)
+        p->last->next = p;
+    else
+        gp->mmp_sh_head = p;
+    if (p->next)
+        p->next->last = p;
+
+    p->flag = -1;
+
+    if (CZL_MM_OBJ_SP == pool->type)
     {
-        size += page->rest;
-        pool->rest -= page->rest;
-        page->piece -= page->rest;
-        if (0 == page->piece)
-            czl_mm_sp_break(pool, page);
-        page->rest = 0;
+        *((char**)heap) = buf+CZL_MM_SH_HEAD_SIZE;
+        return heap;
     }
-    czl_mm_set_black(page->heap, heap,
-                     heap+CZL_MM_HEAP_MSG_SIZE+size,
-                     size, page->rest);
-    return heap+CZL_MM_HEAP_MSG_SIZE;
+    else
+        return buf+CZL_MM_SH_HEAD_SIZE;
 }
-
-static void* czl_last_addr_alloc
-(
-    czl_mm_sp_pool *pool,
-    unsigned short size
-)
+//////////////////////////////////////////////////////////////////
+static unsigned char czl_mm_sp_get(unsigned short size, czl_mm_sp_pool *pool)
 {
-    char *heap = pool->addr;
-    char *end = pool->at->heap + pool->size;
-    unsigned short len;
-
-CZL_BEGIN:
-    for (; heap != end; heap += (CZL_MM_HEAP_MSG_SIZE+len))
-    {
-        len = *((unsigned short*)(heap+1));
-        if (*heap != CZL_MM_COLOR_WHITE || len < size)
-            continue;
-        if (len-size < CZL_MM_HEAP_MIN_SIZE)
-        {
-            size = len;
-            pool->addr = heap + CZL_MM_HEAP_MSG_SIZE + size;
-            pool->rest -= (CZL_MM_HEAP_MSG_SIZE+size);
-            pool->at->piece -= (CZL_MM_HEAP_MSG_SIZE+size);
-            *heap = CZL_MM_COLOR_BLACK;
-            if (pool->addr == end)
-                pool->at->rest = 0;
+    if (size <= pool[19].max)
+        if (size <= pool[9].max)
+            if (size <= pool[4].max)
+                if (size <= pool[2].max)
+                    if (size <= pool[1].max)
+                        if (size <= pool[0].max) return 0;
+                        else return 1;
+                    else return 2;
+                else
+                    if (size <= pool[3].max) return 3;
+                    else return 4;
             else
-                *pool->addr = CZL_MM_COLOR_BLACK;
-        }
+                if (size <= pool[7].max)
+                    if (size <= pool[6].max)
+                        if (size <= pool[5].max) return 5;
+                        else return 6;
+                    else return 7;
+                else
+                    if (size <= pool[8].max) return 8;
+                    else return 9;
         else
-        {
-            pool->addr = heap + CZL_MM_HEAP_MSG_SIZE + size;
-            pool->rest -= (CZL_MM_HEAP_MSG_SIZE+size);
-            pool->at->piece -= (CZL_MM_HEAP_MSG_SIZE+size);
-            czl_mm_set_black(pool->at->heap, heap,
-                             heap+CZL_MM_HEAP_MSG_SIZE+size,
-                             size, len-size);
-            if (pool->addr == end)
-                pool->at->rest -= (CZL_MM_HEAP_MSG_SIZE+size);
+            if (size <= pool[14].max)
+                if (size <= pool[12].max)
+                    if (size <= pool[11].max)
+                        if (size <= pool[10].max) return 10;
+                        else return 11;
+                    else return 12;
+                else
+                    if (size <= pool[13].max) return 13;
+                    else return 14;
             else
-                *((unsigned short*)(heap+len+3)) = len-size;
-        }
-        if (0 == pool->at->piece)
-            czl_mm_sp_break(pool, pool->at);
-        return heap+CZL_MM_HEAP_MSG_SIZE;
-    }
-
-    if (pool->len && 4*pool->at->piece > pool->size)
-    {
-        heap = pool->at->heap;
-        goto CZL_BEGIN;
-    }
-
-    pool->at = pool->at->next;
-    pool->addr = NULL;
-    return NULL;
+                if (size <= pool[17].max)
+                    if (size <= pool[16].max)
+                        if (size <= pool[15].max) return 15;
+                        else return 16;
+                    else return 17;
+                else
+                    if (size <= pool[18].max) return 18;
+                    else return 19;
+    else
+        if (size <= pool[29].max)
+            if (size <= pool[24].max)
+                if (size <= pool[22].max)
+                    if (size <= pool[21].max)
+                        if (size <= pool[20].max) return 20;
+                        else return 21;
+                    else return 22;
+                else
+                    if (size <= pool[23].max) return 23;
+                    else return 24;
+            else
+                if (size <= pool[27].max)
+                    if (size <= pool[26].max)
+                        if (size <= pool[25].max) return 25;
+                        else return 26;
+                    else return 27;
+                else
+                    if (size <= pool[28].max) return 28;
+                    else return 29;
+        else
+            if (size <= pool[34].max)
+                if (size <= pool[32].max)
+                    if (size <= pool[31].max)
+                        if (size <= pool[30].max) return 30;
+                        else return 31;
+                    else return 32;
+                else
+                    if (size <= pool[33].max) return 33;
+                    else return 34;
+            else
+                if (size <= pool[37].max)
+                    if (size <= pool[36].max)
+                        if (size <= pool[35].max) return 35;
+                        else return 36;
+                    else return 37;
+                else
+                    if (size <= pool[38].max) return 38;
+                    else return 39;
 }
 
-static void* czl_mm_sp_slow_alloc
-(
-    czl_mm_sp_pool *pool,
-    unsigned short size
-)
+static void* czl_mm_malloc_heap(czl_gp *gp, czl_mm_sp_pool *pool)
 {
-    czl_mm_sp *p = (pool->at ? pool->at : pool->Head), *q = NULL;
-
-CZL_BEGIN:
-    for (; p != q; p = p->Next)
+    if (pool->head)
     {
-		unsigned short len;
-		char *heap, *end;
-        if (p->piece < CZL_MM_HEAP_MSG_SIZE+size)
-            continue;
-		end = p->heap + pool->size;
-        for (heap = p->heap; heap != end; heap += (CZL_MM_HEAP_MSG_SIZE+len))
+        if (pool->head->restHead)
         {
-            len = *((unsigned short*)(heap+1));
-            if (*heap != CZL_MM_COLOR_WHITE || len < size)
-                continue;
-            pool->at = p;
-            if (len-size < CZL_MM_HEAP_MIN_SIZE)
+            czl_mm_sp *page = pool->head;
+            if (CZL_MM_BUF_SP == pool->type)
             {
-                size = len;
-                pool->addr = heap + CZL_MM_HEAP_MSG_SIZE + size;
-                pool->rest -= (CZL_MM_HEAP_MSG_SIZE+size);
-                p->piece -= (CZL_MM_HEAP_MSG_SIZE+size);
-                *heap = CZL_MM_COLOR_BLACK;
-                if (pool->addr == end)
-                    p->rest = 0;
-                else
-                    *pool->addr = CZL_MM_COLOR_BLACK;
+                char *heap = CZL_MM_BUF_HEAP_GET(page->heap, page->restHead, pool->max);
+                //将新节点插入到使用链表
+                ++page->useHead;
+                heap[0] = page->restHead;
+                if (page->restHead++ == page->heapNum)
+                    page->restHead = 0;
+                return heap+CZL_MM_BUF_HEAP_MSG_SIZE;
             }
             else
             {
-                pool->addr = heap + CZL_MM_HEAP_MSG_SIZE + size;
-                pool->rest -= (CZL_MM_HEAP_MSG_SIZE+size);
-                p->piece -= (CZL_MM_HEAP_MSG_SIZE+size);
-                czl_mm_set_black(p->heap, heap,
-                                 pool->addr,
-                                 size, len-size);
-                if (pool->addr == end)
-                    p->rest -= (CZL_MM_HEAP_MSG_SIZE+size);
+                char *heap;
+                char *useHead;
+                char **obj = NULL;
+                if (CZL_MM_OBJ_SP == pool->type)
+                {
+                    if (!(obj=(char**)czl_mm_malloc_heap(gp, &gp->mmp_obj)))
+                        return NULL;
+                    heap = CZL_MM_OBJ_HEAP_GET(page->heap, page->restHead, pool->max);
+                    useHead = heap - CZL_MM_OBJ_HEAP_MSG_SIZE - pool->max;
+                    *obj = heap+CZL_MM_OBJ_HEAP_MSG_SIZE;
+                    *((char***)(heap+3)) = obj;
+                }
                 else
-                    *((unsigned short*)(heap+len+3)) = len-size;
+                {
+                    heap = CZL_MM_VAR_HEAP_GET(page->heap, page->restHead, pool->max);
+                    useHead = heap - CZL_MM_VAR_HEAP_MSG_SIZE - pool->max;
+                }
+                //将新节点插入到使用链表
+                heap[0] = 0;
+                heap[1] = page->restHead;
+                heap[2] = page->useHead;
+                page->useHead = useHead[0] = heap[1];
+                if (page->restHead++ == page->heapNum)
+                    page->restHead = 0;
+                if (CZL_MM_OBJ_SP == pool->type)
+                    return obj;
+                else
+                    return heap+CZL_MM_VAR_HEAP_MSG_SIZE;
             }
-            if (0 == p->piece)
-                czl_mm_sp_break(pool, p);
-            return heap+CZL_MM_HEAP_MSG_SIZE;
+        }
+        else if (pool->freeHead)
+        {
+            czl_mm_sp *page = pool->freeHead;
+            if (CZL_MM_BUF_SP == pool->type)
+            {
+                char *heap = CZL_MM_BUF_HEAP_GET(page->heap, page->freeHead, pool->max);
+                ++page->useHead;
+                //从空闲链表中删除该节点
+                page->freeHead = heap[1];
+                if (!page->freeHead)
+                    czl_mm_sp_break(pool, page);
+                return heap+CZL_MM_BUF_HEAP_MSG_SIZE;
+            }
+            else
+            {
+                char *heap;
+                char *useHead;
+                char **obj = NULL;
+                --page->freeNum;
+                if (CZL_MM_OBJ_SP == pool->type)
+                {
+                    if (!(obj=(char**)czl_mm_malloc_heap(gp, &gp->mmp_obj)))
+                        return NULL;
+                    heap = CZL_MM_OBJ_HEAP_GET(page->heap, page->freeHead, pool->max);
+                    useHead = CZL_MM_OBJ_HEAP_GET(page->heap, page->useHead, pool->max);
+                    *obj = heap+CZL_MM_OBJ_HEAP_MSG_SIZE;
+                    *((char***)(heap+3)) = obj;
+                }
+                else
+                {
+                    heap = CZL_MM_VAR_HEAP_GET(page->heap, page->freeHead, pool->max);
+                    useHead = CZL_MM_VAR_HEAP_GET(page->heap, page->useHead, pool->max);
+                }
+                //从空闲链表中删除该节点
+                page->freeHead = heap[2];
+                if (!page->freeHead)
+                    czl_mm_sp_break(pool, page);
+                //将该节点插入到使用链表
+                heap[0] = 0;
+                heap[2] = page->useHead;
+                if (page->useHead)
+                    useHead[0] = heap[1];
+                page->useHead = heap[1];
+                if (CZL_MM_OBJ_SP == pool->type)
+                    return obj;
+                else
+                    return heap+CZL_MM_VAR_HEAP_MSG_SIZE;
+            }
         }
     }
 
-    if (pool->at)
-    {
-        p = pool->Head;
-        q = pool->at;
-        pool->at = NULL;
-        goto CZL_BEGIN;
-    }
-
-    return NULL;
+    return czl_mm_sp_create(gp, pool);
 }
 
 static void* czl_mm_malloc(czl_gp *gp, czl_ulong size, czl_mm_sp_pool *pool)
 {
-	czl_mm_sp *page;
-
-    if (0 == pool->len)
+    if (pool->min != pool->max)
     {
         if (0 == size)
             return NULL;
-        else if (size <= CZL_MM_SP_128B)
-        {
-            if (1 == size) size = 2;
-        }
-        else if (size <= CZL_MM_SP_256B)
-            ++pool;
-        else if (size <= CZL_MM_SP_512B)
-            pool += 2;
-    #ifdef CZL_MM_SLAB
-        else if (gp->mm_cache && size <= CZL_MM_1MB)
-            return czl_mm_slab_alloc(gp, size);
-    #endif //#ifdef CZL_MM_SLAB
+        else if (size <= CZL_MM_SP_515B)
+            pool += czl_mm_sp_get(size, pool);
         else
-            return czl_mm_sys_alloc(gp, size);
+        {
+            char *heap;
+            char **obj = NULL;
+            if (CZL_MM_OBJ_SP == pool->type &&
+                !(obj=(char**)czl_mm_malloc_heap(gp, &gp->mmp_obj)))
+                return NULL;
+        #ifdef CZL_MM_CACHE
+            if (gp->mm_cache_size && size <= CZL_MM_1MB)
+                heap = czl_mm_cache_alloc(gp, size);
+            else
+        #endif //#ifdef CZL_MM_CACHE
+                heap = czl_mm_sys_alloc(gp, size);
+            if (!heap)
+            {
+                if (CZL_MM_OBJ_SP == pool->type)
+                    czl_mm_free_heap(gp, (char*)obj, &gp->mmp_obj);
+                return NULL;
+            }
+            if (CZL_MM_OBJ_SP == pool->type)
+            {
+                *obj = heap;
+                return obj;
+            }
+            else
+                return heap;
+        }
     }
 
-    if (pool->head)
-    {
-        if (pool->head->rest >= CZL_MM_HEAP_MSG_SIZE+size)
-            return czl_mm_sp_rest_alloc(pool, pool->head, size);
-        else if (pool->head->rest && pool->head->state)
-            czl_mm_sp_insert(&pool->Head, pool->head);
-    }
-    if (pool->addr)
-    {
-        void *heap = czl_last_addr_alloc(pool, size);
-        if (heap)
-            return heap;
-    }
-    if (4*pool->rest > pool->count)
-    {
-        //牺牲25%内存换取极端情况下能实现平均最多4次循环就能找到合适内存分配
-        void *heap = czl_mm_sp_slow_alloc(pool, size);
-        if (heap)
-            return heap;
-    }
-
-    if (gp->mm_cnt+CZL_MM_SP_HEAD_SIZE+pool->size > gp->mm_limit)
-        return NULL;
-
-    if (!(page=czl_mm_sp_create(pool)))
-        return NULL;
-    pool->count += pool->size;
-    gp->mm_cnt += (CZL_MM_SP_HEAD_SIZE+pool->size);
-
-    page->rest -= (CZL_MM_HEAP_MSG_SIZE+size);
-    page->piece = page->rest;
-    pool->rest += page->rest;
-    czl_mm_set_black(page->heap,
-                     page->heap,
-                     page->heap+CZL_MM_HEAP_MSG_SIZE+size,
-                     size, page->rest);
-    return page->heap+CZL_MM_HEAP_MSG_SIZE;
+    return czl_mm_malloc_heap(gp, pool);
 }
 
 static void* czl_mm_calloc
@@ -725,14 +759,21 @@ static void* czl_mm_calloc
     if (!heap)
         return NULL;
 
-    memset(heap, 0, size);
+    if (CZL_MM_OBJ_SP == pool->type)
+    {
+        void *tmp = *((char**)heap);
+        memset(tmp, 0, size);
+    }
+    else
+        memset(heap, 0, size);
+
     return heap;
 }
 
-static void* czl_mm_different_page_resize
+static void* czl_mm_diff_page_resize
 (
     czl_gp *gp,
-    void *heap,
+    char *heap,
     czl_ulong new_size,
     czl_ulong old_size,
     czl_mm_sp_pool *pool
@@ -741,195 +782,12 @@ static void* czl_mm_different_page_resize
     void *buf = czl_mm_malloc(gp, new_size, pool);
     if (!buf)
         return NULL;
-    if (new_size > old_size)
-        memcpy(buf, heap, old_size);
+    if (CZL_MM_OBJ_SP == pool->type)
+        memcpy(*((char**)buf), *((char**)heap),
+               (old_size < new_size ? old_size : new_size));
     else
-        memcpy(buf, heap, new_size);
-    czl_mm_free(gp, (char*)heap, old_size, pool);
-    return buf;
-}
-
-static void* czl_mm_same_page_add
-(
-    czl_gp *gp,
-    char *heap,
-    unsigned long new_size,
-    unsigned long old_size,
-    czl_mm_sp *page,
-    czl_mm_sp_pool *pool,
-    czl_mm_sp_pool *pools
-)
-{
-    unsigned long heap_size = *((unsigned short*)(heap-4));
-    if (heap_size >= new_size)
-        return heap;
-
-    if (heap + heap_size != page->heap + pool->size &&
-        CZL_MM_COLOR_WHITE == *(heap+heap_size))
-    {
-        unsigned long size = heap_size +
-                             CZL_MM_HEAP_MSG_SIZE +
-                             *((unsigned short*)(heap+heap_size+1));
-        if (size < new_size)
-            goto CZL_RESIZE;
-        if (heap + size == page->heap + pool->size)
-        {
-            if (size-new_size < CZL_MM_HEAP_MIN_SIZE)
-            {
-                *((unsigned short*)(heap-4)) = size;
-                page->rest -= (size-heap_size);
-                pool->rest -= (size-heap_size);
-                page->piece -= (size-heap_size);
-                if (0 == page->piece)
-                    czl_mm_sp_break(pool, page);
-            }
-            else
-            {
-                *((unsigned short*)(heap-4)) = new_size;
-                page->rest -= (new_size-heap_size);
-                pool->rest -= (new_size-heap_size);
-                page->piece -= (new_size-heap_size);
-                *(heap+new_size) = CZL_MM_COLOR_WHITE;
-                *((unsigned short*)
-                  (heap+new_size+1)) = page->rest - CZL_MM_HEAP_MSG_SIZE;
-                *((unsigned short*)
-                  (heap+new_size+3)) = heap + new_size - page->heap;
-            }
-        }
-        else
-        {
-            if (size-new_size < CZL_MM_HEAP_MIN_SIZE)
-            {
-                *((unsigned short*)(heap-4)) = size;
-                *(heap+size) = CZL_MM_COLOR_BLACK;
-                pool->rest -= (size-heap_size);
-                page->piece -= (size-heap_size);
-                if (0 == page->piece)
-                    czl_mm_sp_break(pool, page);
-            }
-            else
-            {
-                *((unsigned short*)(heap-4)) = new_size;
-                pool->rest -= (new_size-heap_size);
-                page->piece -= (new_size-heap_size);
-                *(heap+new_size) = CZL_MM_COLOR_WHITE;
-                *((unsigned short*)
-                  (heap+new_size+1)) = size - new_size - CZL_MM_HEAP_MSG_SIZE;
-                *((unsigned short*)
-                  (heap+new_size+3)) = heap + new_size - page->heap;
-                *((unsigned short*)(heap+size-2)) = size - new_size;
-            }
-        }
-        if (page == pool->at && (heap+heap_size) == pool->addr)
-            pool->addr = heap - CZL_MM_HEAP_MSG_SIZE;
-        return heap;
-    }
-
-CZL_RESIZE:
-    return czl_mm_different_page_resize(gp, heap, new_size,
-                                        old_size, pools);
-}
-
-static void* czl_mm_same_page_dec
-(
-    czl_gp *gp,
-    char *heap,
-    unsigned long new_size,
-    unsigned long old_size,
-    czl_mm_sp *page,
-    czl_mm_sp_pool *pool,
-    czl_mm_sp_pool *pools
-)
-{
-	unsigned long heap_size;
-
-    if (0 == new_size)
-    {
-        czl_mm_free(gp, heap, old_size, pools);
-        return NULL;
-    }
-
-    heap_size = *((unsigned short*)(heap-4));
-
-    if (CZL_MM_COLOR_WHITE == *(heap+heap_size) &&
-        page == pool->at && (heap+heap_size) == pool->addr)
-        pool->addr = heap - CZL_MM_HEAP_MSG_SIZE;
-
-    if (heap + heap_size == page->heap + pool->size)
-    {
-        unsigned long rest = heap_size-new_size;
-        if (rest < CZL_MM_HEAP_MIN_SIZE)
-            return heap;
-        *((unsigned short*)(heap-4)) = new_size;
-        *(heap+new_size) = CZL_MM_COLOR_WHITE;
-        *((unsigned short*)(heap+new_size+1)) = rest - CZL_MM_HEAP_MSG_SIZE;
-        *((unsigned short*)
-          (heap+new_size+3)) = heap + new_size - page->heap;
-        page->rest += rest;
-        pool->rest += rest;
-        page->piece += rest;
-    }
-    else
-    {
-        if (CZL_MM_COLOR_BLACK == *(heap+heap_size))
-        {
-			unsigned long size;
-            if (heap_size-new_size < CZL_MM_HEAP_MIN_SIZE)
-                return heap;
-            *((unsigned short*)(heap-4)) = new_size;
-            size = heap_size-new_size;
-            *(heap+new_size) = CZL_MM_COLOR_WHITE;
-            *((unsigned short*)
-              (heap+new_size+1)) = size - CZL_MM_HEAP_MSG_SIZE;
-            *((unsigned short*)
-              (heap+new_size+3)) = heap + new_size - page->heap;
-            pool->rest += size;
-            page->piece += size;
-            *(heap+heap_size) = CZL_MM_COLOR_RED;
-            *((unsigned short*)(heap+heap_size-2)) = size;
-        }
-        else //CZL_MM_COLOR_WHITE
-        {
-			unsigned long size;
-            *((unsigned short*)(heap-4)) = new_size;
-            size = heap_size-new_size;
-            pool->rest += size;
-            page->piece += size;
-            //
-            *(heap+new_size) = CZL_MM_COLOR_WHITE;
-            size += *((unsigned short*)(heap+heap_size+1));
-            *((unsigned short*)(heap+new_size+1)) = size;
-            *((unsigned short*)
-              (heap+new_size+3)) = heap + new_size - page->heap;
-            //
-            if (heap + new_size + CZL_MM_HEAP_MSG_SIZE + size ==
-                page->heap + pool->size)
-                page->rest = CZL_MM_HEAP_MSG_SIZE + size;
-            else
-                *((unsigned short*)
-                  (heap+new_size+3+size)) = CZL_MM_HEAP_MSG_SIZE + size;
-        }
-    }
-
-    if (page->state)
-        czl_mm_sp_insert(&pool->Head, page);
-    return heap;
-}
-
-static void* czl_mm_sys_realloc
-(
-    czl_gp *gp,
-    void *heap,
-    czl_ulong new_size,
-    czl_ulong old_size
-)
-{
-	void *buf;
-    if (new_size-old_size+gp->mm_cnt > gp->mm_limit)
-        return NULL;
-
-    if ((buf=realloc(heap, new_size)))
-        gp->mm_cnt += (new_size-old_size);
+        memcpy(buf, heap, (old_size < new_size ? old_size : new_size));
+    czl_mm_free(gp, heap, old_size, pool);
     return buf;
 }
 
@@ -942,83 +800,339 @@ static void* czl_mm_realloc
     czl_mm_sp_pool *pools
 )
 {
-	czl_mm_sp *page;
-	czl_mm_sp_pool *pool;
-
     if (!heap || 0 == old_size)
         return czl_mm_malloc(gp, new_size, pools);
     if (new_size == old_size)
         return heap;
 
-    if (new_size > CZL_MM_SP_512B || old_size > CZL_MM_SP_512B)
+    if (new_size <= CZL_MM_SP_515B && old_size <= CZL_MM_SP_515B)
     {
-#ifdef CZL_MM_SLAB
-        if (gp->mm_cache && new_size <= CZL_MM_1MB)
-            return czl_mm_slab_resize(gp, heap, new_size, old_size, pools);
+        czl_mm_sp_pool *pool = pools + czl_mm_sp_get(old_size, pools);
+        if (new_size >= pool->min && new_size <= pool->max)
+            return heap;
+        else
+            return czl_mm_diff_page_resize(gp, heap, new_size, old_size, pools);
+    }
+    else
+    {
+#ifdef CZL_MM_CACHE
+        if (gp->mm_cache_size && new_size <= CZL_MM_1MB)
+            return czl_mm_cache_resize(gp, heap, new_size, old_size, pools);
         else if (old_size > CZL_MM_1MB && new_size > CZL_MM_1MB)
-            return czl_mm_sys_realloc(gp, heap, new_size, old_size);
+            return czl_mm_sys_realloc(gp, heap, new_size, old_size, pools);
         else
-            return czl_mm_different_page_resize(gp, heap, new_size,
-                                                old_size, pools);
+            return czl_mm_diff_page_resize(gp, heap, new_size, old_size, pools);
 #else
-        if (new_size > CZL_MM_SP_512B && old_size > CZL_MM_SP_512B)
-            return czl_mm_sys_realloc(gp, heap, new_size, old_size);
+        if (new_size > CZL_MM_SP_515B && old_size > CZL_MM_SP_515B)
+            return czl_mm_sys_realloc(gp, heap, new_size, old_size, pools);
         else
-            return czl_mm_different_page_resize(gp, heap, new_size,
-                                                old_size, pools);
-#endif //#ifdef CZL_MM_SLAB
+            return czl_mm_diff_page_resize(gp, heap, new_size, old_size, pools);
+#endif //#ifdef CZL_MM_CACHE
     }
+}
 
-    
-	page = (czl_mm_sp*)(heap-*((unsigned short*)(heap-2)) -
-						CZL_MM_HEAP_MSG_SIZE - CZL_MM_SP_HEAD_SIZE);
-    pool = pools + page->id;
+static void czl_mm_update_tabkv
+(
+    char *heap,
+    char *tmp,
+    czl_mm_sp_pool *pool
+)
+{
+    czl_table *tab = CZL_TAB(pool->obj);
+    czl_tabkv *kv = (czl_tabkv*)heap;
 
-    switch (page->id)
+    if ((czl_tabkv*)tmp == tab->foreach_inx)
+        tab->foreach_inx = kv;
+    if (CZL_VAR_EXIST_REF(kv))
+        czl_ref_obj_update((czl_var*)kv);
+
+    if (kv->last)
+        kv->last->next = kv;
+    else
+        tab->eles_head = kv;
+    if (kv->next)
+        kv->next->last = kv;
+    else
+        tab->eles_tail = kv;
+
+    if ((czl_tabkv**)kv->clsLast >= tab->buckets &&
+        (czl_tabkv**)kv->clsLast <= tab->buckets+tab->size)
+        *((czl_tabkv**)kv->clsLast) = kv;
+    else
+        kv->clsLast->clsNext = kv;
+
+    if (kv->clsNext)
+        kv->clsNext->clsLast = kv;
+}
+
+#define CZL_MM_CMP(selfAdapt, size, pool, p, page, cnt) { \
+    if (p->freeNum > page->freeNum) { page = p; goto CZL_AGAIN; } \
+    if (selfAdapt) { \
+        if (size) { \
+            if (p->rank > 1) { \
+                --pool->sum; \
+                p->threshold = CZL_MM_SP_THRESHOLD(--p->rank, p->heapNum); \
+            } \
+        } \
+        else if (p->rank < CZL_MM_SP_HEAP_NUM_MAX) { \
+            ++pool->sum; \
+            p->threshold = CZL_MM_SP_THRESHOLD(++p->rank, p->heapNum); \
+        } \
+    } \
+    cnt += p->freeNum; \
+}
+
+static char czl_mm_fill_page
+(
+    czl_gp *gp,
+    czl_mm_sp *page,
+    czl_mm_sp_pool *pool,
+    czl_ulong size
+)
+{
+    char ret = 1;
+    char *tmp, *heap;
+    czl_mm_sp *p, *q;
+    unsigned long cnt, sum;
+
+    if (!page) return 0;
+
+    if (page->heapNum == page->freeNum)
+        goto CZL_FREE;
+
+CZL_AGAIN:
+    p = page->freeNext;
+    q = page->freeLast;
+    cnt = 0;
+    sum = page->heapNum - page->freeNum;
+    while (p && cnt < sum)
     {
-    case 0:
-        if (new_size <= CZL_MM_SP_128B)
+        CZL_MM_CMP(gp->mmp_selfAdapt, size, pool, p, page, cnt);
+        p = p->freeNext;
+    }
+    while (q && cnt < sum)
+    {
+        CZL_MM_CMP(gp->mmp_selfAdapt, size, pool, q, page, cnt);
+        q = q->freeLast;
+    }
+    if (cnt < sum)
+        return 0;
+
+    if (page->freeNext) { p = page->freeNext; q = NULL; }
+    else                { p = page->freeLast; q = page; }
+
+    for (;;)
+    {
+        --p->freeNum;
+        if (CZL_MM_OBJ_SP == pool->type)
         {
-            if (new_size > old_size)
-                return czl_mm_same_page_add(gp, heap, new_size,
-                                            old_size, page,
-                                            pool, pools);
-            else
-                return czl_mm_same_page_dec(gp, heap, new_size,
-                                            old_size, page,
-                                            pool, pools);
+            tmp = CZL_MM_OBJ_HEAP_GET(p->heap, p->freeHead, pool->max);
+            heap = CZL_MM_OBJ_HEAP_GET(p->heap, p->useHead, pool->max);
         }
-        break;
-    case 1:
-        if (new_size > CZL_MM_SP_128B && new_size <= CZL_MM_SP_256B)
+        else
         {
-            if (new_size > old_size)
-                return czl_mm_same_page_add(gp, heap, new_size,
-                                            old_size, page,
-                                            pool, pools);
-            else
-                return czl_mm_same_page_dec(gp, heap, new_size,
-                                            old_size, page,
-                                            pool, pools);
+            tmp = CZL_MM_VAR_HEAP_GET(p->heap, p->freeHead, pool->max);
+            heap = CZL_MM_VAR_HEAP_GET(p->heap, p->useHead, pool->max);
         }
-        break;
-    default: //2
-        if (new_size > CZL_MM_SP_256B && new_size <= CZL_MM_SP_512B)
+        p->freeHead = tmp[2];
+        tmp[0] = 0;
+        tmp[2] = p->useHead;
+        if (p->useHead)
+             heap[0] = tmp[1];
+        p->useHead = tmp[1];
+        if (!p->freeHead)
         {
-            if (new_size > old_size)
-                return czl_mm_same_page_add(gp, heap, new_size,
-                                            old_size, page,
-                                            pool, pools);
-            else
-                return czl_mm_same_page_dec(gp, heap, new_size,
-                                            old_size, page,
-                                            pool, pools);
+            czl_mm_sp_break(pool, p);
+            if (q) p = p->freeLast;
+            else if (!(p=p->freeNext)) p = q = page->freeLast;
         }
-        break;
+        //
+        if (CZL_MM_OBJ_SP == pool->type)
+        {
+            char **obj;
+            heap = CZL_MM_OBJ_HEAP_GET(page->heap, page->useHead, pool->max);
+            page->useHead = heap[2];
+            memcpy(tmp+3, heap+3, pool->max+4);
+            obj = *((char***)(heap+3));
+            *obj = tmp+CZL_MM_OBJ_HEAP_MSG_SIZE;
+        }
+        else
+        {
+            heap = CZL_MM_VAR_HEAP_GET(page->heap, page->useHead, pool->max);
+            page->useHead = heap[2];
+            tmp += CZL_MM_VAR_HEAP_MSG_SIZE;
+            heap += CZL_MM_VAR_HEAP_MSG_SIZE;
+            memcpy(tmp, heap, pool->max);
+            czl_mm_update_tabkv(tmp, heap, pool);
+        }
+        if (!page->useHead)
+        {
+        CZL_FREE:
+            if (size &&
+                ((CZL_MM_OBJ_SP == pool->type &&
+                  size > (czl_ulong)CZL_MM_OBJ_SP_SIZE(pool->max, page->heapNum)) ||
+                 (CZL_MM_VAR_SP == pool->type &&
+                  size > (czl_ulong)CZL_MM_VAR_SP_SIZE(pool->max, page->heapNum))))
+                ret = 0;
+            czl_mm_sp_break(pool, page);
+            czl_mm_sp_delete(gp, pool, page);
+            return ret;
+        }
+    }
+}
+
+static void czl_mm_free_ov
+(
+    czl_gp *gp,
+    char *heap,
+    czl_mm_sp *page,
+    czl_mm_sp_pool *pool
+)
+{
+    if (CZL_MM_OBJ_SP == pool->type)
+    {
+        heap -= 7;
+        //从使用链表中删除该节点
+        if (heap[0])
+        {
+            char *last = CZL_MM_OBJ_HEAP_GET(page->heap, heap[0], pool->max);
+            last[2] = heap[2];
+        }
+        else if (!(page->useHead=heap[2]) && pool->freeHead && pool->freeHead->next)
+        {
+            if (page->freeHead)
+                czl_mm_sp_break(pool, page);
+            czl_mm_sp_delete(gp, pool, page);
+            return;
+        }
+        if (heap[2])
+        {
+            char *next = CZL_MM_OBJ_HEAP_GET(page->heap, heap[2], pool->max);
+            next[0] = heap[0];
+        }
+    }
+    else
+    {
+        heap -= 3;
+        //从使用链表中删除该节点
+        if (heap[0])
+        {
+            char *last = CZL_MM_VAR_HEAP_GET(page->heap, heap[0], pool->max);
+            last[2] = heap[2];
+        }
+        else if (!(page->useHead=heap[2]) && pool->freeHead && pool->freeHead->next)
+        {
+            if (page->freeHead)
+                czl_mm_sp_break(pool, page);
+            czl_mm_sp_delete(gp, pool, page);
+            return;
+        }
+        if (heap[2])
+        {
+            char *next = CZL_MM_VAR_HEAP_GET(page->heap, heap[2], pool->max);
+            next[0] = heap[0];
+        }
     }
 
-    return czl_mm_different_page_resize(gp, heap, new_size,
-                                        old_size, pools);
+    //将该节点插入到空闲链表
+    if (!page->freeHead)
+        czl_mm_sp_insert(pool, page);
+    heap[2] = page->freeHead;
+    page->freeHead = heap[1];
+
+    //碎片率检查
+    ++page->freeNum;
+    if (page->rank && page->freeNum > page->threshold && page != pool->head)
+        czl_mm_fill_page(gp, page, pool, 0);
+}
+
+static void czl_mm_fill_heap
+(
+    czl_gp *gp,
+    char *heap,
+    czl_mm_sp *page,
+    czl_mm_sp_pool *pool
+)
+{
+    char *tmp;
+
+    if (page == pool->freeHead || (!pool->freeHead && page == pool->head))
+    {
+        czl_mm_free_ov(gp, heap, page, pool);
+        return;
+    }
+
+    page = (pool->freeHead ? pool->freeHead : pool->head);
+
+    if (CZL_MM_OBJ_SP == pool->type)
+    {
+        char **obj;
+        tmp = CZL_MM_OBJ_HEAP_GET(page->heap, page->useHead, pool->max) +
+              CZL_MM_OBJ_HEAP_MSG_SIZE;
+        memcpy(heap-4, tmp-4, pool->max+4);
+        obj = *((char***)(tmp-4));
+        *obj = heap;
+    }
+    else
+    {
+        tmp = CZL_MM_VAR_HEAP_GET(page->heap, page->useHead, pool->max) +
+              CZL_MM_VAR_HEAP_MSG_SIZE;
+        memcpy(heap, tmp, pool->max);
+        czl_mm_update_tabkv(heap, tmp, pool);
+    }
+
+    czl_mm_free_ov(gp, tmp, page, pool);
+}
+
+static void czl_mm_free_buf
+(
+    czl_gp *gp,
+    char *heap,
+    czl_mm_sp_pool *pool
+)
+{
+    czl_mm_sp *page = (czl_mm_sp*)CZL_MM_BUF_PAGE_GET(heap, pool->max);
+    if (0 == --page->useHead && pool->freeHead && pool->freeHead->next)
+    {
+        if (page->freeHead)
+            czl_mm_sp_break(pool, page);
+        czl_mm_sp_delete(gp, pool, page);
+        return;
+    }
+
+    //将该节点插入到空闲链表
+    if (!page->freeHead)
+        czl_mm_sp_insert(pool, page);
+    *heap = page->freeHead;
+    page->freeHead = *(heap-1);
+}
+
+static void czl_mm_free_heap
+(
+    czl_gp *gp,
+    char *heap,
+    czl_mm_sp_pool *pool
+)
+{
+    if (CZL_MM_BUF_SP == pool->type)
+        czl_mm_free_buf(gp, heap, pool);
+    else
+    {
+        czl_mm_sp *page;
+        if (CZL_MM_VAR_SP == pool->type)
+            page = (czl_mm_sp*)CZL_MM_VAR_PAGE_GET(heap, pool->max);
+        else
+        {
+            char *tmp = *((char**)heap);
+            czl_mm_free_buf(gp, heap, &gp->mmp_obj);
+            heap = tmp;
+            page = (czl_mm_sp*)CZL_MM_OBJ_PAGE_GET(heap, pool->max);
+        }
+        if (page->rank)
+            czl_mm_free_ov(gp, heap, page, pool);
+        else
+            czl_mm_fill_heap(gp, heap, page, pool);
+    }
 }
 
 static void czl_mm_free
@@ -1029,429 +1143,274 @@ static void czl_mm_free
     czl_mm_sp_pool *pool
 )
 {
-    czl_mm_sp *page;
-
-    if (0 == pool->len)
+    if (pool->min != pool->max)
     {
         if (0 == size || !heap)
             return;
-    #ifdef CZL_MM_SLAB
-        if (gp->mm_cache && size > CZL_MM_SP_512B && size <= CZL_MM_1MB)
+    #ifdef CZL_MM_CACHE
+        if (gp->mm_cache_size && size > CZL_MM_SP_515B && size <= CZL_MM_1MB)
         {
-            czl_mm_slab_free(gp, heap, size);
+            if (CZL_MM_OBJ_SP == pool->type)
+            {
+                char *tmp = *((char**)heap);
+                czl_mm_free_buf(gp, heap, &gp->mmp_obj);
+                heap = tmp;
+            }
+            czl_mm_cache_free(gp, heap);
             return;
         }
         else
-    #endif //#ifdef CZL_MM_SLAB
-        if (size > CZL_MM_SP_512B)
+    #endif //#ifdef CZL_MM_CACHE
+        if (size > CZL_MM_SP_515B)
         {
-            free(heap);
-            gp->mm_cnt -= size;
+            if (CZL_MM_OBJ_SP == pool->type)
+            {
+                char *tmp = *((char**)heap);
+                czl_mm_free_buf(gp, heap, &gp->mmp_obj);
+                heap = tmp;
+            }
+            czl_mm_sys_free(gp, heap);
             return;
         }
+        pool += czl_mm_sp_get(size, pool);
     }
 
-    page = (czl_mm_sp*)(heap-*((unsigned short*)(heap-2)) -
-                        CZL_MM_HEAP_MSG_SIZE - CZL_MM_SP_HEAD_SIZE);
-    if (CZL_MM_SP_ERROR(page))
-    {
-        //pool字段用于校验内存池是否匹配，不匹配说明该heap分配和释放使用了不同的池
-        assert(0);
-    }
-
-    if (pool->len)
-    {
-        pool->rest += (CZL_MM_HEAP_MSG_SIZE+size);
-        page->piece += (CZL_MM_HEAP_MSG_SIZE+size);
-    }
-    else
-    {
-        pool += page->id;
-        pool->rest += (CZL_MM_HEAP_MSG_SIZE+*((unsigned short*)(heap-4)));
-        page->piece += (CZL_MM_HEAP_MSG_SIZE+*((unsigned short*)(heap-4)));
-    }
-
-    if (page->piece == pool->size)
-    {
-        czl_mm_sp_break(pool, page);
-        czl_mm_sp_delete(pool, page);
-        pool->rest -= pool->size;
-        pool->count -= pool->size;
-        gp->mm_cnt -= (CZL_MM_SP_HEAD_SIZE+pool->size);
-    }
-    else
-    {
-        czl_mm_set_white(heap-4, pool, page);
-        if (page->state)
-            czl_mm_sp_insert(&pool->Head, page);
-    }
+    czl_mm_free_heap(gp, heap, pool);
 }
 //////////////////////////////////////////////////////////////////
-#define CZL_MM_SP_CHECK(size, pool) \
-(size <= CZL_MM_SP_512B && 4*pool.rest > pool.count)
-
-#define CZL_MM_SPS_CHECK(size, pools) \
-((size <= CZL_MM_SP_128B && 4*pools[0].rest > pools[0].count) || \
- (size <= CZL_MM_SP_256B && 4*pools[1].rest > pools[1].count) || \
- (size <= CZL_MM_SP_512B && 4*pools[2].rest > pools[2].count))
-
-static void czl_vars_gc(czl_gp*, czl_var*, unsigned long);
-static void czl_str_gc(czl_gp*, czl_str*);
-static czl_ins* czl_ins_gc(czl_gp*, czl_ins*);
-static void czl_tab_gc(czl_gp*, czl_value*);
-static void czl_arr_gc(czl_gp*, czl_value*);
-static void czl_sql_gc(czl_gp*, czl_value*);
-
-static char czl_val_gc(czl_gp *gp, czl_var *var)
+void czl_mm_sp_destroy(czl_gp *gp, czl_mm_sp_pool *pool)
 {
-    switch (var->type)
+    czl_mm_sp *p = pool->head, *q;
+
+    switch (pool->type)
     {
-    case CZL_INT: case CZL_FLOAT: case CZL_FILE:
-    case CZL_FUN_REF: case CZL_OBJ_REF:
-        return 0;
-    case CZL_STRING:
-        czl_str_gc(gp, &var->val.str);
-        return 0;
-    case CZL_INSTANCE:
-        var->val.obj = czl_ins_gc(gp, (czl_ins*)var->val.obj);
-        break;
-    case CZL_TABLE:
-        czl_tab_gc(gp, &var->val);
-        break;
-    case CZL_ARRAY:
-        czl_arr_gc(gp, &var->val);
-        break;
-    default: //CZL_STACK/CZL_QUEUE/CZL_LIST
-        czl_sql_gc(gp, &var->val);
-        break;
-    }
-
-    return (CZL_OBJ_IS_LOCK(var));
-}
-
-static void czl_str_gc(czl_gp *gp, czl_str *str)
-{
-	unsigned long size;
-
-    if (str->s->rc > 1)
-        return;
-
-    size = CZL_SL(str->size);
-    if (size < gp->mm_gc_max_str_size &&
-        CZL_MM_SPS_CHECK(size, gp->mmp_str))
-    {
-        czl_string *buf = CZL_STR_MALLOC(gp, size);
-        if (buf)
-        {
-            memcpy(buf, str->s, size);
-            CZL_STR_FREE(gp, str->s, size);
-            str->s = buf;
-        }
-        else if (size < gp->mm_gc_max_str_size)
-            gp->mm_gc_max_str_size = size;
-    }
-}
-
-static czl_ins* czl_ins_gc(czl_gp *gp, czl_ins *ins)
-{
-    unsigned char flag = 0;
-	czl_var *var = CZL_GIV(ins);
-	czl_ins **p = ins->parents;
-    unsigned long i, j = ins->pclass->parents_count;
-    for (i = 0; i < j; i++)
-        p[i] = czl_ins_gc(gp, p[i]);
-    
-    j = ins->pclass->vars_count;
-    for (i = 0; i < j; ++i)
-        if (czl_val_gc(gp, var++) && 0 == flag)
-            flag = 1;
-
-    if (1 == ins->rc && 0 == ins->rf && 0 == flag)
-    {
-        unsigned long size = CZL_IL(ins->pclass->parents_count,
-                                    ins->pclass->vars_count);
-        if (CZL_MM_SP_CHECK(size, ins->pclass->pool))
-        {
-            czl_ins *buf = (czl_ins*)czl_malloc(gp, size, &ins->pclass->pool);
-            if (buf)
-            {
-				czl_var *var;
-				unsigned long i, j = ins->pclass->vars_count;
-                memcpy(buf, ins, size);
-                czl_free(gp, ins, size, &ins->pclass->pool);
-                ins = buf;
-                var = CZL_GIV(ins);
-                for (i = 0; i < j; ++i, ++var)
-                    if (CZL_VAR_EXIST_REF(var))
-                        czl_ref_obj_update(var);
-            }
-        }
-    }
-
-    return ins;
-}
-
-static void czl_tab_gc(czl_gp *gp, czl_value *val)
-{
-    czl_table *tab = (czl_table*)val->obj;
-    unsigned long size;
-
-    if (1 == tab->rc && 0 == tab->rf)
-    {
-        size = sizeof(czl_table);
-        if (CZL_MM_SP_CHECK(size, gp->mmp_tab))
-        {
-            czl_table *buf = CZL_TAB_MALLOC(gp);
-            if (buf)
-            {
-                memcpy(buf, tab, size);
-                CZL_TAB_FREE(gp, tab);
-                val->obj = tab = buf;
-            }
-        }
-    }
-
-    size = sizeof(czl_tabkv);
-    if (CZL_MM_SP_CHECK(size, tab->pool))
-    {
-        czl_tabkv *p = tab->eles_head, *q = NULL;
+    case CZL_MM_OBJ_SP:
         while (p)
         {
-            p->last = q;
-            if (czl_val_gc(gp, (czl_var*)p))
-            {
-                q = p;
-                p = p->next;
-                continue;
-            }
-            q = (czl_tabkv*)czl_malloc(gp, size, &tab->pool);
-            *q = *p;
-            czl_free(gp, p, size, &tab->pool);
-            if (p == tab->foreach_inx)
-                tab->foreach_inx = q;
-            p = q->next;
-            if (q->last)
-                q->last->next = q;
-            else
-                tab->eles_head = q;
-            if (CZL_VAR_EXIST_REF(q))
-                czl_ref_obj_update((czl_var*)q);
+            gp->mm_cnt -= CZL_MM_OBJ_SP_SIZE(pool->max, p->heapNum);
+            q = p->next;
+            free(p);
+            p = q;
         }
-        tab->eles_tail = q;
-        czl_table_rehash(tab);
-    }
-}
-
-static void czl_arr_ref_obj_update(czl_array *arr)
-{
-    czl_var *var = arr->vars;
-    unsigned long i, j = arr->cnt;
-    for (i = 0; i < j; ++i, ++var)
-        if (CZL_VAR_EXIST_REF(var))
-        {
-            czl_ref_var *p = ((czl_ref_obj*)var->name)->head;
-            while (p)
-            {
-                p->var->val.ref.var = (czl_var*)arr;
-                p = p->next;
-            }
-        }
-}
-
-static void czl_arr_gc(czl_gp *gp, czl_value *val)
-{
-    czl_array *arr = (czl_array*)val->obj;
-
-    if (1 == arr->rc && 0 == arr->rf)
-    {
-        unsigned long size = sizeof(czl_array);
-        if (CZL_MM_SP_CHECK(size, gp->mmp_arr))
-        {
-            czl_array *buf = CZL_ARR_MALLOC(gp);
-            if (buf)
-            {
-                memcpy(buf, arr, size);
-                CZL_ARR_FREE(gp, arr);
-                val->obj = arr = buf;
-                czl_arr_ref_obj_update(arr);
-            }
-        }
-    }
-
-    czl_vars_gc(gp, arr->vars, arr->cnt);
-}
-
-static void czl_sql_gc(czl_gp *gp, czl_value *val)
-{
-    czl_sql *sql = (czl_sql*)val->obj;
-    unsigned long size;
-
-    if (1 == sql->rc && 0 == sql->rf)
-    {
-        size = sizeof(czl_sql);
-        if (CZL_MM_SP_CHECK(size, gp->mmp_sql))
-        {
-            czl_sql *buf = CZL_SQL_MALLOC(gp);
-            if (buf)
-            {
-                memcpy(buf, sql, size);
-                CZL_SQL_FREE(gp, sql);
-                val->obj = sql = buf;
-            }
-        }
-    }
-
-    size = sizeof(czl_glo_var);
-    if (CZL_MM_SP_CHECK(size, sql->pool))
-    {
-        czl_glo_var *p = sql->eles_head, *q = NULL, *last = NULL;
+        break;
+    case CZL_MM_VAR_SP:
         while (p)
         {
-            if (czl_val_gc(gp, (czl_var*)p))
-            {
-                last = p;
-                p = p->next;
-                continue;
-            }
-            q = (czl_glo_var*)czl_malloc(gp, size, &sql->pool);
-            *q = *p;
-            czl_free(gp, p, size, &sql->pool);
-            if (p == sql->foreach_inx)
-                sql->foreach_inx = q;
-            p = q->next;
-            if (last)
-                last->next = q;
-            else
-                sql->eles_head = q;
-            last = q;
-            if (CZL_VAR_EXIST_REF(q))
-                czl_ref_obj_update((czl_var*)q);
+            gp->mm_cnt -= CZL_MM_VAR_SP_SIZE(pool->max, p->heapNum);
+            q = p->next;
+            free(p);
+            p = q;
         }
-        sql->eles_tail = q;
-    }
-}
-
-static void czl_vars_gc(czl_gp *gp, czl_var *vars, unsigned long cnt)
-{
-    unsigned long i;
-    for (i = 0; i < cnt; ++i)
-        czl_val_gc(gp, vars+i);
-}
-
-static void czl_var_list_gc(czl_gp *gp, czl_glo_var *p)
-{
-    while (p)
-    {
-        czl_val_gc(gp, (czl_var*)p);
-        p = p->next;
-    }
-}
-
-static void czl_fun_list_gc(czl_gp *gp, czl_fun *f)
-{
-    while (f)
-    {
-        unsigned long i;
-        czl_vars_gc(gp, f->vars, f->dynamic_vars_cnt+f->static_vars_cnt);
-        for (i = 0; i < f->backup_cnt; ++i)
-            czl_vars_gc(gp, f->backup_vars[i], f->dynamic_vars_cnt);
-        f = f->next;
-    }
-}
-
-//全局扫描整理各个内存池的外部碎片，压缩内存池使内存更连续，将多余内存释放给操作系统
-void czl_mm_sp_pool_gc(czl_gp *gp)
-{
-	czl_fun *f;
-	czl_class *c;
-
-    gp->mm_gc_max_str_size = CZL_MM_SP_512B + 1;
-
-    czl_var_list_gc(gp, gp->vars_head);
-
-    for (f = gp->funs_head; f; f = f->next)
-    {
-		unsigned long i;
-        if (f->dynamic_vars_cnt < 0)
-            continue;
-        if (CZL_SYS_FUN == f->type)
-            czl_vars_gc(gp, f->vars, f->dynamic_vars_cnt);
-        else
-            czl_vars_gc(gp, f->vars, f->dynamic_vars_cnt+f->static_vars_cnt);
-        for (i = 0; i < f->backup_cnt; ++i)
-            czl_vars_gc(gp, f->backup_vars[i], f->dynamic_vars_cnt);
-    }
-
-    for (c = gp->class_head; c; c = c->next)
-    {
-        czl_var_list_gc(gp, (czl_glo_var*)c->vars);
-        czl_fun_list_gc(gp, c->funs);
+        break;
+    case CZL_MM_BUF_SP:
+        while (p)
+        {
+            gp->mm_cnt -= CZL_MM_BUF_SP_SIZE(pool->max, p->heapNum);
+            q = p->next;
+            free(p);
+            p = q;
+        }
+        break;
+    default: //CZL_MM_UNDEF_SP
+        break;
     }
 }
 //////////////////////////////////////////////////////////////////
 static void czl_mm_sp_pool_init
 (
     czl_mm_sp_pool *pool,
-    unsigned short size,
-    unsigned short len
+    unsigned char type,
+    unsigned short min,
+    unsigned short max
 )
 {
-    pool->head = pool->Head = pool->at = NULL;
-    pool->addr = NULL;
-    pool->size = size;
-    pool->len = len;
-    pool->rest = 0;
-    pool->count = 0;
+    pool->type = type;
+    pool->num = CZL_MM_SP_HEAP_NUM_MIN;
+    pool->min = min;
+    pool->max = max;
+    pool->head = pool->freeHead = NULL;
+    pool->cnt = 0;
+    pool->sum = 0;
 }
 
-void czl_mm_pool_init(czl_mm_sp_pool *pool, unsigned short len)
+void czl_mm_pool_init
+(
+    czl_mm_sp_pool *pool,
+    unsigned short size,
+    unsigned char type
+)
 {
-    if (len > 0)
-    {
-        unsigned short size = CZL_MM_HEAP_MSG_SIZE + len;
-        if (len <= CZL_MM_SP_128B)
-            czl_mm_sp_pool_init(pool, CZL_MM_SP_4KB/size*size, len);
-        else if (len <= CZL_MM_SP_256B)
-            czl_mm_sp_pool_init(pool, CZL_MM_SP_20KB/size*size, len);
-        else //<= CZL_MM_SP_512B
-            czl_mm_sp_pool_init(pool, CZL_MM_SP_40KB/size*size, len);
-    }
+#ifndef CZL_MM_RT_GC
+    if (type != CZL_MM_BUF_SP)
+        type = CZL_MM_BUF_SP;
+#endif //#ifndef CZL_MM_RT_GC
+
+    if (size > 0)
+        czl_mm_sp_pool_init(pool, type, size, size);
     else
     {
-        czl_mm_sp_pool_init(pool, CZL_MM_SP_4KB, 0);
-        czl_mm_sp_pool_init(pool+1, CZL_MM_SP_20KB, 0);
-        czl_mm_sp_pool_init(pool+2, CZL_MM_SP_40KB, 0);
+        unsigned short min = 5;
+        czl_mm_sp_pool_init(pool, type, 1, 2);
+        czl_mm_sp_pool_init(++pool, type, 3, 4);
+        do {
+            unsigned short max = min + min/9;
+            czl_mm_sp_pool_init(++pool, type, min, max);
+            min = max+1;
+        } while(min <= 512);
     }
 }
 
 void czl_mm_module_init
 (
-    czl_gp *gp
-#ifdef CZL_MM_SLAB
-    , unsigned long cache
+    czl_gp *gp,
+    unsigned char rank,
+    unsigned char selfAdapt,
+    czl_ulong gc_size
+#ifdef CZL_MM_CACHE
+    , czl_ulong cache_size
 #endif
 )
 {
-    czl_mm_pool_init(gp->mmp_tmp, 0);
-    czl_mm_pool_init(gp->mmp_rt, 0);
-    czl_mm_pool_init(gp->mmp_stack, 0);
-    czl_mm_pool_init(gp->mmp_str, 0);
+    gp->mmp_rank = rank;
+    gp->mmp_selfAdapt = selfAdapt;
+    gp->mmp_gc_size = gc_size;
 
-    czl_mm_pool_init(&gp->mmp_tab, sizeof(czl_table));
-    czl_mm_pool_init(&gp->mmp_arr, sizeof(czl_array));
-    czl_mm_pool_init(&gp->mmp_sql, sizeof(czl_sql));
-    czl_mm_pool_init(&gp->mmp_ref, sizeof(czl_ref_var));
-    czl_mm_pool_init(&gp->mmp_cor, sizeof(czl_coroutine));
+    czl_mm_pool_init(gp->mmp_tmp, 0, CZL_MM_BUF_SP);
+    czl_mm_pool_init(gp->mmp_rt, 0, CZL_MM_BUF_SP);
+    czl_mm_pool_init(gp->mmp_stack, 0, CZL_MM_BUF_SP);
+    czl_mm_pool_init(&gp->mmp_obj, sizeof(void**), CZL_MM_BUF_SP);
+
+    czl_mm_pool_init(gp->mmp_str, 0, CZL_MM_OBJ_SP);
+    czl_mm_pool_init(&gp->mmp_tab, sizeof(czl_table), CZL_MM_OBJ_SP);
+    czl_mm_pool_init(&gp->mmp_arr, sizeof(czl_array), CZL_MM_OBJ_SP);
+    czl_mm_pool_init(&gp->mmp_sq, sizeof(czl_sq), CZL_MM_OBJ_SP);
+    czl_mm_pool_init(&gp->mmp_cor, sizeof(czl_coroutine), CZL_MM_OBJ_SP);
+
+    czl_mm_pool_init(&gp->mmp_ref, sizeof(czl_ref_var), CZL_MM_BUF_SP);
 #ifdef CZL_MULT_THREAD
-    czl_mm_pool_init(&gp->mmp_thread, sizeof(czl_thread));
+    czl_mm_pool_init(&gp->mmp_thread, sizeof(czl_thread), CZL_MM_BUF_SP);
 #endif //#ifdef CZL_MULT_THREAD
 
-#ifdef CZL_MM_SLAB
-    gp->mm_cache = cache;
-    gp->slab_pool.gc.datas = NULL;
-    gp->slab_pool.array = NULL;
-    gp->slab_pool.count = 0;
-#endif //#ifdef CZL_MM_SLAB
+#ifdef CZL_MM_CACHE
+    gp->mm_cache_size = cache_size;
+    gp->mm_cache.pools = NULL;
+    gp->mm_cache.count = 0;
+    gp->mm_cache.flag = 0;
+#endif //#ifdef CZL_MM_CACHE
+}
+//////////////////////////////////////////////////////////////////
+static void czl_mm_scan_pool(czl_gp *gp, czl_ulong size)
+{
+    czl_class *c;
+    czl_mm_sp *p;
+    unsigned long i;
+    unsigned char id;
+    void *buf = NULL;
+    czl_ulong cnt = gp->mm_cnt;
+
+    for (c = gp->class_head; c; c = c->next)
+        while (czl_mm_fill_page(gp, c->pool.freeHead, &c->pool, 0))
+            if ((cnt - gp->mm_cnt >= gp->mmp_gc_size) || (buf=malloc(size)))
+                goto CZL_END;
+
+    for (i = 0; i < CZL_MM_SP_RANGE; ++i)
+        while (czl_mm_fill_page(gp, gp->mmp_str[i].freeHead, gp->mmp_str+i, 0))
+            if ((cnt - gp->mm_cnt >= gp->mmp_gc_size) || (buf=malloc(size)))
+                goto CZL_END;
+
+    while (czl_mm_fill_page(gp, gp->mmp_tab.freeHead, &gp->mmp_tab, 0))
+        if ((cnt - gp->mm_cnt >= gp->mmp_gc_size) || (buf=malloc(size)))
+            goto CZL_END;
+
+    while (czl_mm_fill_page(gp, gp->mmp_sq.freeHead, &gp->mmp_sq, 0))
+        if ((cnt - gp->mm_cnt >= gp->mmp_gc_size) || (buf=malloc(size)))
+            goto CZL_END;
+
+    while (czl_mm_fill_page(gp, gp->mmp_cor.freeHead, &gp->mmp_cor, 0))
+        if ((cnt - gp->mm_cnt >= gp->mmp_gc_size) || (buf=malloc(size)))
+            goto CZL_END;
+
+    while (czl_mm_fill_page(gp, gp->mmp_arr.freeHead, &gp->mmp_arr, 0))
+        if ((cnt - gp->mm_cnt >= gp->mmp_gc_size) || (buf=malloc(size)))
+            goto CZL_END;
+
+    for (i = 0, p = gp->mmp_tab.head; p && i < CZL_MM_SP_HEAP_NUM_MAX; p = p->next) {
+        char *tmp;
+        for (id = p->useHead; id && i < CZL_MM_SP_HEAP_NUM_MAX; id = tmp[2], ++i) {
+			czl_table *tab;
+            tmp = CZL_MM_OBJ_HEAP_GET(p->heap, id, gp->mmp_tab.max);
+            tab = (czl_table*)(tmp+CZL_MM_OBJ_HEAP_MSG_SIZE);
+            while (czl_mm_fill_page(gp, tab->pool.freeHead, &tab->pool, 0))
+                if ((cnt - gp->mm_cnt >= gp->mmp_gc_size) || (buf=malloc(size)))
+                    goto CZL_END;
+        }
+    }
+
+#ifdef CZL_MM_CACHE
+    czl_mm_cache_gc(gp, size);
+#endif //#ifdef CZL_MM_CACHE
+
+CZL_END:
+    free(buf);
+}
+
+static void czl_mm_scan_page(czl_gp *gp, czl_ulong size)
+{
+    czl_class *c;
+    czl_mm_sp *p;
+    unsigned long i;
+    unsigned char id;
+
+#ifndef CZL_MM_RT_GC
+    return;
+#endif //#ifndef CZL_MM_RT_GC
+
+    size += 60; //60保证大于一个heap的头部信息
+
+    for (c = gp->class_head; c; c = c->next)
+        if (czl_mm_fill_page(gp, c->pool.freeHead, &c->pool, size))
+            return;
+
+    for (i = 0; i < CZL_MM_SP_RANGE; ++i)
+        if (czl_mm_fill_page(gp, gp->mmp_str[i].freeHead, gp->mmp_str+i, size))
+            return;
+
+    if (czl_mm_fill_page(gp, gp->mmp_tab.freeHead, &gp->mmp_tab, size))
+        return;
+
+    if (czl_mm_fill_page(gp, gp->mmp_sq.freeHead, &gp->mmp_sq, size))
+        return;
+
+    if (czl_mm_fill_page(gp, gp->mmp_cor.freeHead, &gp->mmp_cor, size))
+        return;
+
+    if (czl_mm_fill_page(gp, gp->mmp_arr.freeHead, &gp->mmp_arr, size))
+        return;
+
+    for (i = 0, p = gp->mmp_tab.head; p && i < CZL_MM_SP_HEAP_NUM_MAX; p = p->next) {
+        char *tmp;
+        for (id = p->useHead; id && i < CZL_MM_SP_HEAP_NUM_MAX; id = tmp[2], ++i) {
+			czl_table *tab;
+            tmp = CZL_MM_OBJ_HEAP_GET(p->heap, id, gp->mmp_tab.max);
+            tab = (czl_table*)(tmp+CZL_MM_OBJ_HEAP_MSG_SIZE);
+            if (czl_mm_fill_page(gp, tab->pool.freeHead, &tab->pool, size))
+                return;
+        }
+    }
+
+#ifdef CZL_MM_CACHE
+    if (czl_mm_cache_scan(gp, size))
+        return;
+#endif //#ifdef CZL_MM_CACHE
+
+    czl_mm_scan_pool(gp, size);
+}
+
+czl_ulong czl_mm_gc(czl_gp *gp)
+{
+    czl_ulong cnt = gp->mm_cnt;
+    czl_mm_scan_page(gp, CZL_MM_4GB-60);
+    return cnt - gp->mm_cnt;
 }
 //////////////////////////////////////////////////////////////////
 #endif //#ifdef CZL_MM_MODULE
@@ -1475,7 +1434,7 @@ void* czl_malloc
     if (!buf && size)
     {
     #ifdef CZL_MM_MODULE
-        czl_mm_sp_pool_gc(gp);
+        czl_mm_scan_page(gp, size);
         if (!(buf=czl_mm_malloc(gp, size, pool)))
     #endif
             gp->exceptionCode = CZL_EXCEPTION_OUT_OF_MEMORY;
@@ -1505,7 +1464,7 @@ void* czl_calloc
     if (!buf && num)
     {
     #ifdef CZL_MM_MODULE
-        czl_mm_sp_pool_gc(gp);
+        czl_mm_scan_page(gp, num*size);
         if (!(buf=czl_mm_calloc(gp, num, size, pool)))
     #endif
             gp->exceptionCode = CZL_EXCEPTION_OUT_OF_MEMORY;
@@ -1543,7 +1502,7 @@ void* czl_realloc
     if (!new_buf && new_size)
     {
     #ifdef CZL_MM_MODULE
-        czl_mm_sp_pool_gc(gp);
+        czl_mm_scan_page(gp, new_size);
         if (!(new_buf=czl_mm_realloc(gp, (char*)buf, new_size, old_size, pool)))
     #endif
             gp->exceptionCode = CZL_EXCEPTION_OUT_OF_MEMORY;

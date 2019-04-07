@@ -1,4 +1,4 @@
-﻿#ifndef CZL_MM_H
+#ifndef CZL_MM_H
 #define CZL_MM_H
 
 #define CZL_SYSTEM_WINDOWS  //运行在windows系统宏
@@ -40,111 +40,153 @@
 #else
     #undef CZL_SYSTEM_64bit
     #undef CZL_MULT_THREAD
+    #undef CZL_TIMER
     typedef long czl_long;
     typedef unsigned long czl_ulong;
 #endif
 ///////////////////////////////////////////////////////////////
-#define CZL_MM_2GB   2*1024*1024*1024UL
+#define CZL_MM_4GB   0xFFFFFFFFUL
+#define CZL_MM_3GB   3*1024*1024*1024UL
 #define CZL_MM_50MB  50*1024*1024UL
-
+#define CZL_MM_4MB   4*1024*1024UL
+///////////////////////////////////////////////////////////////
 #ifdef CZL_MM_MODULE
 
-//#define CZL_MM_SLAB
+#define CZL_MM_RT_GC
+#define CZL_MM_CACHE
+///////////////////////////////////////////////////////////////
+#ifdef CZL_MM_CACHE
 
-#ifdef CZL_MM_SLAB
-#define CZL_MM_SLAB_RANGE   8188 //1048576 //160kb
-#define CZL_MM_SLAB_GAP     128
-//由 CZL_MM_SP_512B+1 + n*CZL_MM_SLAB_GAP >= 1024*1024 推出 n >= 8188
+#define CZL_MM_CACHE_RANGE   8188 //1048576 //160kb
+#define CZL_MM_CACHE_GAP     128
+//由 CZL_MM_SP_515B+1 + n*CZL_MM_CACHE_GAP >= 1024*1024 推出 n >= 8188
 #define CZL_MM_1MB  1024*1024
 
-typedef struct czl_mm_heap
+#define CZL_MM_CACHE_HEAD_SIZE  12
+
+#define CZL_MM_CACHE_GET(head) (heap-CZL_MM_CACHE_HEAD_SIZE)
+
+typedef struct czl_mm_cache
 {
-    char color;
+    struct czl_mm_cache *next;
+    struct czl_mm_cache *last;
+    unsigned char null; //保留
+    unsigned char state;
     unsigned short index;
-    struct czl_mm_heap *next;
-    struct czl_mm_heap *last;
-    struct czl_mm_heap *hash_next;
     char heap[4];
-} czl_mm_heap;
+} czl_mm_cache;
 
-typedef struct czl_mm_slab
+typedef struct czl_mm_cache_pool
 {
-    czl_mm_heap *head;
-    czl_mm_heap *tail;
+    czl_mm_cache *head;
+    czl_mm_cache *tail;
     unsigned long size;
-    unsigned long freq;
-    unsigned long count;
-} czl_mm_slab;
+} czl_mm_cache_pool;
 
-typedef struct czl_mm_hash
+typedef struct czl_mm_cache_handle
 {
-    czl_mm_heap **datas;    //bucket数组
-    long mask;              //-size
-    unsigned long size;     //bucket个数: 2的幂
-    unsigned long count;    //总数据节点个数: 与size比较进行扩容和回收
-} czl_mm_hash;
-
-typedef struct czl_mm_slab_pool
-{
-    czl_mm_hash gc;
-    czl_mm_slab *array;
+    czl_mm_cache_pool *pools;
     unsigned long count;
-} czl_mm_slab_pool;
+    unsigned char flag;
+} czl_mm_cache_handle;
 
-
-#endif //#ifdef CZL_MM_SLAB
+#endif //#ifdef CZL_MM_CACHE
 ///////////////////////////////////////////////////////////////
-#define CZL_MM_HEAP_MSG_SIZE 5 //1B工作状态 + 2B大小 + 2B偏移量
-#define CZL_MM_HEAP_MIN_SIZE (CZL_MM_HEAP_MSG_SIZE + 2)
-#define CZL_MM_SP_HEAD_SIZE 28
+#define CZL_MM_SP_RANGE         40
+#define CZL_MM_SP_515B          515
 
-#define CZL_MM_SP_RANGE 3
-#define CZL_MM_SP_128B  128
-#define CZL_MM_SP_256B  256
-#define CZL_MM_SP_512B  512
-#define CZL_MM_SP_4KB   (4*1024 - CZL_MM_SP_HEAD_SIZE)
-#define CZL_MM_SP_20KB  (20*1024 - CZL_MM_SP_HEAD_SIZE)
-#define CZL_MM_SP_40KB  (40*1024 - CZL_MM_SP_HEAD_SIZE) //不能大于65535
+#define CZL_MM_SP_HEAP_NUM_MIN  1
+#define CZL_MM_SP_HEAP_NUM_MAX  200
 
-#define CZL_MM_SP_CHECKSUM 0x9e3c7d2b
-#define CZL_MM_SP_ERROR(page) \
-(page->id > 2 || page->checksum != CZL_MM_SP_CHECKSUM)
+#define CZL_MM_SP_HEAD_SIZE     24
 
-typedef enum czl_mm_color_enum
+#define CZL_MM_OBJ_HEAP_MSG_SIZE 7
+#define CZL_MM_VAR_HEAP_MSG_SIZE 3
+#define CZL_MM_BUF_HEAP_MSG_SIZE 1
+
+#define CZL_MM_OBJ_SP_SIZE(size, num) \
+(CZL_MM_SP_HEAD_SIZE + (CZL_MM_OBJ_HEAP_MSG_SIZE+size)*(num))
+
+#define CZL_MM_VAR_SP_SIZE(size, num) \
+(CZL_MM_SP_HEAD_SIZE + (CZL_MM_VAR_HEAP_MSG_SIZE+size)*(num))
+
+#define CZL_MM_BUF_SP_SIZE(size, num) \
+(CZL_MM_SP_HEAD_SIZE + (CZL_MM_BUF_HEAP_MSG_SIZE+size)*(num))
+
+//偏移id必须强转为unsigned char型，否则当id=128时会出错
+#define CZL_MM_OBJ_HEAP_GET(head, id, size) \
+(head + (CZL_MM_OBJ_HEAP_MSG_SIZE+size)*((unsigned char)id-1))
+
+#define CZL_MM_VAR_HEAP_GET(head, id, size) \
+(head + (CZL_MM_VAR_HEAP_MSG_SIZE+size)*((unsigned char)id-1))
+
+#define CZL_MM_BUF_HEAP_GET(head, id, size) \
+(head + (CZL_MM_BUF_HEAP_MSG_SIZE+size)*((unsigned char)id-1))
+
+#define CZL_MM_OBJ_PAGE_GET(heap, size) \
+(heap - (CZL_MM_OBJ_HEAP_MSG_SIZE+size)*(*((unsigned char*)heap-6)-1) - \
+         CZL_MM_OBJ_HEAP_MSG_SIZE - CZL_MM_SP_HEAD_SIZE)
+
+#define CZL_MM_VAR_PAGE_GET(heap, size) \
+(heap - (CZL_MM_VAR_HEAP_MSG_SIZE+size)*(*((unsigned char*)heap-2)-1) - \
+         CZL_MM_VAR_HEAP_MSG_SIZE - CZL_MM_SP_HEAD_SIZE)
+
+#define CZL_MM_BUF_PAGE_GET(heap, size) \
+(heap - (CZL_MM_BUF_HEAP_MSG_SIZE+size)*(*((unsigned char*)heap-1)-1) - \
+         CZL_MM_BUF_HEAP_MSG_SIZE - CZL_MM_SP_HEAD_SIZE)
+
+#define CZL_MM_SP_THRESHOLD(rank, num) (0.005*rank*num)
+
+typedef enum czl_mm_sp_type_enum
 {
-    CZL_MM_COLOR_WHITE,
-    CZL_MM_COLOR_BLACK,
-    CZL_MM_COLOR_RED
-} czl_mm_color_enum;
+    CZL_MM_OBJ_SP,
+    CZL_MM_VAR_SP,
+    CZL_MM_BUF_SP,
+    CZL_MM_UNDEF_SP
+} czl_mm_sp_type_enum;
 
 typedef struct czl_mm_sp
 {
-    unsigned char id;
-    unsigned char state;
-    unsigned short rest;
-    unsigned short piece;
-    unsigned char null[2];
-    unsigned long checksum;
+    unsigned char null; //保留
+    unsigned char heapNum;
+    unsigned char freeNum;
+    unsigned char rank;
+    unsigned char threshold;
+    unsigned char useHead;
+    unsigned char freeHead;
+    unsigned char restHead;
     struct czl_mm_sp *next;
     struct czl_mm_sp *last;
-    struct czl_mm_sp *Next;
-    struct czl_mm_sp *Last;
+    struct czl_mm_sp *freeNext;
+    struct czl_mm_sp *freeLast;
     char heap[4];
 } czl_mm_sp;
 
 typedef struct czl_mm_sp_pool
 {
+    unsigned char type; //czl_mm_sp_type_enum
+    unsigned char num;
+    unsigned short min;
+    unsigned short max;
+    void **obj;
     czl_mm_sp *head;
-    czl_mm_sp *Head;
-    czl_mm_sp *at;
-    char *addr;
-    unsigned short size;
-    unsigned short len;
-    czl_ulong rest;
-    czl_ulong count;
+    czl_mm_sp *freeHead;
+    czl_ulong cnt, sum;
 } czl_mm_sp_pool;
 ///////////////////////////////////////////////////////////////
-void czl_mm_pool_init(czl_mm_sp_pool*, unsigned short);
+#define CZL_MM_SH_HEAD_SIZE 16
+#define CZL_MM_SYS_HEAP_GET(heap) ((czl_mm_sys_heap*)(heap-CZL_MM_SH_HEAD_SIZE))
+
+typedef struct czl_mm_sys_heap
+{
+    struct czl_mm_sys_heap *next;
+    struct czl_mm_sys_heap *last;
+    unsigned long size;
+    unsigned char null[2]; //保留
+    short flag; //必须与 czl_mm_cache 的 index 内存对其
+} czl_mm_sys_heap;
+///////////////////////////////////////////////////////////////
+void czl_mm_pool_init(czl_mm_sp_pool*, unsigned short, unsigned char);
 #endif //#ifdef CZL_MM_MODULE
 
 #endif //CZL_MM_H

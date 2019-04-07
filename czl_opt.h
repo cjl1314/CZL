@@ -1,51 +1,54 @@
-﻿#ifndef CZL_OPT_H
+#ifndef CZL_OPT_H
 #define CZL_OPT_H
 
 #include "czl_vm.h"
+
 ///////////////////////////////////////////////////////////////
 //释放字符串: string free
-#define CZL_SF(gp, str) CZL_STR_FREE(gp, (str).s, CZL_SL((str).size))
+#define CZL_SF(gp, str) CZL_STR_FREE(gp, str.Obj, CZL_SL(str.size))
 
 //重新调整字符串长度: string resize
 #define CZL_SR(gp, str, len) \
-(czl_string*)CZL_STR_REALLOC(gp, (str).s, CZL_SL(len), CZL_SL((str).size))
+(void**)CZL_STR_REALLOC(gp, str.Obj, CZL_SL(len), CZL_SL(str.size))
 ///////////////////////////////////////////////////////////////
 //字符串引用计数加一: str ref_cnt add 1
-#define CZL_SRCA1(str) ++str.s->rc
+#define CZL_SRCA1(str) ++CZL_STR(str.Obj)->rc
 
 //字符串引用计数减一: string ref_cnt dec 1
 #define CZL_SRCD1(gp, str) \
-{ if (0 == --(str).s->rc) CZL_SF(gp, str); }
+{ if (0 == --CZL_STR(str.Obj)->rc) CZL_SF(gp, str); }
+
+//哈希表键字符串引用计数减一: key string ref_cnt dec 1
+#define CZL_KEY_SRCD1(gp, s) \
+{ if (0 == --CZL_STR(s)->rc) CZL_STR_FREE(gp, s, CZL_SL(CZL_STR(s)->len)); }
 ///////////////////////////////////////////////////////////////
 //对象引用计数加一: obj ref_cnt add 1
-#define CZL_ORCA1(obj) ++((czl_ins*)obj)->rc
+#define CZL_ORCA1(obj) ++CZL_INS(obj)->rc
 
 //对象引用计数减一: obj ref_cnt dec 1
-#define CZL_ORCD1(obj) --((czl_ins*)obj)->rc
+#define CZL_ORCD1(obj) --CZL_INS(obj)->rc
 ///////////////////////////////////////////////////////////////
 //对象引用标记加一: obj ref_flag add 1
-#define CZL_ORFA1(ro) { \
+#define CZL_ORFA1(ref) { \
     unsigned long i = 0; \
-    czl_var **objs = (czl_var**)ro->objs; \
-    while (i < ro->cnt) ++((czl_ins*)objs[i++]->val.obj)->rf; \
+    while (i < ref->cnt) ++CZL_INS(ref->objs[i++])->rf; \
 }
 
 //对象引用标记减一: obj ref_flag def 1
-#define CZL_ORFD1(ro) { \
+#define CZL_ORFD1(ref) { \
     unsigned long i = 0; \
-    czl_var **objs = (czl_var**)ro->objs; \
-    while (i < ro->cnt) --((czl_ins*)objs[i++]->val.obj)->rf; \
+    while (i < ref->cnt) --CZL_INS(ref->objs[i++])->rf; \
 }
 ///////////////////////////////////////////////////////////////
 //释放实例: instance free
 #ifdef CZL_MM_MODULE
-    #define CZL_IF(gp, ins) \
-            czl_free(gp, ins, \
+    #define CZL_IF(gp, obj, ins) \
+            czl_free(gp, obj, \
                      CZL_IL(ins->pclass->parents_count, \
                             ins->pclass->vars_count), \
                      &ins->pclass->pool)
 #else
-    #define CZL_IF(gp, ins) \
+    #define CZL_IF(gp, obj, ins) \
             czl_free(gp, ins, \
                      CZL_IL(ins->pclass->parents_count, \
                             ins->pclass->vars_count))
@@ -62,8 +65,11 @@
 #define CZL_IS_CONST(node) \
 (CZL_OPERAND == node->flag && \
  (CZL_ENUM == node->type || \
+ (CZL_ARRAY_LIST == node->type && \
+  CZL_CONST_VAR == CZL_ARR_LIST(((czl_var*)node->op.obj)->val.Obj)->quality) || \
+ (CZL_TABLE_LIST == node->type && \
+  CZL_CONST_VAR == CZL_TAB_LIST(((czl_var*)node->op.obj)->val.Obj)->quality) || \
   CZL_FUN_REF == node->type || \
-  CZL_TABLE_LIST == node->type || \
   CZL_NEW == node->type || \
   CZL_NIL == node->type || \
   CZL_OBJ_REF == node->type))
@@ -110,9 +116,6 @@ if (CZL_BLOCK_BEGIN == pc->flag) \
     pc = (CZL_EIT(lo) ? pc->msg.bp.pc : pc->msg.bp.next); \
 else if (CZL_LOGIC_JUMP == pc->flag) \
     pc = pc->msg.bp.pc;
-
-//判断变量是否是对象
-#define CZL_IS_OBJ(var) (var->type >= CZL_STRING && var->type <= CZL_LIST)
 
 //与、或运算检查跳跃: and or operator check jump
 #define CZL_AO_CJ(gp, lo, pc) \
@@ -167,8 +170,7 @@ if (CZL_REG_VAR == pc->kind && pc->res->type != CZL_OBJ_REF) \
 else if (!(lo=czl_get_opr(gp, pc->kind, pc->res))) {\
     if (CZL_USR_FUN == pc->kind) goto CZL_RUN_FUN; \
     else goto CZL_EXCEPTION_CATCH; \
-} \
-CZL_COT(gp, lo, pc);
+}
 
 //执行单目运算符指令: run unary opt
 #define CZL_RUO(gp, lo, pc) \
@@ -186,8 +188,7 @@ if (pc->res) { \
 } \
 else if (!CZL_1POCF(pc->kind, lo)) \
     goto CZL_EXCEPTION_CATCH; \
-++pc; \
-CZL_GNO(pc);
+++pc;
 
 //执行有临时结果的双目运算符指令: run binary2 opt
 #define CZL_RB2O(gp, lo, ro, pc) \
@@ -237,8 +238,7 @@ else { \
 } \
 if (!CZL_2POCF(gp, pc->kind, (lo=pc->res), ro)) \
     goto CZL_EXCEPTION_CATCH; \
-++pc; \
-CZL_GNO(pc);
+++pc;
 
 //执行双目运算符指令: run binary opt
 #define CZL_RBO(gp, lo, ro, pc) \
@@ -263,8 +263,7 @@ if (!lo || !CZL_2POCF(gp, pc->kind, lo, ro)) { \
 } \
 if (CZL_STR_ELE == lo->quality) \
     czl_set_char(gp); \
-++pc; \
-CZL_GNO(pc);
+++pc;
 
 //执行赋值运算符指令: run ass opt
 #define CZL_RAO(gp, lo, ro, pc) \
@@ -304,8 +303,7 @@ if (!czl_ass_cac(gp, lo, ro)) { \
 } \
 if (CZL_STR_ELE == lo->quality) \
     czl_set_char(gp); \
-++pc; \
-CZL_GNO(pc);
+++pc;
 
 //执行foreach语句: run foreach sentence
 #define CZL_RFS(gp, pc) \
@@ -338,17 +336,8 @@ pc = (pc->res->val.inum ? pc->msg.bp.pc : pc->msg.bp.next);
 
 //执行return/yeild语句: run return/yeild sentence
 #define CZL_RRYS(gp, pc, lo) \
-if (pc->res) { \
-    if (CZL_OBJ_REF == lo->type) { \
-        pc->res->type = CZL_OBJ_REF; \
-        pc->res->val = lo->val; \
-    } \
-    else if (!czl_val_copy(gp, pc->res, lo)) \
-        goto CZL_EXCEPTION_CATCH; \
-} \
-else { \
-    pc->ro->val.inum = 0; \
-} \
+if (!pc->res) pc->ro->val.inum = 0; \
+else if (!czl_val_copy(gp, pc->res, lo)) goto CZL_EXCEPTION_CATCH; \
 goto CZL_FUN_RETURN;
 
 //执行try语句: run try sentence
@@ -359,7 +348,7 @@ case CZL_TRY_EXIT: \
     gp->exit_flag = 1; \
     gp->exit_code = CZL_EXIT_TRY; \
     goto CZL_EXCEPTION_CATCH; \
-case CZL_TRY_BREAK: \
+case CZL_TRY_BREAK: case CZL_TRY_GOTO: \
     pc = pc->msg.bp.next; \
     break; \
 default: \
@@ -368,20 +357,27 @@ default: \
 } \
 gp->exceptionCode = CZL_EXCEPTION_NO;
 ///////////////////////////////////////////////////////////////
+//检查释放函数返回值: check free fun ret
+#define CZL_CF_FR(gp, var) \
+if (CZL_FUNRET_VAR == var->quality) { \
+    czl_val_del(gp, var); \
+    var->type = CZL_INT; \
+}
+
+//检查释放函数返回值: check free fun ret
+#define CZL_CF_FR2(gp, var) \
+if (var->type != CZL_INT) { \
+    czl_val_del(gp, var); \
+    var->type = CZL_INT; \
+}
+
 //执行函数单目运算符指令: run fun unary opt
 #define CZL_RFUO(gp, lo, pc) \
 CZL_SLB_CF(gp, pc->res); \
 if (!CZL_2POCF(gp, pc->kind, pc->res, lo)) \
     goto CZL_EXCEPTION_CATCH; \
-lo = (pc++)->res; \
-CZL_GNO(pc);
-
-//检查释放函数返回值: check free fun ret
-#define CZL_CF_FR(gp, var) \
-if (CZL_FUNRET_VAR == var->quality && CZL_IS_OBJ(var)) { \
-    czl_val_del(gp, var); \
-    var->type = CZL_INT; \
-}
+CZL_CF_FR2(gp, lo); \
+lo = (pc++)->res;
 
 //执行函数双目运算符指令: run fun binary opt
 #define CZL_RFBO(gp, lo, ro, pc) \
@@ -392,17 +388,16 @@ if (!CZL_2POCF(gp, pc->kind, lo, ro)) { \
 } \
 if (CZL_STR_ELE == lo->quality) \
     czl_set_char(gp); \
-CZL_CF_FR(gp, ro); \
-++pc; \
-CZL_GNO(pc);
+CZL_CF_FR2(gp, ro); \
+++pc;
 
 //执行函数带临时结果双目运算符指令: run fun binary2 opt
 #define CZL_RFB2O(gp, lo, ro, pc) \
 if (!CZL_2POCF(gp, pc->kind, lo, ro)) \
     goto CZL_EXCEPTION_CATCH; \
+CZL_CF_FR(gp, lo); \
 CZL_CF_FR(gp, ro); \
-++pc; \
-CZL_GNO(pc);
+++pc;
 
 //设置函数双目运算符操作数： set fun binary opt opr
 #define CZL_SFBOO(gp, lo, ro, pc, cur) \
@@ -457,13 +452,16 @@ else { \
 }
 
 //检查调整用户函数栈大小: check resize usrfun stack size
-//函数调用在64层以内不会导致stack内存变动
+//函数调用在16层以内不会导致stack内存变动
 #define CZL_CRUFSS(gp, index, size, stack) \
-if (index >= 16 && index == size>>2) { \
-    stack = (czl_usrfun_stack*)CZL_STACK_REALLOC(gp, stack, \
-            (size>>1)*sizeof(czl_usrfun_stack), \
-            size*sizeof(czl_usrfun_stack)); \
-    size >>= 1; \
+if (index >= 16 && index <= size>>2) { \
+    czl_usrfun_stack *tmp = (czl_usrfun_stack*)CZL_STACK_REALLOC(gp, stack, \
+                            (size>>1)*sizeof(czl_usrfun_stack), \
+                            size*sizeof(czl_usrfun_stack)); \
+    if (tmp) { \
+        stack = tmp; \
+        size >>= 1; \
+    } \
 }
 
 //用户函数返回: usr fun return
@@ -492,6 +490,7 @@ switch (pc->flag) \
 case CZL_OPERAND: \
     lo = &cur->fun->ret; \
     CZL_COT(gp, lo, pc); \
+    CZL_CF_FR2(gp, lo); \
     break; \
 case CZL_UNARY_OPT: \
     lo = &cur->fun->ret; \
@@ -506,6 +505,7 @@ default: \
     CZL_RFB2O(gp, lo, ro, pc); \
     break; \
 } \
+CZL_GNO(pc); \
 goto CZL_BEGIN;
 
 //执行用户函数: run usr fun
@@ -554,7 +554,7 @@ if (exp) { \
 extern char (*const czl_1p_opt_cac_funs[])(czl_var*);
 extern char (*const czl_2p_opt_cac_funs[])(czl_gp*, czl_var*, czl_var*);
 ///////////////////////////////////////////////////////////////
-void czl_str_resize(czl_gp*, czl_str*);
+char czl_str_resize(czl_gp*, czl_str*);
 char czl_val_copy(czl_gp*, czl_var*, czl_var*);
 ///////////////////////////////////////////////////////////////
 char czl_ass_cac(czl_gp*, czl_var*, czl_var*);

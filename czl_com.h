@@ -1,4 +1,4 @@
-﻿#ifndef CZL_COM_H
+#ifndef CZL_COM_H
 #define CZL_COM_H
 
 //#define CZL_LIB_COM //第三方库宏控

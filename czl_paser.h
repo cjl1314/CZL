@@ -1,4 +1,4 @@
-﻿#ifndef CZL_PASER_H
+#ifndef CZL_PASER_H
 #define CZL_PASER_H
 
 #include "czl_vm.h"

@@ -1,4 +1,4 @@
-﻿#ifndef CZL_LIB_H
+#ifndef CZL_LIB_H
 #define CZL_LIB_H
 
 #include "czl_vm.h"
@@ -6,7 +6,8 @@
 extern const czl_sys_lib czl_syslibs[];
 extern const unsigned long czl_syslibs_num;
 
-#define CZL_STRUCT_FILE_MAX_SZIE 1*1024*1024*1024 //1G
+#define CZL_FILE_MAX_SZIE   CZL_MM_4GB
+#define CZL_FILE_CHECK_SUM  0xF1E2C3B4
 
 #ifdef CZL_SYSTEM_LINUX
     #define CZL_CLOCK (clock()/1000)
@@ -22,6 +23,7 @@ unsigned long czl_itoa(czl_long, char*);
 unsigned long czl_ftoa(double, char*, int);
 char* czl_get_number_from_str(char*, czl_var*);
 char czl_line_read(czl_gp*, FILE*, czl_var*);
+char czl_obj_read(czl_gp*, FILE*, czl_var*);
 int czl_get_int_mode(char*);
 //
 #ifdef CZL_MULT_THREAD
@@ -57,8 +59,8 @@ void czl_thread_pipe_delete(czl_thread_pipe*);
 #define czl_type(res) res.type
 #define czl_inum(res) res.val.inum
 #define czl_fnum(res) res.val.fnum
-#define czl_str(res) res.val.str.s->str
-#define czl_strlen(res) res.val.str.s->len
+#define czl_str(res) CZL_STR(res.val.str.Obj)->str
+#define czl_strlen(res) CZL_STR(res.val.str.Obj)->len
 char czl_pushi(czl_gp*, czl_long);
 char czl_pushf(czl_gp*, double);
 char czl_pushs(czl_gp*, char*);

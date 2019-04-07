@@ -1,4 +1,4 @@
-﻿#include "czl_paser.h"
+#include "czl_paser.h"
 #include "czl_vm.h"
 
 #ifdef CZL_CONSOLE
@@ -14,9 +14,9 @@ int main(int argc, char **argv)
         return 1;
     if (strcmp("-v", argv[1]) == 0)
     {
-        printf("CZL 0.0.1 (built: October 29 2018 12:00:00)\n");
-        printf("Copyright 2017-2018 by JL.C\n");
-        printf("CZL included register-model, multi-thread, gc, class, table and so on\n");
+        printf("CZL 1.0.0 (built: April 05 2019 12:00:00)\n");
+        printf("Copyright 2017-2019 by JL.C\n");
+        printf("CZL included register-model, multi-thread, rt-gc, class, table and so on\n");
         printf("CZL is high-performance, provincial-memory, powerful-function and easy-to-use\n");
         return 1;
     }

@@ -1,15 +1,15 @@
-﻿#include "czl_lib.h"
+#include "czl_lib.h"
 
 #ifndef CZL_CONSOLE
 int main(void)
 {
+	czl_var res;
     czl_gp *gp = czl_open("shell.txt", "czl.log"); //打开一个CZL虚拟机，入口脚本是shell.txt，log打印到czl.log文件
     if (!gp)
         return 0;
 
     czl_exec(gp); //执行shell.txt
 
-    czl_var res;
     while (czl_pop(gp, &res)) //获取虚拟机栈数据
     {
         switch (czl_type(res)) //根据不同类型打印数据
