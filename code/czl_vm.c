@@ -8906,9 +8906,11 @@ void czl_set_logic_jump(czl_exp_ele *jump, czl_exp_ele *next)
 {
     switch (next->flag)
     {
-    case CZL_LOGIC_JUMP:
+    case CZL_LOGIC_JUMP: case CZL_FOREACH_BLOCK:
     case CZL_RETURN_SENTENCE: case CZL_YEILD_SENTENCE:
         *jump = *next;
+        if (CZL_FOREACH_BLOCK == next->flag)
+            jump->lt = 0;
         break;
     default:
         jump->flag = CZL_LOGIC_JUMP;
@@ -8943,16 +8945,17 @@ void czl_find_continue
     {
         if (CZL_LOOP_BLOCK == b->flag)
         {
-            jump->flag = CZL_LOGIC_JUMP;
             switch (b->type)
             {
             case CZL_FOR_LOOP:
+                jump->flag = CZL_LOGIC_JUMP;
                 jump->msg.bp.pc = b->fst;
                 break;
             case CZL_FOREACH_LOOP:
-                jump->msg.bp.pc = foreach_end;
+                *jump = *foreach_end;
                 break;
             default:
+                jump->flag = CZL_LOGIC_JUMP;
                 jump->msg.bp.pc = b->loop_condition;
                 break;
             }
@@ -9077,13 +9080,6 @@ czl_exp_ele* czl_compile_block
             CZL_CE(i->para, buf, cnt);
     }
 
-    if (Continue)
-    {
-        for (cnt = 0; cnt < Continue_cnt; cnt++)
-            czl_find_continue(Continue[cnt], cur, buf);
-        CZL_TMP_FREE(gp, Continue, Continue_cnt*sizeof(czl_exp_ele*));
-    }
-
     switch (cur->flag)
     {
     case CZL_FUN_BLOCK:
@@ -9120,6 +9116,13 @@ czl_exp_ele* czl_compile_block
             czl_set_logic_jump(buf, cur->next);
         }
         break;
+    }
+
+    if (Continue)
+    {
+        for (cnt = 0; cnt < Continue_cnt; cnt++)
+            czl_find_continue(Continue[cnt], cur, buf);
+        CZL_TMP_FREE(gp, Continue, Continue_cnt*sizeof(czl_exp_ele*));
     }
 
     czl_try_check(b, buf);
@@ -9165,7 +9168,7 @@ char czl_goto_init(czl_gp *gp, czl_goto *p, czl_goto_flag *flags)
         {
             if (strcmp(p->name, q->name) == 0)
             {
-                p->pc->msg.bp.pc = q->pc;
+                czl_set_logic_jump(p->pc, q->pc);
                 break;
             }
             q = q->next;
@@ -9192,7 +9195,7 @@ char czl_try_goto_init(czl_gp *gp, czl_try *p, czl_goto_flag *flags)
         {
             if (strcmp(p->name, q->name) == 0)
             {
-                p->pc->msg.bp.next = q->pc;
+                czl_set_logic_jump(p->pc, q->pc);
                 break;
             }
             q = q->next;
