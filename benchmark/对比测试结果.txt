@@ -1,25 +1,27 @@
-windows下:
+benchmark for windows: CZL1.0/PHP7.0/Lua5.3/Python2.7
 
 1. 冒泡排序
-CZL=1.04s, PHP=1.36s, Lua=1.30s, Python=2.53s
+CZL=1.03s, PHP=1.36s, Lua=1.30s, Python=2.53s
 
-2. 循环累加耗时
-CZL=0.50s, PHP=0.57s, Lua=0.33s, Python=4.88s
+2. 循环分支累加耗时
+CZL=0.51s, PHP=0.74s, Lua=0.65s, Python=4.88s
 
 3. 百万素数查找耗时
-CZL=3.56s, PHP=3.59s, Lua=3.62s, Python=8.53s
+CZL=2.49s, PHP=3.59s, Lua=3.62s, Python=8.53s
+说明: 素数求解无法优化，C语言需要0.44s，CZL在纯解释情况下能达到 1/5 C 的性能实属不易。
 
 4. 函数调用速度测试
-CZL=1.25s, PHP=1.83s, Lua=1.17s, Python=5.85s
+CZL=1.19s, PHP=1.83s, Lua=1.17s, Python=5.85s
 说明: 由于Lua和Python没有强类型声明，函数入参和返回值都不需要检查类型，所以节省了部分时间。
 
 5. 百万层递归内存消耗
-CZL=53M, PHP=176M
+CZL=49M, PHP=176M
 说明: Lua和Python的递归实现依赖C语言自身的递归特性，栈空间无法完成测试。
 
 6. 哈希表性能和内存占用情况
 CZL=0.61s/216M, PHP=0.58s/346M, Lua=2.92s/340M, Python=2.09s/238M
 说明: Lua内存分配慢，释放内存更慢，无法完成大量table.remove动作，所以实际时间要长很多。
+      如果注释掉CZL的setrank(0)即关闭实时内存整理，CZL=0.55s/292M ，内存增大，但速度最快。
 
 7. 文件读写性能和存储占用情况
 CZL=0.77s/18M, PHP=9.9s/67M

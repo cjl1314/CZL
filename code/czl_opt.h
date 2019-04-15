@@ -78,12 +78,7 @@
 #define CZL_IS_NOT_VAR(node) \
 (node->type != CZL_LG_VAR && \
  node->type != CZL_INS_VAR && \
- !czl_is_member_var(node->type, (czl_obj_member*)node->op.obj)) \
-
-//检查表达式是否是引用变量
-#define CZL_IS_REF_VAR(exp) \
-(CZL_OP_END == exp[1].flag && \
- CZL_UNARY_OPT == exp->flag && CZL_REF_VAR == exp->kind)
+ !czl_is_member_var(node->type, (czl_obj_member*)node->op.obj))
 ///////////////////////////////////////////////////////////////
 //获取引用变量: get ref var
 #define CZL_GRV(p) \
@@ -103,26 +98,41 @@ czl_2p_opt_cac_funs[kind](gp, res, opr)
 #define CZL_EIT(res) \
 (CZL_FLOAT == (res)->type ? (res)->val.fnum : (res)->val.inum)
 ///////////////////////////////////////////////////////////////
-//检查释放字符串连接缓存: string link buf check free
-#define CZL_SLB_CF(gp, res) \
+//表达式长度: exp length
+#define CZL_EL(exp) (exp ? exp->pl.msg.cnt : 0)
+
+//编译表达式: compile exp
+#define CZL_CE(exp, buf)  \
+if (exp) { \
+    memcpy(buf, exp, CZL_EL(exp)*sizeof(czl_exp_ele)); \
+    czl_set_order_next(buf, CZL_EL(exp)); \
+    buf += CZL_EL(exp); \
+}
+
+//设置字节码next: set opcode next
+#define CZL_SOCN(last, opcode) { \
+    if (last) { \
+        if (last->flag != 0XFF) last->next = opcode; \
+        else last->pl.pc = opcode; \
+    } \
+}
+
+//是否为可优化的跳转指令: is optimizable jmp
+#define CZL_IS_OJ(order) (CZL_LOGIC_JUMP == (order)->flag && !(order)->rt && !(order)->lt)
+///////////////////////////////////////////////////////////////
+//检查释放数组连接缓存、函数返回值: tmp buf check free
+#define CZL_TB_CF(gp, res) \
 if (CZL_ARRBUF_VAR == res->quality || CZL_FUNRET_VAR == res->quality) { \
     czl_val_del(gp, res); \
     res->quality = CZL_DYNAMIC_VAR; \
 }
 ///////////////////////////////////////////////////////////////
-//获取下一条指令: get next order， 用于减少指令分派过程提高VM性能
-#define CZL_GNO(pc) \
-if (CZL_BLOCK_BEGIN == pc->flag) \
-    pc = (CZL_EIT(lo) ? pc->msg.bp.pc : pc->msg.bp.next); \
-else if (CZL_LOGIC_JUMP == pc->flag) \
-    pc = pc->msg.bp.pc;
-
 //与、或运算检查跳跃: and or operator check jump
 #define CZL_AO_CJ(gp, lo, pc) \
 if (CZL_EIT(lo)) { \
     if (pc->lo) { \
         pc += pc->rt; \
-        CZL_SLB_CF(gp, pc->res); \
+        CZL_TB_CF(gp, pc->res); \
         pc->res->type = CZL_INT; \
         pc->res->val.inum = 1; \
     } \
@@ -130,7 +140,7 @@ if (CZL_EIT(lo)) { \
 else { \
     if (pc->ro) { \
         pc += pc->rt; \
-        CZL_SLB_CF(gp, pc->res); \
+        CZL_TB_CF(gp, pc->res); \
         pc->res->type = CZL_INT; \
         pc->res->val.inum = 0; \
     } \
@@ -144,7 +154,7 @@ pc += (CZL_EIT(lo) ? 1 : pc->rt);
 //三目运算符结果搬移: three opt res move
 #define CZL_TORM(gp, res, pc, lo) \
 if (res) { \
-    CZL_SLB_CF(gp, res); \
+    CZL_TB_CF(gp, res); \
     *res = *lo; \
     if (CZL_ARRBUF_VAR == lo->quality) \
         lo->quality = CZL_DYNAMIC_VAR; \
@@ -181,7 +191,7 @@ else if (!(lo=czl_get_opr(gp, pc->lt, pc->lo))) { \
     else goto CZL_EXCEPTION_CATCH; \
 } \
 if (pc->res) { \
-    CZL_SLB_CF(gp, pc->res); \
+    CZL_TB_CF(gp, pc->res); \
     if (!CZL_2POCF(gp, pc->kind, pc->res, lo)) \
         goto CZL_EXCEPTION_CATCH; \
     lo = pc->res; \
@@ -193,7 +203,7 @@ else if (!CZL_1POCF(pc->kind, lo)) \
 //执行有临时结果的双目运算符指令: run binary2 opt
 #define CZL_RB2O(gp, lo, ro, pc) \
 if (pc->lo != pc->res) \
-    CZL_SLB_CF(gp, pc->res); \
+    CZL_TB_CF(gp, pc->res); \
 if (CZL_ADD_A-CZL_NUMBER_NOT == pc->kind && \
     pc->res->quality != CZL_ARRLINK_VAR && \
     pc->res->quality != CZL_ARRBUF_VAR) \
@@ -311,24 +321,23 @@ switch (pc->kind ? \
         czl_foreach_range(gp, (czl_foreach*)pc->res, pc->lt) : \
         czl_foreach_object(gp, (czl_foreach*)pc->res, pc->lt)) \
 { \
-case 1: pc = pc->msg.bp.pc; break; \
-case 0: pc = pc->msg.bp.next; break; \
+case 1: pc = pc->pl.pc; break; \
+case 0: pc = pc->next; break; \
 default: goto CZL_EXCEPTION_CATCH; \
 }
 
 //执行switch语句: run switch sentence
 #define CZL_RSS(gp, pc, lo) \
-CZL_SLB_CF(gp, pc->res); \
-*pc->res = *lo; \
+CZL_TB_CF(gp, pc->res); \
+*(pc++)->res = *lo; \
 if (CZL_FUNRET_VAR == lo->quality) \
     lo->type = CZL_INT; \
 else if (CZL_ARRBUF_VAR == lo->quality) \
     lo->quality = CZL_DYNAMIC_VAR; \
 else if (CZL_STRING == lo->type) { \
     CZL_SRCA1(lo->val.str); \
-    pc->res->quality = CZL_ARRBUF_VAR; \
-} \
-++pc;
+    (pc-1)->res->quality = CZL_ARRBUF_VAR; \
+}
 
 //执行case/default语句: run case sentence
 #define CZL_RCS(pc, lo) pc = czl_switch_case_cmp(pc, lo);
@@ -340,20 +349,13 @@ else if (!czl_val_copy(gp, pc->res, lo)) goto CZL_EXCEPTION_CATCH; \
 goto CZL_FUN_RETURN;
 
 //执行try语句: run try sentence
-#define CZL_RTS(gp, pc, bp, stack, size) \
-switch (pc->kind) \
-{ \
-case CZL_TRY_EXIT: \
+#define CZL_RTS(gp, pc, stack, size) \
+if (CZL_TRY_EXIT == pc->kind) { \
     gp->exit_flag = 1; \
     gp->exit_code = CZL_EXIT_TRY; \
     goto CZL_EXCEPTION_CATCH; \
-case CZL_TRY_BREAK: case CZL_TRY_GOTO: \
-    pc = pc->msg.bp.next; \
-    break; \
-default: \
-    pc = (CZL_FOREACH_BLOCK == bp->flag ? bp->msg.bp.next : bp+1); \
-    break; \
 } \
+pc = pc->pl.pc; \
 gp->exceptionCode = CZL_EXCEPTION_NO;
 ///////////////////////////////////////////////////////////////
 //检查释放函数返回值: check free fun ret
@@ -372,7 +374,7 @@ if (var->type != CZL_INT) { \
 
 //执行函数单目运算符指令: run fun unary opt
 #define CZL_RFUO(gp, lo, pc) \
-CZL_SLB_CF(gp, pc->res); \
+CZL_TB_CF(gp, pc->res); \
 if (!CZL_2POCF(gp, pc->kind, pc->res, lo)) \
     goto CZL_EXCEPTION_CATCH; \
 CZL_CF_FR2(gp, lo); \
@@ -464,7 +466,7 @@ if (index >= 16 && index <= size>>2) { \
 }
 
 //用户函数返回: usr fun return
-#define CZL_UFR(gp, index, size, stack, cur, pc, bp, lo, ro) \
+#define CZL_UFR(gp, index, size, stack, cur, pc, lo, ro) \
 if (0 == index) { \
     CZL_STACK_FREE(gp, stack, size*sizeof(czl_usrfun_stack)); \
     if (CZL_YEILD_SENTENCE == pc->flag) gp->yeild_pc = pc + 1; \
@@ -482,7 +484,6 @@ else { \
     if (cur->fun->cur_ins) \
         cur->fun->cur_ins = NULL; \
 } \
-bp = cur->bp; \
 pc = cur->pc; \
 switch (pc->flag) \
 { \
@@ -504,11 +505,10 @@ default: \
     CZL_RFB2O(gp, lo, ro, pc); \
     break; \
 } \
-CZL_GNO(pc); \
 goto CZL_BEGIN;
 
 //执行用户函数: run usr fun
-#define CZL_RUF(gp, index, size, stack, cur, pc, bp, lo) \
+#define CZL_RUF(gp, index, size, stack, cur, pc, lo) \
 if (index == size) { \
     unsigned long new_size = (size ? size<<1 : 1); \
     czl_usrfun_stack *tmp = (czl_usrfun_stack*)CZL_STACK_REALLOC(gp, stack, \
@@ -521,7 +521,6 @@ if (index == size) { \
 } \
 cur = stack + index; \
 cur->pc = pc; \
-cur->bp = bp; \
 switch (pc->flag) \
 { \
 case CZL_OPERAND: lo = pc->res; break; \
@@ -542,13 +541,234 @@ if (pc->res->name) { \
     pc->res->name = NULL; \
 }
 ///////////////////////////////////////////////////////////////
-//编译表达式: compile exp
-#define CZL_CE(exp, buf, cnt)  \
-if (exp) { \
-    cnt = czl_get_exp_cnt(exp); \
-    memcpy(buf, exp, cnt*sizeof(czl_exp_ele)); \
-    buf += cnt; \
-}
+#define CZL_ADD_SELF_CAC(pc, lo) \
+if (CZL_INT == pc->lt) ++pc->lo->val.inum; \
+else ++pc->lo->val.fnum; \
+lo = (pc++)->lo;
+
+#define CZL_DEC_SELF_CAC(pc, lo) \
+if (CZL_INT == pc->lt) --pc->lo->val.inum; \
+else --pc->lo->val.fnum; \
+lo = (pc++)->lo;
+
+#define CZL_NUMBER_NOT_CAC(pc, lo) \
+if (CZL_INT == pc->lt) pc->res->val.inum = -pc->lo->val.inum; \
+else pc->res->val.fnum = -pc->lo->val.fnum; \
+lo = (pc++)->res;
+
+#define CZL_LOGIC_NOT_CAC(pc, lo) \
+pc->res->val.inum = !pc->lo->val.inum; \
+lo = (pc++)->res;
+
+#define CZL_LOGIC_FLIP_CAC(pc, lo) \
+pc->res->val.inum = ~pc->lo->val.inum; \
+lo = (pc++)->res;
+
+#define CZL_SELF_ADD_CAC(pc, lo) \
+if (CZL_INT == pc->lt) pc->res->val.inum = pc->lo->val.inum++; \
+else pc->res->val.fnum = pc->lo->val.fnum++; \
+lo = (pc++)->res;
+
+#define CZL_SELF_DEC_CAC(pc, lo) \
+if (CZL_INT == pc->lt) pc->res->val.inum = pc->lo->val.inum--; \
+else pc->res->val.fnum = pc->lo->val.fnum--; \
+lo = (pc++)->res;
+
+#define CZL_ASS_CAC(pc, lo) \
+if (CZL_INT == pc->lt) \
+    pc->lo->val.inum = (CZL_INT == pc->rt ? pc->ro->val.inum : pc->ro->val.fnum); \
+else \
+    pc->lo->val.fnum = (CZL_FLOAT == pc->rt ? pc->ro->val.fnum : pc->ro->val.inum); \
+lo = (pc++)->lo;
+
+#define CZL_ADD_A_CAC(pc, lo) \
+if (CZL_INT == pc->lt) \
+    pc->lo->val.inum += (CZL_INT == pc->rt ? pc->ro->val.inum : pc->ro->val.fnum); \
+else \
+    pc->lo->val.fnum += (CZL_FLOAT == pc->rt ? pc->ro->val.fnum : pc->ro->val.inum); \
+lo = (pc++)->lo;
+
+#define CZL_DEC_A_CAC(pc, lo) \
+if (CZL_INT == pc->lt) \
+    pc->lo->val.inum -= (CZL_INT == pc->rt ? pc->ro->val.inum : pc->ro->val.fnum); \
+else \
+    pc->lo->val.fnum -= (CZL_FLOAT == pc->rt ? pc->ro->val.fnum : pc->ro->val.inum); \
+lo = (pc++)->lo;
+
+#define CZL_MUL_A_CAC(pc, lo) \
+if (CZL_INT == pc->lt) \
+    pc->lo->val.inum *= (CZL_INT == pc->rt ? pc->ro->val.inum : pc->ro->val.fnum); \
+else \
+    pc->lo->val.fnum *= (CZL_FLOAT == pc->rt ? pc->ro->val.fnum : pc->ro->val.inum); \
+lo = (pc++)->lo;
+
+#define CZL_DIV_A_CAC(pc, lo) \
+if (0 == pc->ro->val.inum) goto CZL_EXCEPTION_CATCH; \
+if (CZL_INT == pc->lt) \
+    pc->lo->val.inum /= (CZL_INT == pc->rt ? pc->ro->val.inum : pc->ro->val.fnum); \
+else \
+    pc->lo->val.fnum /= (CZL_FLOAT == pc->rt ? pc->ro->val.fnum : pc->ro->val.inum); \
+lo = (pc++)->lo;
+
+#define CZL_MOD_A_CAC(pc, lo) \
+if (0 == pc->ro->val.inum) goto CZL_EXCEPTION_CATCH; \
+pc->lo->val.inum %= (CZL_INT == pc->rt ? pc->ro->val.inum : (czl_long)pc->ro->val.fnum); \
+lo = (pc++)->lo;
+
+#define CZL_OR_A_CAC(pc, lo) \
+pc->lo->val.inum |= (CZL_INT == pc->rt ? pc->ro->val.inum : (czl_long)pc->ro->val.fnum); \
+lo = (pc++)->lo;
+
+#define CZL_XOR_A_CAC(pc, lo) \
+pc->lo->val.inum ^= (CZL_INT == pc->rt ? pc->ro->val.inum : (czl_long)pc->ro->val.fnum); \
+lo = (pc++)->lo;
+
+#define CZL_AND_A_CAC(pc, lo) \
+pc->lo->val.inum &= (CZL_INT == pc->rt ? pc->ro->val.inum : (czl_long)pc->ro->val.fnum); \
+lo = (pc++)->lo;
+
+#define CZL_L_SHIFT_A_CAC(pc, lo) \
+pc->lo->val.inum <<= (CZL_INT == pc->rt ? pc->ro->val.inum : (czl_long)pc->ro->val.fnum); \
+lo = (pc++)->lo;
+
+#define CZL_R_SHIFT_A_CAC(pc, lo) \
+pc->lo->val.inum >>= (CZL_INT == pc->rt ? pc->ro->val.inum : (czl_long)pc->ro->val.fnum); \
+lo = (pc++)->lo;
+
+#define CZL_MORE_CAC(pc, lo) \
+if (CZL_INT == pc->lt) \
+    pc->res->val.inum = (CZL_INT == pc->rt ? pc->lo->val.inum > pc->ro->val.inum : \
+                                             pc->ro->val.inum > pc->ro->val.fnum); \
+else \
+    pc->res->val.inum = (CZL_FLOAT == pc->rt ? pc->lo->val.fnum > pc->ro->val.fnum : \
+                                               pc->ro->val.fnum > pc->ro->val.inum); \
+lo = (pc++)->res;
+
+#define CZL_MORE_EQU_CAC(pc, lo) \
+    if (CZL_INT == pc->lt) \
+        pc->res->val.inum = (CZL_INT == pc->rt ? pc->lo->val.inum >= pc->ro->val.inum : \
+                                                 pc->ro->val.inum >= pc->ro->val.fnum); \
+    else \
+        pc->res->val.inum = (CZL_FLOAT == pc->rt ? pc->lo->val.fnum >= pc->ro->val.fnum : \
+                                                   pc->ro->val.fnum >= pc->ro->val.inum); \
+lo = (pc++)->res;
+
+#define CZL_LESS_CAC(pc, lo) \
+if (CZL_INT == pc->lt) \
+    pc->res->val.inum = (CZL_INT == pc->rt ? pc->lo->val.inum < pc->ro->val.inum : \
+                                             pc->ro->val.inum < pc->ro->val.fnum); \
+else \
+    pc->res->val.inum = (CZL_FLOAT == pc->rt ? pc->lo->val.fnum < pc->ro->val.fnum : \
+                                               pc->ro->val.fnum < pc->ro->val.inum); \
+lo = (pc++)->res;
+
+#define CZL_LESS_EQU_CAC(pc, lo) \
+    if (CZL_INT == pc->lt) \
+        pc->res->val.inum = (CZL_INT == pc->rt ? pc->lo->val.inum <= pc->ro->val.inum : \
+                                                 pc->ro->val.inum <= pc->ro->val.fnum); \
+    else \
+        pc->res->val.inum = (CZL_FLOAT == pc->rt ? pc->lo->val.fnum <= pc->ro->val.fnum : \
+                                                   pc->ro->val.fnum <= pc->ro->val.inum); \
+lo = (pc++)->res;
+
+#define CZL_EQU_EQU_CAC(pc, lo) \
+if (CZL_INT == pc->lt) \
+    pc->res->val.inum = (CZL_INT == pc->rt ? pc->lo->val.inum == pc->ro->val.inum : \
+                                             pc->ro->val.inum == pc->ro->val.fnum); \
+else \
+    pc->res->val.inum = (CZL_FLOAT == pc->rt ? pc->lo->val.fnum == pc->ro->val.fnum : \
+                                               pc->ro->val.fnum == pc->ro->val.inum); \
+lo = (pc++)->res;
+
+#define CZL_NOT_EQU_CAC(pc, lo) \
+if (CZL_INT == pc->lt) \
+    pc->res->val.inum = (CZL_INT == pc->rt ? pc->lo->val.inum != pc->ro->val.inum : \
+                                             pc->ro->val.inum != pc->ro->val.fnum); \
+else \
+    pc->res->val.inum = (CZL_FLOAT == pc->rt ? pc->lo->val.fnum != pc->ro->val.fnum : \
+                                               pc->ro->val.fnum != pc->ro->val.inum); \
+lo = (pc++)->res;
+
+#define CZL_EQU_3_CAC(pc, lo) \
+if (pc->lt != pc->rt) pc->res->val.inum = 0; \
+else if (CZL_INT == pc->lt) \
+    pc->res->val.inum = pc->lo->val.inum == pc->ro->val.inum; \
+else \
+    pc->res->val.inum = pc->lo->val.fnum == pc->ro->val.fnum; \
+lo = (pc++)->res;
+
+#define CZL_XOR_XOR_CAC(pc, lo) \
+pc->res->val.inum = (pc->lo->val.inum ? (pc->ro->val.inum ? 0 : 1) : \
+                                        (pc->ro->val.inum ? 1 : 0)); \
+lo = (pc++)->res;
+
+#define CZL_ADD_CAC(pc, lo) \
+if (CZL_INT == pc->lt) \
+    pc->res->val.inum = (CZL_INT == pc->rt ? pc->lo->val.inum + pc->ro->val.inum : \
+                                             pc->ro->val.inum + pc->ro->val.fnum); \
+else \
+    pc->res->val.inum = (CZL_FLOAT == pc->rt ? pc->lo->val.fnum + pc->ro->val.fnum : \
+                                               pc->ro->val.fnum + pc->ro->val.inum); \
+lo = (pc++)->res;
+
+#define CZL_DEC_CAC(pc, lo) \
+if (CZL_INT == pc->lt) \
+    pc->res->val.inum = (CZL_INT == pc->rt ? pc->lo->val.inum - pc->ro->val.inum : \
+                                             pc->ro->val.inum - pc->ro->val.fnum); \
+else \
+    pc->res->val.inum = (CZL_FLOAT == pc->rt ? pc->lo->val.fnum - pc->ro->val.fnum : \
+                                               pc->ro->val.fnum - pc->ro->val.inum); \
+lo = (pc++)->res;
+
+#define CZL_MUL_CAC(pc, lo) \
+if (CZL_INT == pc->lt) \
+    pc->res->val.inum = (CZL_INT == pc->rt ? pc->lo->val.inum * pc->ro->val.inum : \
+                                             pc->ro->val.inum * pc->ro->val.fnum); \
+else \
+    pc->res->val.inum = (CZL_FLOAT == pc->rt ? pc->lo->val.fnum * pc->ro->val.fnum : \
+                                               pc->ro->val.fnum * pc->ro->val.inum); \
+lo = (pc++)->res;
+
+#define CZL_DIV_CAC(pc, lo) \
+if (0 == pc->ro->val.inum) goto CZL_EXCEPTION_CATCH; \
+if (CZL_INT == pc->lt) \
+    pc->res->val.inum = (CZL_INT == pc->rt ? pc->lo->val.inum / pc->ro->val.inum : \
+                                             pc->ro->val.inum / pc->ro->val.fnum); \
+else \
+    pc->res->val.inum = (CZL_FLOAT == pc->rt ? pc->lo->val.fnum / pc->ro->val.fnum : \
+                                               pc->ro->val.fnum / pc->ro->val.inum); \
+lo = (pc++)->res;
+
+#define CZL_MOD_CAC(pc, lo) \
+if (0 == pc->ro->val.inum) goto CZL_EXCEPTION_CATCH; \
+pc->res->val.inum = (CZL_INT == pc->rt ? pc->lo->val.inum % pc->ro->val.inum : \
+                                         pc->ro->val.inum % (czl_long)pc->ro->val.fnum); \
+lo = (pc++)->res;
+
+#define CZL_OR_CAC(pc, lo) \
+pc->res->val.inum = (CZL_INT == pc->rt ? pc->lo->val.inum | pc->ro->val.inum : \
+                                         pc->ro->val.inum | (czl_long)pc->ro->val.fnum); \
+lo = (pc++)->res;
+
+#define CZL_XOR_CAC(pc, lo) \
+pc->res->val.inum = (CZL_INT == pc->rt ? pc->lo->val.inum ^ pc->ro->val.inum : \
+                                         pc->ro->val.inum ^ (czl_long)pc->ro->val.fnum); \
+lo = (pc++)->res;
+
+#define CZL_AND_CAC(pc, lo) \
+pc->res->val.inum = (CZL_INT == pc->rt ? pc->lo->val.inum & pc->ro->val.inum : \
+                                         pc->ro->val.inum & (czl_long)pc->ro->val.fnum); \
+lo = (pc++)->res;
+
+#define CZL_L_SHIFT_CAC(pc, lo) \
+pc->res->val.inum = (CZL_INT == pc->rt ? pc->lo->val.inum << pc->ro->val.inum : \
+                                         pc->ro->val.inum << (czl_long)pc->ro->val.fnum); \
+lo = (pc++)->res;
+
+#define CZL_R_SHIFT_CAC(pc, lo) \
+pc->res->val.inum = (CZL_INT == pc->rt ? pc->lo->val.inum >> pc->ro->val.inum : \
+                                         pc->ro->val.inum >> (czl_long)pc->ro->val.fnum); \
+lo = (pc++)->res;
 ///////////////////////////////////////////////////////////////
 extern char (*const czl_1p_opt_cac_funs[])(czl_var*);
 extern char (*const czl_2p_opt_cac_funs[])(czl_gp*, czl_var*, czl_var*);
@@ -557,7 +777,6 @@ char czl_str_resize(czl_gp*, czl_str*);
 char czl_val_copy(czl_gp*, czl_var*, czl_var*);
 ///////////////////////////////////////////////////////////////
 char czl_ass_cac(czl_gp*, czl_var*, czl_var*);
-char czl_add_a_cac(czl_gp*, czl_var*, czl_var*);
 char czl_equ_equ_cac(czl_gp*, czl_var*, czl_var*);
 ///////////////////////////////////////////////////////////////
 #endif //CZL_OPT_H

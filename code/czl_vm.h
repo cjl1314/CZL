@@ -124,13 +124,13 @@ typedef enum czl_opt_enum
     CZL_NUMBER_NOT,	// - 必须放在双参运算符的第一个
     CZL_LOGIC_NOT,	// !
     CZL_LOGIC_FLIP,	// ~
-    CZL_REF_VAR,	// &
     CZL_SELF_ADD,	// i++
     CZL_SELF_DEC,	// i--
+    CZL_REF_VAR,	// &
+    CZL_OBJ_CNT,    // #
     //|| && 在运行时转为单目执行
     CZL_OR_OR,		// ||
     CZL_AND_AND,	// &&
-    CZL_XOR_XOR,    // ^^
     //双目运算符
     CZL_SWAP,       // ><
     CZL_ASS,		// =
@@ -153,6 +153,7 @@ typedef enum czl_opt_enum
     CZL_EQU_EQU,	// ==
     CZL_NOT_EQU,	// !=
     CZL_EQU_3,      // ===
+    CZL_XOR_XOR,    // ^^
     CZL_CMP,        // ??
     CZL_ELE_DEL,    // =>
     CZL_ELE_INX,    // ->
@@ -170,6 +171,24 @@ typedef enum czl_opt_enum
     //? : 三目运算符没有处理函数所以需要放在最后
     CZL_QUE,        // ?
     CZL_COL,        // :
+    //
+    CZL_OPERAND,            //操作数: 必须是0
+    CZL_UNARY_OPT,          //单目运算符
+    CZL_BINARY_OPT,         //双目运算符
+    CZL_THREE_OPT,          //三目运算符
+    CZL_THREE_END,          //三目运算符子表达式结束符
+    CZL_CONDITION,          //&&、||条件判断
+    CZL_ASS_OPT,            //赋值运算符
+    CZL_BINARY2_OPT,        //产生临时结果的双目运算符
+    //
+    CZL_FOREACH_BLOCK,      //foreach语句
+    CZL_BLOCK_BEGIN,        //逻辑块开始
+    CZL_LOGIC_JUMP,         //跳转指令
+    CZL_CASE_SENTENCE,      //case/default语句
+    CZL_SWITCH_SENTENCE,    //switch语句
+    CZL_RETURN_SENTENCE,    //return;
+    CZL_YEILD_SENTENCE,     //yeild;
+    CZL_TRY_BLOCK,          //try(exit/break/continue)
 } czl_opt_enum;
 
 //单目运算符位置性: 左、右
@@ -275,28 +294,9 @@ typedef enum czl_analysis_field_enum
     CZL_IN_CLASS_FUN
 } czl_analysis_field_enum;
 
-//指令类型
-typedef enum czl_order_type_enum
+//语句类型
+typedef enum czl_sentence_type_enum
 {
-    CZL_OPERAND,    //操作数: 必须是0
-    CZL_UNARY_OPT,  //单目运算符
-    CZL_BINARY_OPT, //双目运算符
-    CZL_THREE_OPT,  //三目运算符
-    CZL_THREE_END,  //三目运算符子表达式结束符
-    CZL_CONDITION,  //&&、||条件判断
-    CZL_ASS_OPT,    //赋值运算符
-    CZL_BINARY2_OPT,//产生临时结果的双目运算符
-    CZL_OP_END,     //表达式栈结束符
-    //
-    CZL_FOREACH_BLOCK,      //foreach语句
-    CZL_BLOCK_BEGIN,        //逻辑块开始
-    CZL_LOGIC_JUMP,         //跳转语句，包括 break/continue/goto/分支语句结尾跳转
-    CZL_CASE_SENTENCE,      //case/default语句
-    CZL_SWITCH_SENTENCE,    //switch语句
-    CZL_RETURN_SENTENCE,    //return;
-    CZL_YEILD_SENTENCE,     //yeild;
-    CZL_TRY_BLOCK,          //try(fun, exit/break/continue)
-    //
     CZL_FUN_BLOCK,          //func() {}
     CZL_LOOP_BLOCK,         //while/for
     CZL_BRANCH_BLOCK,       //if/switch
@@ -305,7 +305,7 @@ typedef enum czl_order_type_enum
     CZL_CONTINUE_SENTENCE,  //continue;
     CZL_GOTO_SENTENCE,      //goto flag;
     CZL_EXP_SENTENCE,       //1+1;
-} czl_order_type_enum;
+} czl_sentence_type_enum;
 
 //分支语句类型
 typedef enum czl_branch_type_enum
@@ -518,19 +518,17 @@ typedef struct czl_exp_handle
 //操作数、操作符栈元素: czl_opcode
 typedef struct czl_exp_ele
 {
-    union czl_exp_msg
+    union czl_exp_pl
     {
-        struct czl_block_pc
+        struct czl_exp_ele *pc; //块内部第一条指令地址
+        struct czl_exp_msg
         {
-            struct czl_exp_ele *pc;     //块内部第一条指令地址
-            struct czl_exp_ele *next;   //下一条指令地址
-        } bp;
-        struct czl_err_msg
-        {
-            char *err_file;
-            unsigned long err_line;
-        } em;
-    } msg;                 //元素信息，用于运行时获取逻辑跳转信息和出错位置信息
+            unsigned short line;//指令行号
+            unsigned short cnt; //一条表达式指令个数
+        } msg;
+    } pl;
+    struct czl_exp_ele *next;   //下一条指令地址
+    //
     struct czl_var *lo;    //左操作数
     struct czl_var *ro;    //右操作数
     struct czl_var *res;   //临时变量用于存运算符结果
@@ -559,12 +557,12 @@ typedef struct czl_ref_obj
 //枚举常量、全局变量、静态变量运行时保持 czl_glo_var 链表结构存储。
 typedef struct czl_glo_var
 {
-    char *name;             //变量名
-    unsigned char type;     //变量类型: czl_opr_type_enum
-    unsigned char quality;  //变量属性: czl_var_quality_enum
-    char null;              //仅用于内存对其
-    unsigned char ot;       //强制类型: czl_opr_type_enum
-    czl_value val;          //变量值
+    char *name;                 //变量名
+    unsigned char type;         //变量类型: czl_opr_type_enum
+    unsigned char quality;      //变量属性: czl_var_quality_enum
+    unsigned char optimizable;  //标记变量是否可优化，注意与czl_loc_var的optimizable内存对其
+    unsigned char ot;           //强制类型: czl_opr_type_enum
+    czl_value val;              //变量值
     struct czl_glo_var *next;
 } czl_glo_var, *czl_glo_var_list;
 
@@ -609,13 +607,14 @@ typedef struct czl_var
 //局部变量的表达式形式节点
 typedef struct czl_loc_var
 {
-    void *var;              //局部变量地址
-    unsigned char flag;     //与struct var结构做区别，这里主要用于与全局变量区别
-    unsigned char quality;  //czl_var_quality_enum
-    unsigned char ot;       //类型声明
+    void *var;                  //局部变量地址
+    unsigned char flag;         //与struct var结构做区别，这里主要用于与全局变量区别
+    unsigned char quality;      //czl_var_quality_enum
+    unsigned char optimizable;  //标记变量是否可优化，注意与czl_glo_var的optimizable内存对其
+    unsigned char ot;           //类型声明
+    czl_value val;
     //静态局部变量初始化参数
     unsigned char type;
-    czl_value val;
     struct czl_loc_var *next;
 } czl_loc_var, *czl_loc_var_list;
 
@@ -657,10 +656,27 @@ typedef union czl_sentence_union
 //语句节点
 typedef struct czl_sentence
 {
-    unsigned char type;			 //语句类型: czl_order_type_enum
+    unsigned long type;			 //语句类型: czl_order_type_enum
     czl_sentence_union sentence; //语句
     struct czl_sentence *next;
 } czl_sentence, *czl_sentence_list;
+
+//全局变量初始化语句节点
+typedef struct czl_glo_sentence
+{
+    unsigned long type;			 //语句类型: czl_order_type_enum
+    czl_sentence_union sentence; //语句
+    struct czl_glo_sentence *next;
+    char *file;
+} czl_glo_sentence, *czl_glo_sentence_list;
+
+//
+typedef struct czl_continue
+{
+    czl_exp_ele *last;
+    czl_exp_ele *buf;
+    struct czl_continue *next;
+} czl_continue;
 
 //
 typedef struct czl_stack_block
@@ -668,21 +684,11 @@ typedef struct czl_stack_block
     unsigned char flag;
     unsigned char type;
     unsigned char goto_flag;
+    unsigned char case_end;
     void *block;
-    czl_exp_ele *next;
-    czl_exp_ele *loop_condition;
-    struct czl_para *for_paras_end;
-    //fst为: for循环结尾语句地址、switch下一条语句地址、try语句参数地址
-    czl_exp_ele *fst;
+    czl_exp_ele *next;      //块结束跳转地址
+    czl_exp_ele *condition; //块条件地址
 } czl_stack_block;
-
-//
-typedef struct czl_goto_block
-{
-    void *block;
-    czl_sentence *head;
-    czl_exp_ele *sentence;
-} czl_goto_block;
 
 //
 typedef struct czl_tmp_block
@@ -692,11 +698,13 @@ typedef struct czl_tmp_block
     //
     czl_exp_ele *buf;
     //
-    struct czl_goto *goto_head;
+    czl_exp_ele *last;
     //
     struct czl_try *try_head;
     //
-    struct czl_foreach *foreachs; //foreach array
+    struct czl_goto *goto_head;
+    //
+    struct czl_foreach *foreachs; //foreach 数组
     unsigned long l, m;
 } czl_tmp_block;
 
@@ -758,6 +766,9 @@ typedef struct czl_branch
     czl_store_device *store_device;     //数据存储器
     czl_branch_child *childs_head;      //分支子句列表头
     czl_branch_child *childs_tail;      //分支子句列表尾
+    //
+    czl_exp_ele *block_next;            //编译字节码时用到
+    czl_exp_ele *block_condition;       //编译字节码时用到
 } czl_branch;
 
 //foreach语句节点
@@ -790,6 +801,9 @@ typedef struct czl_loop
     czl_store_device *store_device;     //数据存储器
     czl_para_list paras_start;          //开始参数列表，仅for循环有
     czl_para_list paras_end;            //结束参数列表，仅for循环有
+    //
+    czl_exp_ele *block_next;            //编译字节码时用到
+    czl_exp_ele *block_condition;       //编译字节码时用到
 } czl_loop;
 
 //try语句节点
@@ -807,6 +821,10 @@ typedef struct czl_try
     unsigned long err_line;
     czl_exp_ele *pc;
     struct czl_try *next;
+    //
+    czl_exp_ele *block_next;            //编译字节码时用到
+    czl_exp_ele *block_condition;       //编译字节码时用到
+    czl_exp_ele *block_end;             //编译字节码时用到
 } czl_try;
 
 //函数入参说明结构
@@ -826,21 +844,26 @@ typedef struct czl_fun
     unsigned char type;                     //函数类型: czl_fun_type_enum
     short enter_vars_count;                 //函数传入变量个数
     czl_var *vars;                          //函数动态变量
-    long dynamic_vars_cnt;                  //动态变量个数
-    unsigned long static_vars_cnt;          //静态变量个数
+    short dynamic_vars_cnt;                 //动态变量个数
+    unsigned short static_vars_cnt;         //静态变量个数
     czl_var_arr *backup_vars;               //备份变量: 动态变量+reg+foreach_index
     unsigned long backup_cnt;               //递归备份次数计数
     unsigned long backup_size;              //备份缓冲区大小
     czl_para_explain *para_explain;         //函数传入变量说明信息
     unsigned long paras_cnt;                //参数个数不确定系统函数实时参数个数
     char (*sys_fun)(void*, void*);          //系统函数指针
+    char *file;                             //函数所在的脚本文件名
     struct czl_fun *next;
     czl_var ret;                            //返回值
     //上面64个字节为用户函数和系统函数共有，下面64个字节的为用户函数私有
+    unsigned char try_flag;                 //是否有try语句标记位
     unsigned char goto_flag;                //是否有goto_flag标记位
     unsigned char yeild_flag;               //是否有yeild语句标记位
     unsigned char switch_flag;              //是否有switch语句标记位
+    unsigned char return_flag;              //是否函数末尾有return语句标记位
     unsigned char permission;               //函数权限: czl_permission_enum
+    unsigned short reg_cnt;                 //寄存器个数
+    czl_var_arr reg;                        //寄存器
     czl_loc_var_list loc_vars;              //表达式形式入参变量
     czl_store_device *store_device;         //数据存储器
     czl_store_device *store_device_head;    //数据存储器列表头
@@ -853,8 +876,6 @@ typedef struct czl_fun
     czl_foreach *foreachs;                  //foreach语句指针数组
     unsigned short foreach_cnt;             //foreach object语句个数
     unsigned short foreach_sum;             //foreach语句个数
-    czl_var_arr reg;                        //寄存器
-    unsigned long reg_cnt;                  //寄存器个数
     czl_exp_ele *opcode;                    //字节码: 指令 + 临时变量 + 局部变量
     unsigned long opcode_cnt;               //字节码大小
 } czl_fun, *czl_fun_list;
@@ -1143,7 +1164,6 @@ typedef struct czl_usrfun_stack
 {
     czl_fun *fun;
     czl_exp_ele *pc;
-    czl_exp_ele *bp;
 } czl_usrfun_stack;
 
 typedef struct czl_block_struct
@@ -1267,12 +1287,12 @@ typedef struct czl_analysis_gp
     czl_nsef *nsef_head; //不确定的表达式函数链表头
     czl_nsef *nsef_tail; //不确定的表达式函数链表尾
     //
-    czl_name *sn_head;          //脚本文件名链表头
     czl_sys_hash sn_hash;       //脚本文件名哈希索引
     //
     czl_glo_var_list global_vars_tail;          //指向全局变量尾节点
     //
     czl_sentence_list sentences_tail;           //当前函数语句列表尾
+    czl_glo_sentence_list glo_vars_init_tail;   //全局变量初始化表达式链表尾
     //
     czl_class_var_list class_vars_tail;         //指向类变量链表尾节点
     czl_class *cur_class;                       //当前类
@@ -1303,12 +1323,15 @@ typedef struct czl_analysis_gp
     //
     int colon_flag;  //用于:运算符在?:和{key:val}和case xxx:的冲突处理
     //
-    unsigned long exp_flag; //用于区别表达式的内存分配池来源
-    //
     unsigned char reg_flag;
     unsigned char reg_sign;
     //
     unsigned char condition_flag; //解决 while {} 条件可为空问题
+    //
+    czl_var *int_reg;
+    czl_var *float_reg;
+    unsigned char int_reg_cnt;
+    unsigned char float_reg_cnt;
 } czl_analysis_gp;
 
 //全局参数结构
@@ -1362,9 +1385,6 @@ typedef struct czl_gp
     //
     czl_sys_hash class_hash; //格式化文件读操作需要用到，不能在运行前释放内存
     //
-    czl_sentence_list global_vars_init_head;    //全局变量初始化表达式链表头
-    czl_sentence_list global_vars_init_tail;    //全局变量初始化表达式链表尾
-    //
     czl_fun *cur_fun;   //当前函数
     //
     unsigned long runtime; //系统执行时间
@@ -1388,6 +1408,8 @@ typedef struct czl_gp
     czl_ele *eles_head;
     czl_exp_fun *expfun_head;
     czl_obj_member *member_head;
+    czl_name *sn_head;          //脚本文件名链表头
+    czl_glo_sentence_list glo_vars_init_head;   //全局变量初始化表达式链表头
     //
     void **cur_ins;             //当前实例指针
     //
@@ -1445,7 +1467,7 @@ czl_var* czl_const_create(czl_gp*, char, const czl_value*);
 czl_exp_node* czl_unary_opt_node_create(czl_gp*, char, char);
 czl_exp_node* czl_binary_opt_node_create(czl_gp*, char, char, char);
 char czl_exp_node_insert(czl_gp*, czl_exp_node*, czl_exp_handle*);
-void czl_exp_stack_delete(czl_gp*, const czl_exp_stack);
+void czl_exp_stack_delete(czl_gp*, czl_exp_ele*);
 char czl_const_exp_init(czl_gp*, czl_var*, char);
 czl_enum* czl_enum_node_create(czl_gp*);
 void czl_enum_insert(czl_gp*, czl_enum*);
@@ -1557,7 +1579,7 @@ void czl_res_check(czl_var*);
 czl_var* czl_exp_cac(czl_gp*, czl_exp_stack);
 char czl_store_device_check(czl_gp*);
 czl_loc_var* czl_loc_var_create(czl_gp*, czl_loc_var**, czl_loc_var**,
-                                char*, char, char);
+                                char*, char, char, char);
 void czl_save_fun_enum_list(czl_gp*, czl_store_device*);
 char czl_ast_serialize(czl_gp*, czl_fun*);
 char czl_run(czl_gp*);
@@ -1573,7 +1595,7 @@ void czl_block_delete(czl_gp*, char, void*, char);
 unsigned long czl_hash_key_create(unsigned long, unsigned long);
 unsigned long czl_str_hash(char*, unsigned long,
                            unsigned long, unsigned long);
-czl_exp_ele* czl_opr_create(czl_gp*, czl_exp_node*, unsigned char);
+czl_exp_ele* czl_opr_create(czl_gp*, czl_exp_node*);
 int czl_is_keyword(czl_gp*, char*);
 char czl_get_para_ot(czl_gp*, char*);
 czl_var* czl_ele_create(czl_gp*, char, void*);

@@ -1,6 +1,6 @@
 bubble_sort(&a) 
 {
-	size = ct(a)
+	size = #a
 	for i in (0, size-1)
 	{
 		k = size-2-i

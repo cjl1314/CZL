@@ -218,8 +218,7 @@ char czl_logic_not_cac(czl_gp *gp, czl_var *res, czl_var *opr)
     res->type = CZL_INT;
     switch (opr->type) // !
     {
-    case CZL_INT: res->val.inum = !opr->val.inum; return 1;
-    case CZL_FLOAT: res->val.inum = !opr->val.fnum; return 1;
+    case CZL_INT: case CZL_FLOAT: res->val.inum = !opr->val.inum; return 1;
     default: res->val.inum = 0; return 1;
     }
 }
@@ -230,26 +229,8 @@ char czl_logic_flit_cac(czl_gp *gp, czl_var *res, czl_var *opr)
     switch (opr->type) // ~
     {
     case CZL_INT: res->val.inum = ~opr->val.inum; return 1;
-    case CZL_FLOAT: res->val.inum = ~(czl_long)opr->val.fnum; return 1;
     default: return 0;
     }
-}
-
-char czl_addr_obj_cac(czl_gp *gp, czl_var *res, czl_var *opr)
-{
-    res->type = CZL_OBJ_REF; // &i
-    res->quality = CZL_REF_ELE;
-    if (CZL_REF_ELE == opr->quality)
-    {
-        res->val.ref.inx = opr->val.inum;
-        res->val.ref.var = (czl_var*)opr->name;
-    }
-    else
-    {
-        res->val.ref.inx = -1;
-        res->val.ref.var = opr;
-    }
-    return 1;
 }
 
 char czl_self_add_cac(czl_gp *gp, czl_var *res, czl_var *opr)
@@ -272,6 +253,74 @@ char czl_self_dec_cac(czl_gp *gp, czl_var *res, czl_var *opr)
     }
 }
 
+char czl_addr_obj_cac(czl_gp *gp, czl_var *res, czl_var *opr)
+{
+    res->type = CZL_OBJ_REF; // &i
+    res->quality = CZL_REF_ELE;
+    if (CZL_REF_ELE == opr->quality)
+    {
+        res->val.ref.inx = opr->val.inum;
+        res->val.ref.var = (czl_var*)opr->name;
+    }
+    else
+    {
+        res->val.ref.inx = -1;
+        res->val.ref.var = opr;
+    }
+    return 1;
+}
+
+long czl_get_file_size(FILE *fp)
+{
+    long size;
+    long cur = ftell(fp);
+    if (EOF == cur)
+        return EOF;
+    if (fseek(fp, 0, SEEK_END))
+        return EOF;
+
+    size = ftell(fp);
+    if (EOF == size)
+        return EOF;
+    if (fseek(fp, cur, SEEK_SET))
+        return EOF;
+
+    return size;
+}
+
+char czl_obj_cnt_cac(czl_gp *gp, czl_var *res, czl_var *opr)
+{
+    res->type = CZL_INT;
+    switch (opr->type) // #
+    {
+    case CZL_STRING:
+        res->val.inum = CZL_STR(opr->val.str.Obj)->len;
+        break;
+    case CZL_TABLE:
+        res->val.inum = CZL_TAB(opr->val.Obj)->count;
+        break;
+    case CZL_ARRAY:
+        res->val.inum = CZL_ARR(opr->val.Obj)->cnt;
+        break;
+    case CZL_STACK: case CZL_QUEUE:
+        res->val.inum = CZL_SQ(opr->val.Obj)->count;
+        break;
+    case CZL_FILE:
+        res->val.inum = czl_get_file_size(opr->val.file.fp);
+        break;
+    case CZL_TABLE_LIST:
+        res->val.inum = CZL_TAB_LIST(opr->val.Obj)->paras_count;
+        break;
+    case CZL_ARRAY_LIST:
+        res->val.inum = CZL_ARR_LIST(opr->val.Obj)->paras_count;
+        break;
+    default:
+        res->val.inum = 1;
+        break;
+    }
+    return 1;
+}
+
 char czl_or_or_cac(czl_gp *gp, czl_var *res, czl_var *opr)
 {
     res->type = CZL_INT;
@@ -279,7 +328,7 @@ char czl_or_or_cac(czl_gp *gp, czl_var *res, czl_var *opr)
     {
     case CZL_INT: res->val.inum = opr->val.inum || 0; return 1;
     case CZL_FLOAT: res->val.inum = opr->val.fnum || 0; return 1;
-    default: res->val.inum = 0; return 1;
+    default: res->val.inum = 1; return 1;
     }
 }
 
@@ -290,42 +339,8 @@ char czl_and_and_cac(czl_gp *gp, czl_var *res, czl_var *opr)
     {
     case CZL_INT: res->val.inum = opr->val.inum && 1; return 1;
     case CZL_FLOAT: res->val.inum = opr->val.fnum && 1; return 1;
-    default: res->val.inum = 0; return 1;
+    default: res->val.inum = 1; return 1;
     }
-}
-
-char czl_xor_xor_cac(czl_gp *gp, czl_var *left, czl_var *right)
-{
-    switch (left->type) // ^^
-    {
-    case CZL_INT: case CZL_FLOAT:
-        switch (right->type)
-        {
-        case CZL_INT: case CZL_FLOAT:
-            left->val.inum = (left->val.inum ?
-                              (right->val.inum ? 0 : 1) :
-                              (right->val.inum ? 1 : 0));
-            break;
-        default:
-            left->val.inum = (left->val.inum ? 1 : 0);
-            break;
-        }
-        break;
-    default:
-        switch (right->type)
-        {
-        case CZL_INT: case CZL_FLOAT:
-            left->val.inum = (right->val.inum ? 1 : 0);
-            break;
-        default:
-            left->val.inum = 0;
-            break;
-        }
-        break;
-    }
-
-    left->type = CZL_INT;
-    return 1;
 }
 
 char czl_swap_cac_num_type(czl_var *left, czl_var *right)
@@ -1440,12 +1455,7 @@ char czl_str_cmp(czl_gp *gp, czl_var *left, const czl_var *right)
             ret = strcmp(CZL_STR(left->val.str.Obj)->str, tmp);
             break;
         }
-        if (CZL_ARRBUF_VAR == left->quality ||
-            CZL_FUNRET_VAR == left->quality)
-        {
-            CZL_SRCD1(gp, left->val.str);
-            left->quality = CZL_DYNAMIC_VAR;
-        }
+        CZL_TB_CF(gp, left);
         return ret;
     case CZL_INT:
         czl_itoa(left->val.inum, tmp);
@@ -1714,22 +1724,14 @@ char czl_equ_equ_cac(czl_gp *gp, czl_var *left, czl_var *right)
         default: goto CZL_END;
         }
     default:
-        if (CZL_FUNRET_VAR == left->quality)
-        {
-            czl_val_del(gp, left);
-            left->quality = CZL_DYNAMIC_VAR;
-        }
+        CZL_TB_CF(gp, left);
         left->val.inum = left->val.Obj == right->val.Obj;
         left->type = CZL_INT;
         return 1;
     }
 
 CZL_END:
-    if (CZL_FUNRET_VAR == left->quality)
-    {
-        czl_val_del(gp, left);
-        left->quality = CZL_DYNAMIC_VAR;
-    }
+    CZL_TB_CF(gp, left);
     left->val.inum = 0;
     left->type = CZL_INT;
     return 1;
@@ -1789,22 +1791,14 @@ char czl_not_equ_cac(czl_gp *gp, czl_var *left, czl_var *right)
         default: goto CZL_END;
         }
     default:
-        if (CZL_FUNRET_VAR == left->quality)
-        {
-            czl_val_del(gp, left);
-            left->quality = CZL_DYNAMIC_VAR;
-        }
+        CZL_TB_CF(gp, left);
         left->val.inum = left->val.Obj != right->val.Obj;
         left->type = CZL_INT;
         return 1;
     }
 
 CZL_END:
-    if (CZL_FUNRET_VAR == left->quality)
-    {
-        czl_val_del(gp, left);
-        left->quality = CZL_DYNAMIC_VAR;
-    }
+    CZL_TB_CF(gp, left);
     left->val.inum = 1;
     left->type = CZL_INT;
     return 1;
@@ -1814,11 +1808,7 @@ char czl_equ_3_cac(czl_gp *gp, czl_var *left, czl_var *right)
 {
     if (left->type != right->type)
     {
-        if (CZL_FUNRET_VAR == left->quality)
-        {
-            czl_val_del(gp, left);
-            left->quality = CZL_DYNAMIC_VAR;
-        }
+        CZL_TB_CF(gp, left);
         left->val.inum = 0;
     }
     else // ===
@@ -1838,14 +1828,44 @@ char czl_equ_3_cac(czl_gp *gp, czl_var *left, czl_var *right)
             left->val.inum = left->val.file.fp == right->val.file.fp;
             break;
         default:
-            if (CZL_FUNRET_VAR == left->quality)
-            {
-                czl_val_del(gp, left);
-                left->quality = CZL_DYNAMIC_VAR;
-            }
+            CZL_TB_CF(gp, left);
             left->val.inum = left->val.Obj == right->val.Obj;
             break;
         }
+    }
+
+    left->type = CZL_INT;
+    return 1;
+}
+
+char czl_xor_xor_cac(czl_gp *gp, czl_var *left, czl_var *right)
+{
+    switch (left->type) // ^^
+    {
+    case CZL_INT: case CZL_FLOAT:
+        switch (right->type)
+        {
+        case CZL_INT: case CZL_FLOAT:
+            left->val.inum = (left->val.inum ?
+                              (right->val.inum ? 0 : 1) :
+                              (right->val.inum ? 1 : 0));
+            break;
+        default:
+            left->val.inum = (left->val.inum ? 1 : 0);
+            break;
+        }
+        break;
+    default:
+        switch (right->type)
+        {
+        case CZL_INT: case CZL_FLOAT:
+            left->val.inum = (right->val.inum ? 1 : 0);
+            break;
+        default:
+            left->val.inum = 0;
+            break;
+        }
+        break;
     }
 
     left->type = CZL_INT;
@@ -1931,13 +1951,7 @@ char czl_ele_del(czl_gp *gp, czl_var *left, czl_var *right)
     if (CZL_TABLE == right->type)
         ret = czl_delete_tabkv(gp, &right->val, left);
 
-    if (CZL_FUNRET_VAR == left->quality ||
-        CZL_ARRBUF_VAR == left->quality)
-    {
-        czl_val_del(gp, left);
-        left->quality = CZL_DYNAMIC_VAR;
-    }
-
+    CZL_TB_CF(gp, left);
     left->type = CZL_INT;
     left->val.inum = ret;
     return 1;
@@ -1977,13 +1991,7 @@ char czl_ele_inx(czl_gp *gp, czl_var *left, czl_var *right)
         break;
     }
 
-    if (CZL_FUNRET_VAR == left->quality ||
-        CZL_ARRBUF_VAR == left->quality)
-    {
-        czl_val_del(gp, left);
-        left->quality = CZL_DYNAMIC_VAR;
-    }
-
+    CZL_TB_CF(gp, left);
     left->type = CZL_INT;
     left->val.inum = ret;
     return 1;
@@ -2004,13 +2012,13 @@ char (*const czl_2p_opt_cac_funs[])(czl_gp*, czl_var*, czl_var*) =
     czl_number_not_cac,
     czl_logic_not_cac,
     czl_logic_flit_cac,
-    czl_addr_obj_cac,
     czl_self_add_cac,
     czl_self_dec_cac,
+    czl_addr_obj_cac,
+    czl_obj_cnt_cac,
     czl_or_or_cac,
     czl_and_and_cac,
     //双参双目运算符函数
-    czl_xor_xor_cac,
     czl_swap_cac,
     czl_ass_cac,
     czl_add_a_cac,
@@ -2030,6 +2038,7 @@ char (*const czl_2p_opt_cac_funs[])(czl_gp*, czl_var*, czl_var*) =
     czl_equ_equ_cac,
     czl_not_equ_cac,
     czl_equ_3_cac,
+    czl_xor_xor_cac,
     czl_cmp_cac,
     czl_ele_del,
     czl_ele_inx,

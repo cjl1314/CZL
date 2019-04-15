@@ -102,8 +102,18 @@ const czl_keyword czl_keyword_table[] =
 const unsigned long czl_keyword_table_num =
         sizeof(czl_keyword_table) / sizeof(czl_keyword);
 ///////////////////////////////////////////////////////////////
-czl_var czl_true = {NULL, CZL_INT, CZL_CONST_VAR, 0, 0, {1}};
-czl_var czl_false = {NULL, CZL_INT, CZL_CONST_VAR, 0, 0, {0}};
+//是否是转义关键字
+#define CZL_IS_ESCAPE_KW(index) \
+(CZL_INT_INDEX == index || CZL_FLOAT_INDEX == index || CZL_STR_INDEX == index)
+
+//是否是对象关键字
+#define CZL_IS_OBJ_KW(index) \
+(CZL_INT_INDEX == index || CZL_FLOAT_INDEX == index || CZL_STR_INDEX == index || \
+ CZL_THIS_INDEX == index || CZL_NEW_INDEX == index || CZL_NIL_INDEX == index || \
+ CZL_NULL_INDEX == index || CZL_TRUE_INDEX == index || CZL_FALSE_INDEX == index)
+///////////////////////////////////////////////////////////////
+czl_var czl_true = {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {1}};
+czl_var czl_false = {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {0}};
 ///////////////////////////////////////////////////////////////
 char* czl_exp_analysis(czl_gp*, char*, czl_exp_handle*);
 char* czl_expression_analysis(czl_gp*, char*);
@@ -266,10 +276,7 @@ char* czl_keyword_find(czl_gp *gp, char *code, int *index, char flag)
 
     if ((*index=czl_is_keyword(gp, name)))
     {
-        if (1 == flag &&
-            (CZL_INT_INDEX == *index ||
-             CZL_FLOAT_INDEX == *index ||
-             CZL_STR_INDEX == *index))
+        if (1 == flag && CZL_IS_ESCAPE_KW(*index))
         {
             error_line_backup = gp->error_line;
             code = czl_ignore_sign_filt(gp, code);
@@ -475,10 +482,13 @@ char* czl_end_sign_check(czl_gp *gp, char *code)
         (*code >= 'A' && *code <= 'Z') || (*code >= '0' && *code <= '9'))
         return code;
 
+    if ('.' == *code && (*(code+1) >= '0' && *(code+1) <= '9'))
+        return code;
+
     switch (*code)
     {
-    case '_': case '{': case '}': case '.': case '\"': case '\'':
-    case '!': case '~': case '-': case '$':
+    case '_': case '{': case '}': case '\"': case '\'': case '$':
+    case '!': case '~': case '+': case '-': case '#': case '\0':
         return code;
     default:
         return NULL;
@@ -864,11 +874,6 @@ char* czl_tabkv_list_match
             sprintf(gp->log_buf, "para should not be empty, ");
             goto CZL_SYNTAX_ERROR;
         }
-        if (CZL_IS_REF_VAR(gp->tmp->exp_head))
-        {
-            sprintf(gp->log_buf, "para should not be &, ");
-            goto CZL_SYNTAX_ERROR;
-        }
         key = gp->tmp->exp_head;
         gp->tmp->exp_head = NULL;
         // ':' check
@@ -884,11 +889,6 @@ char* czl_tabkv_list_match
         if (!gp->tmp->exp_head)
         {
             sprintf(gp->log_buf, "para should not be empty, ");
-            goto CZL_SYNTAX_ERROR;
-        }
-        if (CZL_IS_REF_VAR(gp->tmp->exp_head))
-        {
-            sprintf(gp->log_buf, "para should not be &, ");
             goto CZL_SYNTAX_ERROR;
         }
         val = gp->tmp->exp_head;
@@ -946,11 +946,6 @@ char* czl_paras_match
             return NULL;
         if (gp->tmp->exp_head || 1 == exp_null_flag)
         {
-            if (']' == end_sign && gp->tmp->exp_head && CZL_IS_REF_VAR(gp->tmp->exp_head))
-            {
-                sprintf(gp->log_buf, "para should not be &, ");
-                return NULL;
-            }
             if (!(para=czl_para_node_create(gp, alloc_flag)))
                 return NULL;
             czl_para_node_insert(paras_head, &paras_tail, para);
@@ -1578,6 +1573,7 @@ char czl_is_var_or_fun(czl_gp *gp, char **code, czl_exp_node **node, char *flag)
 {
     char name[CZL_NAME_MAX_SIZE];
     char *s = *code;
+    int index;
     char global_flag = 0;
     char this_flag = 0;
     unsigned long line;
@@ -1595,6 +1591,8 @@ char czl_is_var_or_fun(czl_gp *gp, char **code, czl_exp_node **node, char *flag)
 
     if (!(s=czl_name_match(gp, s, name)))
         return 1;
+    if ((index=czl_is_keyword(gp, name)) && !CZL_IS_OBJ_KW(index))
+        return 0;
 
     line = gp->error_line;
     s = czl_ignore_sign_filt(gp, s);
@@ -1804,10 +1802,18 @@ char* czl_fun_addr_match(czl_gp *gp, char *code, czl_exp_node **node)
     return code;
 }
 
-char czl_is_unary_opt(czl_gp *gp, char **code, czl_exp_node **node)
+char czl_is_unary_opt(czl_gp *gp, char **code, czl_exp_node **node, czl_exp_handle *h)
 {
     char *s = *code;
     unsigned long i, j, len;
+
+    if (czl_exp_is_integrity(gp, h, 0))
+    {
+        char sign = *(*code-1);
+        if (' ' == sign || '\t' == sign || '\n' == sign || '\r' == sign ||
+            (**code != '+' && !('-' == **code && '-' == *(*code+1))))
+            return 0;
+    }
 
     // '-' 优先考虑作为单目运算符
     for (i = 0; i < czl_unary_opt_table_num; i++)
@@ -1846,6 +1852,10 @@ char czl_is_binary_opt(czl_gp *gp, char **code, czl_exp_node **node)
 {
     char *s = *code;
     unsigned long i, j, len;
+
+    if (('+' == **code && '+' == *(*code+1) && *(*code+2) != '+') ||
+        ('-' == **code && '-' == *(*code+1) && *(*code+2) != '-'))
+        return 0;
 
     for (i = 0; i < czl_binary_opt_table_num; i++)
     {
@@ -1891,16 +1901,18 @@ char* czl_child_exp_analysis_start
     {
         czl_exp_node *node;
         czl_exp_node *root = h->root;
-        czl_exp_node *current = h->cur;
-        unsigned long cnt = h->mtoc;
+        czl_exp_node *cur = h->cur;
+        unsigned long mtoc = h->mtoc;
         h->root = h->cur = NULL;
         h->mtoc = 0;
         code = czl_exp_analysis(gp, code+1, h);
-        if ((node=h->root))
-            node->bracket = CZL_BRACKET_YES;
+        if (!h->root)
+            return NULL;
+        node = h->root;
+        node->bracket = CZL_BRACKET_YES;
         h->root = root;
-        h->cur = current;
-        h->mtoc = cnt;
+        h->cur = cur;
+        h->mtoc = mtoc;
         if (!code || !czl_exp_node_insert(gp, node, h))
             return NULL;
     }
@@ -1928,10 +1940,9 @@ char* czl_exp_analysis(czl_gp *gp, char *code, czl_exp_handle *h)
 {
     czl_exp_node *node;
 
-    code = czl_ignore_sign_filt(gp, code);
-
     for (node = NULL; *code != '\0'; node = NULL)
     {
+        code = czl_ignore_sign_filt(gp, code);
         //括号
         if ('(' == *code)
         {
@@ -1945,12 +1956,23 @@ char* czl_exp_analysis(czl_gp *gp, char *code, czl_exp_handle *h)
                 return czl_exp_integrity_check(gp, h) ? code : NULL;
             return czl_child_exp_analysis_end(gp, code, h);
         }
-        //单目运算符，注意：必须在双目运算符前判断
-        else if (czl_is_unary_opt(gp, &code, &node)) {}
-        //双目运算符
-        else if (czl_is_binary_opt(gp, &code, &node)) {}
+        else if (!((*code >= 'a' && *code <= 'z') ||
+                   (*code >= 'A' && *code <= 'Z') ||
+                   (*code >= '0' && *code <= '9') ||
+                   '.' == *code || '\'' == *code || '\"' == *code ||
+                   '[' == *code || '{' == *code ||
+                   '_' == *code || '@' == *code ||
+                   ',' == *code || ';' == *code || '}' == *code))
+        {
+            //单目运算符，注意：必须在双目运算符前判断
+            if (czl_is_unary_opt(gp, &code, &node, h)) {}
+            //双目运算符
+            else if (czl_is_binary_opt(gp, &code, &node)) {}
+            else goto CZL_CHECK;
+        }
         else
         {
+        CZL_CHECK:
             //检查表达式是否已经完整
             if (czl_exp_is_integrity(gp, h, *code))
                 return czl_exp_integrity_check(gp, h) ? code : NULL;
@@ -1971,10 +1993,9 @@ char* czl_exp_analysis(czl_gp *gp, char *code, czl_exp_handle *h)
         }
         if (!czl_exp_node_insert(gp, node, h))
             return NULL;
-        code = czl_ignore_sign_filt(gp, code);
     }
 
-    return NULL;
+    return czl_exp_integrity_check(gp, h) ? code : NULL;
 }
 
 char* czl_expression_analysis
@@ -1984,18 +2005,18 @@ char* czl_expression_analysis
 )
 {
 	czl_exp_handle h = {NULL, NULL, 0, 0};
+    unsigned long exp_node_cnt_backup = gp->tmp->exp_node_cnt;
     unsigned long reg_cnt_backup = gp->reg_cnt;
     unsigned char reg_flag_backup = gp->tmp->reg_flag;
     gp->tmp->reg_flag = 0;
     gp->tmp->reg_sign = 0;
-    ++gp->tmp->exp_flag;
 
     if (!(code=czl_exp_analysis(gp, code, &h)))
         return NULL;
 
+    gp->tmp->exp_node_cnt = exp_node_cnt_backup;
     gp->reg_cnt = reg_cnt_backup;
     gp->tmp->reg_flag = reg_flag_backup;
-    --gp->tmp->exp_flag;
 
     //树转栈，目的是为了计算表达式时避免递归耗时和
     //减少表达式节点里没价值的指针域占用的内存。
@@ -2144,7 +2165,7 @@ char* czl_var_def(czl_gp *gp, char *code, char quality, char ot)
             else if (CZL_CONST_VAR == quality && last_num)
             {
                 //没初始化枚举常量默认是前一个数值常量加一，如果没有则为零
-                var->type = last_num->type;
+                var->type = var->ot = last_num->type;
                 if (CZL_INT == last_num->type)
                     var->val.inum = last_num->val.inum + 1;
                 else //CZL_FLOAT
@@ -2152,7 +2173,10 @@ char* czl_var_def(czl_gp *gp, char *code, char quality, char ot)
             }
             if (CZL_CONST_VAR == quality &&
                 (CZL_INT == var->type || CZL_FLOAT == var->type))
+            {
+                var->ot = var->type;
                 last_num = var;
+            }
         }
         else
         {
@@ -2207,29 +2231,27 @@ char czl_create_new_sentence
         return 0;
     }
 
+    if (!(exp=(czl_exp_ele*)CZL_RT_MALLOC(gp, sizeof(czl_exp_ele))))
+        return 0;
+
+    exp->pl.msg.line = gp->error_line;
+    exp->pl.msg.cnt = 1;
+    exp->next = NULL;
+
     if (const_init_flag)
     {
-        if (!(exp=(czl_exp_ele*)CZL_TMP_MALLOC(gp, sizeof(czl_exp_ele))))
-            return 0;
         exp->res = ele;
         exp->flag = CZL_OPERAND;
         exp->lt = CZL_OPERAND;
-        exp->rt = 0; //标记内存的分配来源
     }
     else
     {
-        if (!(exp=(czl_exp_ele*)CZL_TMP_CALLOC(gp, 2, sizeof(czl_exp_ele))))
-            return 0;
-        exp->msg.em.err_file = gp->error_file;
-        exp->msg.em.err_line = gp->error_line;
         exp->flag = CZL_BINARY_OPT;
         exp->kind = CZL_ASS;
         exp->lt = CZL_LG_VAR;
         exp->lo = var;
         exp->rt = CZL_NEW;
         exp->ro = ele;
-        exp[1].flag = CZL_OP_END;
-        exp[1].rt = 0; //标记内存的分配来源
     }
 
     gp->tmp->exp_head = exp;
@@ -2250,8 +2272,6 @@ char* czl_obj_paras_def
     czl_new_sentence *newObj = czl_new_sentence_create(gp, type);
     if (!newObj)
         return NULL;
-
-	++gp->tmp->exp_flag;
 
     if (type != CZL_TABLE)
     {
@@ -2326,7 +2346,6 @@ char* czl_obj_paras_def
     if (!czl_create_new_sentence(gp, var, newObj, const_init_flag))
         return NULL;
 
-    --gp->tmp->exp_flag;
     return code;
 
 CZL_SYNTAX_ERROR:
@@ -2479,7 +2498,6 @@ char* czl_foreach_obj_end(czl_gp *gp, char *code)
         }
         else
         {
-            ++gp->tmp->exp_flag;
             if ('[' == *code && !flag)
             {
                 if (!(code=czl_array_list_match(gp, code, &node)))
@@ -2504,7 +2522,6 @@ char* czl_foreach_obj_end(czl_gp *gp, char *code)
             }
             else
                 return NULL;
-            --gp->tmp->exp_flag;
         }
         if (gp->tmp->for_paras_end)
             return code;
@@ -2520,10 +2537,10 @@ char* czl_foreach_obj_end(czl_gp *gp, char *code)
         }
     }
 
-    if (!(gp->tmp->for_paras_end=(czl_para*)czl_opr_create(gp, node, 1)))
+    if (!(gp->tmp->for_paras_end=(czl_para*)czl_opr_create(gp, node)))
         return NULL;
-    ((czl_exp_ele*)gp->tmp->for_paras_end)->msg.em.err_line = cur_line;
     --gp->tmp->exp_node_cnt;
+    ((czl_exp_ele*)gp->tmp->for_paras_end)->pl.msg.line = cur_line;
 
     return code;
 }
@@ -2573,7 +2590,7 @@ char* czl_foreach_obj_start_para(czl_gp *gp, char *code, char flag)
         return NULL;
     }
 
-    if (!(opr=czl_opr_create(gp, node, 1)))
+    if (!(opr=czl_opr_create(gp, node)))
         return NULL;
     --gp->tmp->exp_node_cnt;
 
@@ -3216,7 +3233,7 @@ char* czl_fun_paras_match(czl_gp *gp, char *code, czl_fun *fun)
                 return NULL;
             }
             if (!czl_loc_var_create(gp, &fun->loc_vars, &tail,
-                                    name, ot, CZL_DYNAMIC_VAR))
+                                    name, ot, CZL_DYNAMIC_VAR, !ref_flag))
                 return NULL;
 
             code = czl_ignore_sign_filt(gp, code);
@@ -3224,11 +3241,9 @@ char* czl_fun_paras_match(czl_gp *gp, char *code, czl_fun *fun)
             {
                 if (ref_flag)
                     return NULL;
-                ++gp->tmp->exp_flag;
                 code = czl_expression_analysis(gp, code+1);
                 if (!code || !gp->tmp->exp_head)
                     return NULL;
-                --gp->tmp->exp_flag;
                 if (!czl_default_para_type_check(gp, ot))
                 {
                     sprintf(gp->log_buf, "type of default para not matched %s, ", name);
@@ -3359,6 +3374,8 @@ char* czl_fun_def(czl_gp *gp, char *code, char ot)
     gp->tmp->code_blocks[0].block.fun = fun;
     gp->tmp->code_blocks_count = 1;
 
+    gp->tmp->int_reg_cnt = gp->tmp->float_reg_cnt = 0;
+
     if (!(code=czl_fun_paras_match(gp, code, fun)))
         return NULL;
 
@@ -3419,6 +3436,7 @@ char* czl_read_shell(czl_gp *gp, const char *path, unsigned long *code_size)
 	int i;
     char ch;
 	char *code;
+    unsigned long line = 0;
     FILE *out = fopen(path, "r");
     if (!out)
     {
@@ -3436,7 +3454,14 @@ char* czl_read_shell(czl_gp *gp, const char *path, unsigned long *code_size)
     rewind(out);
 
     for (i = 0; (ch=fgetc(out)) != EOF; i++)
+    {
         code[i] = ch;
+        if ('\n' == ch && ++line > 60000)
+        {
+            sprintf(gp->log_buf, "file line limit 60000, ");
+            goto CZL_END;
+        }
+    }
     code[i] = '\0';
 
     fclose(out);
@@ -3452,7 +3477,7 @@ char* czl_load_shell(czl_gp *gp, char *old_code)
 {
 	char *path;
 	char *new_code;
-	char *error_file_backup;
+    char *error_file_backup;
 	unsigned long error_line_backup;
 	unsigned long code_size;
 
@@ -3482,7 +3507,7 @@ char* czl_load_shell(czl_gp *gp, char *old_code)
     error_line_backup = gp->error_line;
     error_file_backup = gp->error_file;
     gp->error_line = 1;
-    gp->error_file = gp->tmp->sn_head->name;
+    gp->error_file = gp->sn_head->name;
 
     if (!czl_shell_analysis(gp, new_code))
         old_code = NULL;
@@ -3822,7 +3847,7 @@ char czl_exec_shell(czl_gp *gp, char *path)
     //保存脚本名
     if (ret && !czl_shell_name_save(gp, path, 0))
         ret = 0;
-    gp->error_file = path;
+    gp->error_file = gp->sn_head->name;
 
     if (ret) //解析脚本生成抽象语法树ast
         ret = czl_shell_analysis(gp, code);

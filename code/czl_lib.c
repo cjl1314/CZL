@@ -78,7 +78,6 @@ char czl_sys_hdod(czl_gp*, czl_fun*);
 char czl_sys_tp(czl_gp*, czl_fun*);
 char czl_sys_ot(czl_gp*, czl_fun*);
 char czl_sys_sz(czl_gp*, czl_fun*);
-char czl_sys_ct(czl_gp*, czl_fun*);
 char czl_sys_rc(czl_gp*, czl_fun*);
 //
 char czl_sys_push(czl_gp*, czl_fun*);
@@ -197,9 +196,8 @@ const czl_sys_fun czl_lib_os[] =
     {"hdod",      czl_sys_hdod,       3,  "table_v1,int_v2,int_v3"},
     //变量内建函数
     {"tp",        czl_sys_tp,         1,  NULL},
-    {"ot",        czl_sys_ot,         1,  NULL},
+    {"ot",        czl_sys_ot,         1,  "&v1"},
     {"sz",        czl_sys_sz,         1,  NULL},
-    {"ct",        czl_sys_ct,         1,  NULL},
     {"rc",        czl_sys_rc,         1,  "&v1"},
     //复合类型变量内建函数
     {"push",      czl_sys_push,       2,  "&stack_v1"},
@@ -1019,24 +1017,6 @@ char czl_sizeof_obj
     }
 }
 ///////////////////////////////////////////////////////////////
-long czl_get_file_size(FILE *fp)
-{
-	long size;
-    long cur = ftell(fp);
-    if (EOF == cur)
-        return EOF;
-    if (fseek(fp, 0, SEEK_END))
-        return EOF;
-
-    size = ftell(fp);
-    if (EOF == size)
-        return EOF;
-    if (fseek(fp, cur, SEEK_SET))
-        return EOF;
-
-    return size;
-}
-
 char czl_sys_open(czl_gp *gp, czl_fun *fun)
 {
     czl_file file;
@@ -2854,7 +2834,8 @@ char czl_sys_tp(czl_gp *gp, czl_fun *fun)
 char czl_sys_ot(czl_gp *gp, czl_fun *fun)
 {
     char ot[8];
-    czl_get_obj_type(fun->vars->ot, fun->vars, ot);
+    czl_var *var = CZL_GRV(fun->vars);
+    czl_get_obj_type(var->ot, var, ot);
     return czl_set_ret_str(gp, fun, ot, strlen(ot));
 }
 
@@ -2868,35 +2849,6 @@ char czl_sys_sz(czl_gp *gp, czl_fun *fun)
         return 0;
 
     fun->ret.val.inum = sum;
-
-    return 1;
-}
-
-char czl_sys_ct(czl_gp *gp, czl_fun *fun)
-{
-    czl_var *obj = fun->vars;
-
-    switch (obj->type)
-    {
-    case CZL_INT: case CZL_FLOAT: case CZL_FUN_REF: case CZL_INSTANCE:
-        fun->ret.val.inum = 1;
-        break;
-    case CZL_STRING:
-        fun->ret.val.inum = CZL_STR(obj->val.str.Obj)->len;
-        break;
-    case CZL_FILE:
-        fun->ret.val.inum = czl_get_file_size(obj->val.file.fp);
-        break;
-    case CZL_TABLE:
-        fun->ret.val.inum = CZL_TAB(obj->val.Obj)->count;
-        break;
-    case CZL_ARRAY:
-        fun->ret.val.inum = CZL_ARR(obj->val.Obj)->cnt;
-        break;
-    default: //CZL_STACK/CZL_QUEUE
-        fun->ret.val.inum = CZL_SQ(obj->val.Obj)->count;
-        break;
-    }
 
     return 1;
 }

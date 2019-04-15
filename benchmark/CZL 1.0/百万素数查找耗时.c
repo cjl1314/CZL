@@ -1,8 +1,8 @@
-var total = 0
+int total = 0
 int isprime(int n)
 {
-	count = int(os.sqrt(n))
-	for i in (2, count)
+	int i, count = os.sqrt(n)
+	for (i=2; i<=count; ++i)
 		if (n%i == 0)
 			return false
 	$total++
