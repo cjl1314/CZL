@@ -23,15 +23,17 @@ int main(int argc, char **argv)
     shell_path = argv[1];
 #endif
 
+    memset(&gp, 0, sizeof(czl_gp));
+
     //系统初始化
-    if (!czl_sys_init(&gp, 1))
+    if (!czl_sys_init(&gp))
     {
         czl_init_free(&gp, 1);
         czl_log(&gp, "system init error!\n");
         return 0;
     }
 
-    czl_exec_shell(&gp, shell_path); //解析执行脚本
+    czl_exec_shell(&gp, shell_path, 1); //解析执行脚本
     czl_memory_free(&gp); //释放内存
 
     return 1;

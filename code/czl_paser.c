@@ -487,8 +487,8 @@ char* czl_end_sign_check(czl_gp *gp, char *code)
 
     switch (*code)
     {
-    case '_': case '{': case '}': case '\"': case '\'': case '$':
-    case '!': case '~': case '+': case '-': case '#': case '\0':
+    case '_': case '(': case '{': case '}': case '\"': case '\'':
+    case '$': case '!': case '~': case '+': case '-': case '#': case '\0':
         return code;
     default:
         return NULL;
@@ -1946,6 +1946,8 @@ char* czl_exp_analysis(czl_gp *gp, char *code, czl_exp_handle *h)
         //括号
         if ('(' == *code)
         {
+            if (czl_exp_is_integrity(gp, h, 0))
+                return czl_exp_integrity_check(gp, h) ? code : NULL;
             if (!(code=czl_child_exp_analysis_start(gp, code, h)))
                 return NULL;
             continue;
@@ -3834,7 +3836,7 @@ char czl_shell_analysis(czl_gp *gp, char *code)
     return 1;
 }
 
-char czl_exec_shell(czl_gp *gp, char *path)
+char czl_exec_shell_prepare(czl_gp *gp, char *path, char flag)
 {
     char ret = 1;
 
@@ -3855,12 +3857,34 @@ char czl_exec_shell(czl_gp *gp, char *path)
     CZL_TMP_FREE(gp, code, code_size);
 
     //脚本完整性检查
-    if ((ret=czl_integrity_check(gp, ret)))
-        ret = czl_run(gp); //执行脚本
+    ret = czl_integrity_check(gp, ret);
 
-    gp->exceptionCode = CZL_EXCEPTION_NO;
+#ifdef CZL_MULT_THREAD
+    if (ret && !flag && !czl_thread_para_get(gp, &gp->enter_var, gp->thread_pipe))
+        return 0;
+#endif //#ifdef CZL_MULT_THREAD
+
     return ret;
 }
+
+char czl_exec_shell(czl_gp *gp, char *path, char flag)
+{
+    return czl_exec_shell_prepare(gp, path, flag) ? czl_run(gp) : 0;
+}
+
+#ifndef CZL_CONSOLE
+char czl_exec_prepare(czl_gp *gp)
+{
+    if (czl_exec_shell_prepare(gp, gp->shell_path, 1))
+    {
+        if (gp->class_name && !(gp->pclass=czl_class_find(gp, gp->class_name)))
+            return 0;
+        gp->cur_fun->pc = gp->cur_fun->opcode;
+        return 1;
+    }
+    return 0;
+}
+#endif //#ifndef CZL_CONSOLE
 
 void czl_mm_print(czl_gp *gp)
 {
@@ -3915,23 +3939,8 @@ char czl_global_paras_init(czl_gp *gp)
     return 1;
 }
 
-char czl_sys_init(czl_gp *gp, char flag)
+char czl_sys_init(czl_gp *gp)
 {
-    if (flag)
-    {
-    #ifndef CZL_CONSOLE
-        char shell_path[CZL_MAX_SHELL_PATH_SIZE];
-        char log_path[CZL_MAX_LOG_PATH_SIZE];
-        strcpy(shell_path, gp->shell_path);
-        strcpy(log_path, gp->log_path);
-    #endif //#ifndef CZL_CONSOLE
-        memset(gp, 0, sizeof(czl_gp));
-    #ifndef CZL_CONSOLE
-        strcpy(gp->shell_path, shell_path);
-        strcpy(gp->log_path, log_path);
-    #endif //#ifndef CZL_CONSOLE
-    }
-
     if (!(gp->tmp=(czl_analysis_gp*)malloc(sizeof(czl_analysis_gp))))
         return 0;
     memset(gp->tmp, 0, sizeof(czl_analysis_gp));
@@ -3947,22 +3956,7 @@ char czl_sys_init(czl_gp *gp, char flag)
 
     gp->mm_limit = CZL_MM_3GB;
 
-#ifndef CZL_CONSOLE
-    if (!(gp->stack=czl_sq_create(gp, 0)))
-        return 0;
-#endif //#ifndef CZL_CONSOLE
-
-#ifdef CZL_MULT_THREAD
-    if (!flag)
-    {
-        char ret = 1;
-        if (gp->thread_pipe->notify_buf)
-            ret = czl_notify_paras_create(gp, &gp->enter_var, gp->thread_pipe);
-        gp->thread_pipe->ready = 1;
-        if (!ret)
-            return 0;
-    }
-    #ifdef CZL_CONSOLE
+#if (defined CZL_MULT_THREAD && defined CZL_CONSOLE)
     if (!czl_print_lock_init)
     {
         czl_print_lock_init = 1;
@@ -3972,8 +3966,12 @@ char czl_sys_init(czl_gp *gp, char flag)
         pthread_mutex_init(&czl_print_mutex, NULL);
     #endif
     }
-    #endif //#ifdef CZL_CONSOLE
-#endif //#ifdef CZL_MULT_THREAD
+#endif //#if (defined CZL_MULT_THREAD && defined CZL_CONSOLE)
+
+#ifndef CZL_CONSOLE
+    if (!(gp->table=czl_empty_table_create(gp)))
+        return 0;
+#endif //#ifndef CZL_CONSOLE
 
     //字符串元素缓冲区链表头初始化
     if (!(gp->ch_head=(czl_char_var*)CZL_STACK_MALLOC(gp, sizeof(czl_char_var))))

@@ -470,7 +470,7 @@ char czl_nil_obj(czl_gp *gp, czl_var *var)
             return 0;
         break;
     case CZL_TABLE:
-        if (!(var->val.Obj=czl_table_create(gp, 0, 0)))
+        if (!(var->val.Obj=czl_empty_table_create(gp)))
             return 0;
         break;
     case CZL_ARRAY:
@@ -1304,132 +1304,62 @@ char czl_div_a_cac(czl_gp *gp, czl_var *left, czl_var *right)
 
 char czl_mod_a_cac(czl_gp *gp, czl_var *left, czl_var *right)
 {
-    switch (left->type) // %=
-    {
-    case CZL_INT:
-        switch (right->type)
-        {
-        case CZL_INT:
-            if (0 == right->val.inum)
-                return 0;
-            left->val.inum %= right->val.inum;
-            return 1;
-        case CZL_FLOAT:
-            if (0 == right->val.fnum)
-                return 0;
-            left->val.inum %= (czl_long)right->val.fnum;
-            return 1;
-        default:
-            return 0;
-        }
-    default:
+    // %=
+    if (left->type != CZL_INT || right->type != CZL_INT || 0 == right->val.inum)
         return 0;
-    }
+
+    left->val.inum %= right->val.inum;
+    return 1;
 }
 
 char czl_or_a_cac(czl_gp *gp, czl_var *left, czl_var *right)
 {
-    switch (left->type) // |=
-    {
-    case CZL_INT:
-        switch (right->type)
-        {
-        case CZL_INT:
-            left->val.inum |= right->val.inum;
-            return 1;
-        case CZL_FLOAT:
-            left->val.inum |= (czl_long)right->val.fnum;
-            return 1;
-        default:
-            return 0;
-        }
-    default:
+    // |=
+    if (left->type != CZL_INT || right->type != CZL_INT)
         return 0;
-    }
+
+    left->val.inum |= right->val.inum;
+    return 1;
 }
 
 char czl_xor_a_cac(czl_gp *gp, czl_var *left, czl_var *right)
 {
-    switch (left->type) // ^=
-    {
-    case CZL_INT:
-        switch (right->type)
-        {
-        case CZL_INT:
-            left->val.inum ^= right->val.inum;
-            return 1;
-        case CZL_FLOAT:
-            left->val.inum ^= (czl_long)right->val.fnum;
-            return 1;
-        default:
-            return 0;
-        }
-    default:
+    // ^=
+    if (left->type != CZL_INT || right->type != CZL_INT)
         return 0;
-    }
+
+    left->val.inum ^= right->val.inum;
+    return 1;
 }
 
 char czl_and_a_cac(czl_gp *gp, czl_var *left, czl_var *right)
 {
-    switch (left->type) // &=
-    {
-    case CZL_INT:
-        switch (right->type)
-        {
-        case CZL_INT:
-            left->val.inum &= right->val.inum;
-            return 1;
-        case CZL_FLOAT:
-            left->val.inum &= (czl_long)right->val.fnum;
-            return 1;
-        default:
-            return 0;
-        }
-    default:
+    // &=
+    if (left->type != CZL_INT || right->type != CZL_INT)
         return 0;
-    }
+
+    left->val.inum &= right->val.inum;
+    return 1;
 }
 
 char czl_l_shift_a_cac(czl_gp *gp, czl_var *left, czl_var *right)
 {
-    switch (left->type) // <<=
-    {
-    case CZL_INT:
-        switch (right->type)
-        {
-        case CZL_INT:
-            left->val.inum <<= right->val.inum;
-            return 1;
-        case CZL_FLOAT:
-            left->val.inum <<= (czl_long)right->val.fnum;
-            return 1;
-        default:
-            return 0;
-        }
-    default:
+    // <<=
+    if (left->type != CZL_INT || right->type != CZL_INT)
         return 0;
-    }
+
+    left->val.inum <<= right->val.inum;
+    return 1;
 }
 
 char czl_r_shift_a_cac(czl_gp *gp, czl_var *left, czl_var *right)
 {
-    switch (left->type) // >>=
-    {
-    case CZL_INT:
-        switch (right->type)
-        {
-        case CZL_INT:
-            left->val.inum >>= right->val.inum;
-            return 1;
-        case CZL_FLOAT:
-            left->val.inum >>= (czl_long)right->val.fnum;
-            return 1;
-        default:
-            return 0;
-        }
-    default:
+    // >>=
+    if (left->type != CZL_INT || right->type != CZL_INT)
         return 0;
-    }
+
+    left->val.inum >>= right->val.inum;
+    return 1;
 }
 //////////////////////////////////////////////////////////////////
 char czl_str_cmp(czl_gp *gp, czl_var *left, const czl_var *right)

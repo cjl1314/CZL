@@ -172,14 +172,16 @@ typedef enum czl_opt_enum
     CZL_QUE,        // ?
     CZL_COL,        // :
     //
+    CZL_CONDITION,  //&&、||条件判断
+    //
     CZL_OPERAND,            //操作数: 必须是0
     CZL_UNARY_OPT,          //单目运算符
     CZL_BINARY_OPT,         //双目运算符
     CZL_THREE_OPT,          //三目运算符
     CZL_THREE_END,          //三目运算符子表达式结束符
-    CZL_CONDITION,          //&&、||条件判断
     CZL_ASS_OPT,            //赋值运算符
     CZL_BINARY2_OPT,        //产生临时结果的双目运算符
+    CZL_UNARY2_OPT,         //产生临时结果的单目运算符
     //
     CZL_FOREACH_BLOCK,      //foreach语句
     CZL_BLOCK_BEGIN,        //逻辑块开始
@@ -189,6 +191,9 @@ typedef enum czl_opt_enum
     CZL_RETURN_SENTENCE,    //return;
     CZL_YEILD_SENTENCE,     //yeild;
     CZL_TRY_BLOCK,          //try(exit/break/continue)
+    //
+    CZL_ADD_SELF_F, // 浮点数 ++i
+    CZL_DEC_SELF_F, // 浮点数 --i
 } czl_opt_enum;
 
 //单目运算符位置性: 左、右
@@ -912,6 +917,7 @@ typedef struct czl_class
     unsigned char final_flag;           //终节点类标志位
     unsigned short parents_count;       //父类继承个数
     unsigned long vars_count;           //类成员动态变量个数
+    unsigned long hash;                 //类名哈希值
     czl_class_var_list vars;            //类成员变量列表头
     czl_enum_list enums;                //类成员枚举列表头
     czl_fun_list funs;                  //类成员函数列表头
@@ -1218,7 +1224,12 @@ typedef struct czl_coroutine
 } czl_coroutine;
 
 #ifdef CZL_MULT_THREAD
-//线程间通信管道带宽实测在1M/s，这里的1M单位是数组元素
+typedef struct czl_pipe_buf
+{
+    struct czl_pipe_buf *next;
+    char buf[1];
+} czl_pipe_buf;
+
 typedef struct czl_thread_pipe
 {
 #ifdef CZL_SYSTEM_WINDOWS
@@ -1233,16 +1244,17 @@ typedef struct czl_thread_pipe
     sem_t notify_event;
 #endif
     //
-    czl_var *report_buf;
-    unsigned long rb_cnt;
-    unsigned long rb_size;
+    char *para;
     //
-    czl_var *notify_buf;
+    czl_pipe_buf *rb_head;
+    czl_pipe_buf *rb_tail;
+    unsigned long rb_cnt;
+    //
+    czl_pipe_buf *nb_head;
+    czl_pipe_buf *nb_tail;
     unsigned long nb_cnt;
-    unsigned long nb_size;
     //线程同步标志位必须加volatile声明，否则会被编译器优化无法检测到真实的状态
     volatile unsigned char alive;
-    volatile unsigned char ready;
 } czl_thread_pipe;
 
 //线程节点结构
@@ -1372,9 +1384,11 @@ typedef struct czl_gp
     czl_ulong mm_max;   //内存使用峰值统计
     //
 #ifndef CZL_CONSOLE
-    void **stack; //与C/C++数据交互栈
-    char shell_path[CZL_MAX_SHELL_PATH_SIZE];
-    char log_path[CZL_MAX_LOG_PATH_SIZE];
+    void **table; //与C/C++数据交互表
+    char *shell_path;
+    char *log_path;
+    char *class_name;
+    czl_class *pclass;
 #endif //#ifndef CZL_CONSOLE
     //
 #ifdef CZL_MULT_THREAD
@@ -1476,7 +1490,7 @@ void* czl_loc_var_find(const char*, czl_loc_var*);
 czl_var* czl_var_in_class_find(const char*, char);
 czl_var* czl_var_find(czl_gp*, char*, char);
 czl_var* czl_var_find_in_exp(czl_gp*, char*, char, char);
-czl_class* czl_class_create(czl_gp*, const char*, char);
+czl_class* czl_class_create(czl_gp*, char*, char);
 czl_class* czl_class_find(czl_gp*, char*);
 char czl_class_insert(czl_gp*, czl_class*);
 czl_class_parent* czl_class_parent_node_create(czl_gp*, czl_class*, char);
@@ -1557,6 +1571,7 @@ void czl_table_node_insert(czl_table_node**,
 void czl_table_list_delete(czl_gp*, czl_table_list*);
 char czl_hash_init(czl_gp*, czl_table*, unsigned long);
 void** czl_table_create(czl_gp*, unsigned long, unsigned long);
+void** czl_empty_table_create(czl_gp*);
 char czl_delete_tabkv(czl_gp*, czl_value*, czl_var*);
 czl_tabkv* czl_create_tabkv(czl_gp*, czl_table*, czl_var*, czl_tabkv*);
 czl_tabkv* czl_find_tabkv(czl_table*, czl_var*);
@@ -1585,6 +1600,9 @@ char czl_ast_serialize(czl_gp*, czl_fun*);
 char czl_run(czl_gp*);
 #ifndef CZL_CONSOLE
 char czl_resume_shell(czl_gp*, czl_fun*);
+czl_tabkv* czl_tabkv_create(czl_gp*, czl_table*, int);
+czl_tabkv* czl_tabkv_find(czl_table*, int);
+char czl_tabkv_delete(czl_gp*, czl_table*, int);
 #endif //#ifndef CZL_CONSOLE
 char czl_val_del(czl_gp*, czl_var*);
 void czl_shell_free(czl_gp*);
