@@ -107,6 +107,12 @@ do { objs[i]->quality = quality[i]; } while (++i < j);
     #define CZL_COR(Obj) ((czl_coroutine*)Obj)
 #endif
 
+#ifdef CZL_MM_RT_GC
+    #define CZL_FIL(Obj) ((czl_file*)(*Obj))
+#else
+    #define CZL_FIL(Obj) ((czl_file*)Obj)
+#endif
+
 #define CZL_TAB_LIST(Obj) ((czl_table_list*)(Obj))
 #define CZL_ARR_LIST(Obj) ((czl_array_list*)(Obj))
 ///////////////////////////////////////////////////////////////
@@ -417,14 +423,6 @@ enum czl_exception_code_enum
     CZL_EXCEPTION_DEAD //malloc失败导致线程彻底死亡，无法处理该异常
 };
 ///////////////////////////////////////////////////////////////
-//文件对象结构
-typedef struct czl_file
-{
-    FILE *fp;           //文件指针
-    unsigned char mode; //模式, 1:结构化; 2:行
-    unsigned char sign; //行写间隔符号
-} czl_file;
-
 //字符串结构: 以'\0'结尾(为了兼容C/C++)，
 //通过长度变量确定字符串范围，因此可以存二进制数据
 typedef struct czl_string
@@ -452,13 +450,21 @@ typedef struct czl_foreach_msg
     unsigned long inx;
 } czl_foreach_msg;
 
+//文件对象结构
+typedef struct czl_file
+{
+    unsigned long rc;   //引用计数
+    FILE *fp;           //文件指针
+    unsigned char mode; //模式, 1:结构化; 2:行
+    unsigned char sign; //行写间隔符号
+} czl_file;
+
 //操作数值结构
 typedef union czl_value
 {
     czl_long inum;      //整型数值
     double fnum;        //浮点型数值
     czl_str str;        //字符串
-    czl_file file;      //文件操作符
     czl_ref ref;        //引用
     czl_foreach_msg msg;//foreach专用
     struct czl_fun *fun;//函数指针
@@ -1255,6 +1261,7 @@ typedef struct czl_thread_pipe
     unsigned long nb_cnt;
     //线程同步标志位必须加volatile声明，否则会被编译器优化无法检测到真实的状态
     volatile unsigned char alive;
+    volatile unsigned char kill;
 } czl_thread_pipe;
 
 //线程节点结构
@@ -1357,6 +1364,7 @@ typedef struct czl_gp
     czl_mm_sp_pool mmp_sq;          //sq结构内存池
     czl_mm_sp_pool mmp_ref;         //ref_var结构内存池
     czl_mm_sp_pool mmp_cor;         //coroutine结构内存池
+    czl_mm_sp_pool mmp_file;        //file结构内存池
 #ifdef CZL_MULT_THREAD
     czl_mm_sp_pool mmp_thread;      //thread结构内存池
 #endif //#ifdef CZL_MULT_THREAD
@@ -1490,6 +1498,7 @@ void* czl_loc_var_find(const char*, czl_loc_var*);
 czl_var* czl_var_in_class_find(const char*, char);
 czl_var* czl_var_find(czl_gp*, char*, char);
 czl_var* czl_var_find_in_exp(czl_gp*, char*, char, char);
+void czl_file_delete(czl_gp*, void**);
 czl_class* czl_class_create(czl_gp*, char*, char);
 czl_class* czl_class_find(czl_gp*, char*);
 char czl_class_insert(czl_gp*, czl_class*);
@@ -1702,6 +1711,9 @@ void czl_free(czl_gp*, void*, czl_ulong
     #define CZL_COR_MALLOC(gp) (czl_coroutine*)czl_malloc(gp, sizeof(czl_coroutine), &gp->mmp_cor)
     #define CZL_COR_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_coroutine), &gp->mmp_cor)
 
+    #define CZL_FILE_MALLOC(gp) (czl_file*)czl_malloc(gp, sizeof(czl_file), &gp->mmp_file)
+    #define CZL_FILE_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_file), &gp->mmp_file)
+
 #ifdef CZL_MULT_THREAD
     #define CZL_THREAD_MALLOC(gp) czl_malloc(gp, sizeof(czl_thread), &gp->mmp_thread)
     #define CZL_THREAD_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_thread), &gp->mmp_thread)
@@ -1742,6 +1754,9 @@ void czl_free(czl_gp*, void*, czl_ulong
 
     #define CZL_COR_MALLOC(gp) (czl_coroutine*)czl_malloc(gp, sizeof(czl_coroutine))
     #define CZL_COR_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_coroutine))
+
+    #define CZL_FILE_MALLOC(gp) (czl_file*)czl_malloc(gp, sizeof(czl_file))
+    #define CZL_FILE_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_file))
 
 #ifdef CZL_MULT_THREAD
     #define CZL_THREAD_MALLOC(gp) czl_malloc(gp, sizeof(czl_thread))

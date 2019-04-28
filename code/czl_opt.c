@@ -113,8 +113,8 @@ char czl_val_copy(czl_gp *gp, czl_var *left, czl_var *right)
         left->type = CZL_OBJ_REF;
         left->val = right->val;
         return 1;
-    case CZL_FILE: case CZL_FUN_REF:
-        if (left->ot != CZL_NIL && left->ot != right->type)
+    case CZL_FUN_REF:
+        if (left->ot != CZL_NIL && left->ot != CZL_FUN_REF)
             goto CZL_TYPE_ERROR;
         left->type = right->type;
         left->val = right->val;
@@ -162,6 +162,8 @@ char czl_val_copy(czl_gp *gp, czl_var *left, czl_var *right)
     default:
         if (CZL_STRING == right->type)
             CZL_SRCA1(right->val.str);
+        else if (CZL_FILE == right->type)
+            CZL_ORCA1(right->val.Obj);
         else if (!CZL_INS(right->val.Obj)->rf)
             CZL_ORCA1(right->val.Obj);
         else
@@ -306,7 +308,7 @@ char czl_obj_cnt_cac(czl_gp *gp, czl_var *res, czl_var *opr)
         res->val.inum = CZL_SQ(opr->val.Obj)->count;
         break;
     case CZL_FILE:
-        res->val.inum = czl_get_file_size(opr->val.file.fp);
+        res->val.inum = czl_get_file_size(CZL_FIL(opr->val.Obj)->fp);
         break;
     case CZL_TABLE_LIST:
         res->val.inum = CZL_TAB_LIST(opr->val.Obj)->paras_count;
@@ -453,38 +455,43 @@ char czl_nil_obj(czl_gp *gp, czl_var *var)
 
     if (!czl_val_del(gp, var))
         return 0;
-    var->type = CZL_INT;
 
     switch (var->ot)
     {
-    case CZL_INT: case CZL_FLOAT: case CZL_NUM:
-    case CZL_FILE: case CZL_FUN_REF:
+    case CZL_FILE:
+        var->type = CZL_INT;
+        return 1;
+    case CZL_INT: case CZL_FLOAT: case CZL_NUM: case CZL_FUN_REF:
         var->val.inum = 0;
         break;
     case CZL_STRING:
         if (!czl_str_create(gp, &var->val.str, 1, 0, NULL))
-            return 0;
+            goto CZL_END;
         break;
     case CZL_INSTANCE:
         if (!(var->val.Obj=czl_instance_fork(gp, pclass, 1)))
-            return 0;
+            goto CZL_END;
         break;
     case CZL_TABLE:
         if (!(var->val.Obj=czl_empty_table_create(gp)))
-            return 0;
+            goto CZL_END;
         break;
     case CZL_ARRAY:
         if (!(var->val.Obj=czl_array_create(gp, 0, 0)))
-            return 0;
+            goto CZL_END;
         break;
     default: //CZL_STACK/CZL_QUEUE
         if (!(var->val.Obj=czl_sq_create(gp, 0)))
-            return 0;
+            goto CZL_END;
         break;
     }
 
     var->type = var->ot;
     return 1;
+
+CZL_END:
+    var->type = CZL_INT;
+    return 0;
 }
 
 char czl_nil_handle(czl_gp *gp, czl_var *var)
@@ -646,7 +653,7 @@ char czl_ass_cac_diff_type(czl_gp *gp, czl_var *left, czl_var *right)
         return czl_addr_obj_ass_handle(gp, left, right);
     case CZL_ARRAY_LIST: case CZL_TABLE_LIST:
         return czl_arr_tab_list_ass(gp, left, right);
-    case CZL_FILE: case CZL_FUN_REF:
+    case CZL_FUN_REF:
         if (left->ot != CZL_NIL && left->ot != right->type)
             return 0;
         break;
@@ -705,7 +712,7 @@ char czl_ass_cac_diff_type(czl_gp *gp, czl_var *left, czl_var *right)
                 left->val = tmp.val;
                 return 1;
             }
-            else if (CZL_INS(right->val.Obj)->rf)
+            else if (right->type != CZL_FILE && CZL_INS(right->val.Obj)->rf)
                 return czl_obj_fork(gp, left, right);
             else
             {
@@ -746,7 +753,7 @@ char czl_ass_cac(czl_gp *gp, czl_var *left, czl_var *right)
 
     switch (left->type)
     {
-    case CZL_INT: case CZL_FLOAT: case CZL_FILE: case CZL_FUN_REF:
+    case CZL_INT: case CZL_FLOAT: case CZL_FUN_REF:
         break;
     case CZL_OBJ_REF:
         return czl_addr_obj_ass_handle(gp, left, right);
@@ -763,11 +770,10 @@ char czl_ass_cac(czl_gp *gp, czl_var *left, czl_var *right)
             czl_str_resize(gp, &right->val.str);
             break;
         default:
-            if (left->val.str.Obj != right->val.str.Obj) //避免产生循环引用
-            {
-                CZL_SRCA1(right->val.str);
-                CZL_SRCD1(gp, left->val.str);
-            }
+            if (left->val.str.Obj == right->val.str.Obj)
+                break;
+            CZL_SRCA1(right->val.str);
+            CZL_SRCD1(gp, left->val.str);
             break;
         }
         break;
@@ -793,22 +799,27 @@ char czl_ass_cac(czl_gp *gp, czl_var *left, czl_var *right)
             }
             break;
         default:
-            if (left->val.Obj != right->val.Obj) //避免产生循环引用
+            if (left->val.Obj == right->val.Obj)
+                break;
+            if (CZL_FILE == right->type)
             {
-                if (CZL_INS(right->val.Obj)->rf)
-                    return czl_obj_fork(gp, left, right);
-                else
+                CZL_ORCA1(right->val.Obj);
+                if (0 == CZL_ORCD1(left->val.Obj))
+                    czl_file_delete(gp, left->val.Obj);
+            }
+            else if (CZL_INS(right->val.Obj)->rf)
+                return czl_obj_fork(gp, left, right);
+            else
+            {
+                czl_value tmp = right->val; //tmp 用于处理 a = a.v 情况
+                CZL_ORCA1(tmp.Obj);
+                if (!czl_val_del(gp, left))
                 {
-                    czl_value tmp = right->val; //tmp 用于处理 a = a.v 情况
-                    CZL_ORCA1(tmp.Obj);
-                    if (!czl_val_del(gp, left))
-                    {
-                        CZL_ORCD1(tmp.Obj);
-                        return 0;
-                    }
-                    left->val = tmp;
-                    return 1;
+                    CZL_ORCD1(tmp.Obj);
+                    return 0;
                 }
+                left->val = tmp;
+                return 1;
             }
             break;
         }
@@ -1644,15 +1655,6 @@ char czl_equ_equ_cac(czl_gp *gp, czl_var *left, czl_var *right)
             return 1;
         default: goto CZL_END;
         }
-    case CZL_FILE:
-        switch (right->type)
-        {
-        case CZL_FILE:
-            left->val.inum = left->val.file.fp == right->val.file.fp;
-            left->type = CZL_INT;
-            return 1;
-        default: goto CZL_END;
-        }
     default:
         CZL_TB_CF(gp, left);
         left->val.inum = left->val.Obj == right->val.Obj;
@@ -1711,15 +1713,6 @@ char czl_not_equ_cac(czl_gp *gp, czl_var *left, czl_var *right)
             return 1;
         default: goto CZL_END;
         }
-    case CZL_FILE:
-        switch (right->type)
-        {
-        case CZL_FILE:
-            left->val.inum = left->val.file.fp != right->val.file.fp;
-            left->type = CZL_INT;
-            return 1;
-        default: goto CZL_END;
-        }
     default:
         CZL_TB_CF(gp, left);
         left->val.inum = left->val.Obj != right->val.Obj;
@@ -1753,9 +1746,6 @@ char czl_equ_3_cac(czl_gp *gp, czl_var *left, czl_var *right)
             break;
         case CZL_STRING:
             left->val.inum = (0==czl_str_cmp(gp, left, right) ? 1 : 0);
-            break;
-        case CZL_FILE:
-            left->val.inum = left->val.file.fp == right->val.file.fp;
             break;
         default:
             CZL_TB_CF(gp, left);

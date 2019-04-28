@@ -9,7 +9,6 @@
 
 #define CZL_MM_MODULE       //内存管理模块宏
 #define CZL_CONSOLE         //控制台运行方式宏，关了就运行在扩展方式
-//#define CZL_TIMER           //线程异步定时器宏
 
 //#define CZL_DEBUG           //调试模式
 
@@ -40,7 +39,6 @@
 #else
     #undef CZL_SYSTEM_64bit
     #undef CZL_MULT_THREAD
-    #undef CZL_TIMER
     typedef long czl_long;
     typedef unsigned long czl_ulong;
 #endif

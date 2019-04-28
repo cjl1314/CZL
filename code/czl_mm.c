@@ -1285,6 +1285,7 @@ void czl_mm_module_init
     czl_mm_pool_init(&gp->mmp_arr, sizeof(czl_array), CZL_MM_OBJ_SP);
     czl_mm_pool_init(&gp->mmp_sq, sizeof(czl_sq), CZL_MM_OBJ_SP);
     czl_mm_pool_init(&gp->mmp_cor, sizeof(czl_coroutine), CZL_MM_OBJ_SP);
+    czl_mm_pool_init(&gp->mmp_file, sizeof(czl_file), CZL_MM_OBJ_SP);
 
     czl_mm_pool_init(&gp->mmp_ref, sizeof(czl_ref_var), CZL_MM_BUF_SP);
 #ifdef CZL_MULT_THREAD
@@ -1327,6 +1328,10 @@ static void czl_mm_scan_pool(czl_gp *gp, czl_ulong size)
             goto CZL_END;
 
     while (czl_mm_fill_page(gp, gp->mmp_cor.freeHead, &gp->mmp_cor, 0))
+        if ((cnt - gp->mm_cnt >= gp->mmp_gc_size) || (buf=malloc(size)))
+            goto CZL_END;
+
+    while (czl_mm_fill_page(gp, gp->mmp_file.freeHead, &gp->mmp_file, 0))
         if ((cnt - gp->mm_cnt >= gp->mmp_gc_size) || (buf=malloc(size)))
             goto CZL_END;
 
@@ -1382,6 +1387,9 @@ static void czl_mm_scan_page(czl_gp *gp, czl_ulong size)
         return;
 
     if (czl_mm_fill_page(gp, gp->mmp_cor.freeHead, &gp->mmp_cor, size))
+        return;
+
+    if (czl_mm_fill_page(gp, gp->mmp_file.freeHead, &gp->mmp_file, size))
         return;
 
     if (czl_mm_fill_page(gp, gp->mmp_arr.freeHead, &gp->mmp_arr, size))

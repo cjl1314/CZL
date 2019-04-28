@@ -51,11 +51,6 @@ char czl_sys_setfun(czl_gp*, czl_fun*);
 #if (defined CZL_SYSTEM_LINUX || defined CZL_SYSTEM_WINDOWS)
 char czl_sys_sleep(czl_gp*, czl_fun*);
 char czl_sys_clock(czl_gp*, czl_fun*);
-#ifdef CZL_TIMER
-char czl_sys_settimer(czl_gp*, czl_fun*);
-char czl_sys_gettimer(czl_gp*, czl_fun*);
-char czl_sys_stoptimer(czl_gp*, czl_fun*);
-#endif //defined CZL_TIMER
 #endif //#if (defined CZL_SYSTEM_LINUX || defined CZL_SYSTEM_WINDOWS)
 char czl_sys_ltime(czl_gp*, czl_fun*);
 char czl_sys_usemem(czl_gp*, czl_fun*);
@@ -124,7 +119,7 @@ const czl_sys_fun czl_lib_os[] =
 #endif //CZL_CONSOLE
     //文件操作函数
     {"open",      czl_sys_open,       4,  "str_v1,str_v2=\"wb+\",int_v3=1,int_v4=32"},
-    {"close",     czl_sys_close,      1,  NULL},
+    {"close",     czl_sys_close,      1,  "&v1"},
     {"write",     czl_sys_write,      -2, NULL},
     {"read",      czl_sys_read,       2,  "&v2"},
     //随机数函数
@@ -156,10 +151,11 @@ const czl_sys_fun czl_lib_os[] =
     {"split",     czl_sys_split,      2,  "str_v1,str_v2=\" \""},
     {"upper",     czl_sys_upper,      3,  "&str_v1,int_v2=0,int_v3=-1"},
     {"lower",     czl_sys_lower,      3,  "&str_v1,int_v2=0,int_v3=-1"},
-    /*
-     * 格式化(format)，
-     * 子串查找(find)，子串提取(sub)，子串替换(swap)，子串插入(ins)
-    */
+//    {"memset",    czl_sys_memset,     3,  "&str_v1,int_v2,int_v3"},
+//    {"memget",    czl_sys_memget,     3,  "str_v1,int_v2,int_v3"},
+//    {"memspn",    czl_sys_memspn,     3,  "str_v1,str_v2,int_v3=0"},
+//    {"memrep",    czl_sys_memrep,     3,  "&str_v1,str_v2,str_v3"},
+//    {"memcmp",    czl_sys_memcmp,     2,  "str_v1,str_v2"},
     //系统函数
     {"abort",     czl_sys_abort,      0,  NULL},
     {"assert",    czl_sys_assert,     1,  NULL},
@@ -170,11 +166,6 @@ const czl_sys_fun czl_lib_os[] =
 #if (defined CZL_SYSTEM_LINUX || defined CZL_SYSTEM_WINDOWS)
     {"sleep",     czl_sys_sleep,      1,  "int_v1"},
     {"clock",     czl_sys_clock,      1,  "int_v1=0"},
-    #ifdef CZL_TIMER
-    {"settimer",  czl_sys_settimer,   4,  "int_v1,fun_v2,int_v3=0,int_v4=0"},
-    {"gettimer",  czl_sys_gettimer,   0,  NULL},
-    {"stoptimer", czl_sys_stoptimer,  0,  NULL},
-    #endif //CZL_TIMER
 #endif //#if (defined CZL_SYSTEM_LINUX || defined CZL_SYSTEM_WINDOWS)
     {"ltime",     czl_sys_ltime,      1,  "str_v1=\"Y-M-D h:m:s\""},
     {"usemem",    czl_sys_usemem,     0,  NULL},
@@ -190,6 +181,8 @@ const czl_sys_fun czl_lib_os[] =
     {"gc",        czl_sys_gc,         0,  NULL},
 #endif //#ifdef CZL_MM_MODULE
     {"runshl",    czl_sys_runshl,     3,  "str_v1,&v2,v3=0"},
+    //排序函数
+    //{"sort",      czl_sys_sort,       2,  "int_v2=0"},
     //哈希表内建函数
     {"hcac",      czl_sys_hcac,       1,  "table_v1"},
     {"hdod",      czl_sys_hdod,       3,  "table_v1,int_v2,int_v3"},
@@ -204,11 +197,12 @@ const czl_sys_fun czl_lib_os[] =
     {"in",        czl_sys_in,         2,  "&queue_v1"},
     {"out",       czl_sys_out,        1,  "&queue_v1"},
     {"ins",       czl_sys_ins,        4,  "&table_v1"},
-    //协成框架接口函数
+    //协程框架接口函数
     {"coroutine", czl_sys_coroutine,  2,  "fun_v1,int_v2=0"},
     {"resume",    czl_sys_resume,     -1, NULL},
     {"corsta",    czl_sys_corsta,     1,  "int_v1"},
     {"reset",     czl_sys_reset,      1,  NULL},
+    //线程和协程共用kill函数
     {"kill",      czl_sys_kill,       1,  "int_v1"},
 #ifdef CZL_MULT_THREAD
     //多线程框架接口函数
@@ -565,8 +559,8 @@ char czl_print_obj(czl_gp *gp, const czl_var *obj, FILE *fout)
         fprintf(fout, "%d", (int)obj->val.fun);
         break;
     case CZL_FILE:
-        fprintf(fout, "%d[%d][%d]", (int)obj->val.file.fp,
-                obj->val.file.mode, obj->val.file.sign);
+        fprintf(fout, "%d[%d][%d]", (int)CZL_FIL(obj->val.Obj)->fp,
+                CZL_FIL(obj->val.Obj)->mode, CZL_FIL(obj->val.Obj)->sign);
         break;
     case CZL_ARRAY_LIST:
         return czl_print_arr_list(gp, CZL_ARR_LIST(obj->val.Obj), fout);
@@ -976,7 +970,7 @@ char czl_sizeof_obj
         *sum += flag ? 5 : 4;
         return  1;
     case CZL_FILE:
-        *sum += flag ? sizeof(czl_file)+1 : sizeof(czl_file);
+        *sum += flag ? 7 : sizeof(czl_file);
         return 1;
     case CZL_INSTANCE:
         if (flag)
@@ -1017,42 +1011,58 @@ char czl_sizeof_obj
 ///////////////////////////////////////////////////////////////
 char czl_sys_open(czl_gp *gp, czl_fun *fun)
 {
-    czl_file file;
+    void **obj = NULL;
+    czl_file *file;
     czl_var *path = fun->vars;
     czl_var *mode1 = fun->vars+1;
     czl_var *mode2 = fun->vars+2;
     czl_var *sign = fun->vars+3;
 
-    fun->ret.type = CZL_INT;
-    fun->ret.val.inum = 0;
-
     if (mode2->val.inum != 1 && mode2->val.inum != 2)
-        return 1;
+        goto CZL_END;
 
     //wb+ 覆盖， rb+ 追加
     if (1 == mode2->val.inum &&
         strcmp("wb+", CZL_STR(mode1->val.str.Obj)->str) &&
         strcmp("rb+", CZL_STR(mode1->val.str.Obj)->str))
-        return 1;
-    if (!(file.fp = fopen(CZL_STR(path->val.str.Obj)->str,
-                          CZL_STR(mode1->val.str.Obj)->str)))
-        return 1;
+        goto CZL_END;
 
-    file.mode = mode2->val.inum;
-    file.sign = sign->val.inum;
+    if (!(obj=(void**)CZL_FILE_MALLOC(gp)))
+        goto CZL_END;
+
+    file = CZL_FIL(obj);
+    if (!(file->fp = fopen(CZL_STR(path->val.str.Obj)->str,
+                           CZL_STR(mode1->val.str.Obj)->str)))
+        goto CZL_END;
+
+    file->rc = 1;
+    file->mode = mode2->val.inum;
+    file->sign = sign->val.inum;
 
     fun->ret.type = CZL_FILE;
-    fun->ret.val.file = file;
+    fun->ret.val.Obj = obj;
+    return 1;
 
+CZL_END:
+    fun->ret.type = CZL_INT;
+    fun->ret.val.inum = 0;
+    CZL_FILE_FREE(gp, obj);
     return 1;
 }
 
 char czl_sys_close(czl_gp *gp, czl_fun *fun)
 {
-    if (fun->vars->type != CZL_FILE || fclose(fun->vars->val.file.fp) == EOF)
+    czl_var *var = CZL_GRV(fun->vars);
+
+    if (var->type != CZL_FILE)
         fun->ret.val.inum = 0;
     else
+    {
+        if (0 == CZL_ORCD1(var->val.Obj))
+            czl_file_delete(gp, var->val.Obj);
+        var->type = CZL_INT;
         fun->ret.val.inum = 1;
+    }
     return 1;
 }
 
@@ -1286,10 +1296,10 @@ char* czl_get_obj_buf
         *((unsigned long*)buf) = (unsigned long)obj->val.fun;
         return buf+4;
     case CZL_FILE:
-        *((unsigned long*)buf) = (unsigned long)obj->val.file.fp;
-        *(buf+4) = obj->val.file.mode;
-        *(buf+5) = obj->val.file.sign;
-        return buf+sizeof(czl_file);
+        *((unsigned long*)buf) = (unsigned long)CZL_FIL(obj->val.Obj)->fp;
+        *(buf+4) = CZL_FIL(obj->val.Obj)->mode;
+        *(buf+5) = CZL_FIL(obj->val.Obj)->sign;
+        return buf+6;
     case CZL_ARRAY_LIST:
         *(buf-1) = CZL_ARRAY;
         return czl_get_arr_list_buf(gp, CZL_ARR_LIST(obj->val.Obj), buf);
@@ -1405,6 +1415,7 @@ char czl_line_write(czl_gp *gp, FILE *fp, char sign, czl_para *p)
 
 char czl_sys_write(czl_gp *gp, czl_fun *fun)
 {
+    czl_file *f;
     czl_var *file;
 	czl_para* paras = (czl_para*)fun->vars;
 
@@ -1412,15 +1423,18 @@ char czl_sys_write(czl_gp *gp, czl_fun *fun)
         return 0;
 
     if (file->type != CZL_FILE)
-        return 1;
-
-    if (fseek(file->val.file.fp, 0, SEEK_END))
+    {
         fun->ret.val.inum = 0;
-    else if (1 == file->val.file.mode)
-        fun->ret.val.inum = czl_struct_write(gp, file->val.file.fp, paras->next);
+        return 1;
+    }
+
+    f = CZL_FIL(file->val.Obj);
+    if (fseek(f->fp, 0, SEEK_END))
+        fun->ret.val.inum = 0;
+    else if (1 == f->mode)
+        fun->ret.val.inum = czl_struct_write(gp, f->fp, paras->next);
     else
-        fun->ret.val.inum = czl_line_write(gp, file->val.file.fp,
-                                           file->val.file.sign, paras->next);
+        fun->ret.val.inum = czl_line_write(gp, f->fp, f->sign, paras->next);
 
     return 1;
 }
@@ -1614,10 +1628,10 @@ char* czl_analysis_ele_buf(czl_gp *gp, char *buf, czl_var *obj)
         obj->val.fun = (czl_fun*)(*((unsigned long*)buf));
         return buf+4;
     case CZL_FILE:
-        obj->val.file.fp = (FILE*)(*((unsigned long*)buf));
-        obj->val.file.mode = *(buf+4);
-        obj->val.file.sign = *(buf+5);
-        return buf+sizeof(czl_file);
+        CZL_FIL(obj->val.Obj)->fp = (FILE*)(*((unsigned long*)buf));
+        CZL_FIL(obj->val.Obj)->mode = *(buf+4);
+        CZL_FIL(obj->val.Obj)->sign = *(buf+5);
+        return buf+6;
     case CZL_INSTANCE:
         return czl_analysis_ins_buf(gp, buf, obj);
     case CZL_TABLE:
@@ -1757,6 +1771,7 @@ char czl_line_read(czl_gp *gp, FILE *fp, czl_var *ret)
 
 char czl_sys_read(czl_gp *gp, czl_fun *fun)
 {
+    czl_file *f;
     czl_var *ret;
     czl_var *file = fun->vars;
 
@@ -1770,9 +1785,10 @@ char czl_sys_read(czl_gp *gp, czl_fun *fun)
     if (!czl_ret_clean(gp, ret))
         return 0;
 
-    fun->ret.val.inum = (1 == file->val.file.mode ?
-                         czl_struct_read(gp, file->val.file.fp, ret) :
-                         czl_line_read(gp, file->val.file.fp, ret));
+    f = CZL_FIL(file->val.Obj);
+    fun->ret.val.inum = (1 == f->mode ?
+                         czl_struct_read(gp, f->fp, ret) :
+                         czl_line_read(gp, f->fp, ret));
 
     return 1;
 }
@@ -2401,56 +2417,63 @@ char czl_sys_split(czl_gp *gp, czl_fun *fun)
     return 1;
 }
 
-char czl_str_toul(czl_fun *fun, char flag)
+char czl_str_toul(czl_gp *gp, czl_fun *fun, char flag)
 {
 	char d;
-	char *s;
+    char *ps;
 	unsigned long i, j;
     czl_var *str = CZL_GCRV(fun->vars);
 	czl_var *begin = fun->vars + 1;
     czl_var *end = fun->vars + 2;
+    czl_string *s;
 
     if (!str)
         return 0;
-    
-    fun->ret.val.inum = 0;
 
-    if (begin->val.inum < 0 ||
-        (unsigned long)begin->val.inum >= CZL_STR(str->val.str.Obj)->len)
+    s = CZL_STR(str->val.str.Obj);
+
+    if (s->rc > 1)
+    {
+        czl_str tmp;
+        if (!czl_str_create(gp, &tmp, s->len+1, s->len, s->str))
+            return 0;
+        str->val.str = tmp;
+        s = CZL_STR(tmp.Obj);
+    }
+
+    if (begin->val.inum < 0 || (unsigned long)begin->val.inum >= s->len)
         return 1;
 
     i = (unsigned long)begin->val.inum;
-    j = end->val.inum < 0 ? CZL_STR(str->val.str.Obj)->len-1 :
-						    (unsigned long)end->val.inum;
+    j = end->val.inum < 0 ? s->len-1 : (unsigned long)end->val.inum;
     if (i > j) CZL_INT_SWAP(i, j);
     d = 'a' - 'A';
-    s = CZL_STR(str->val.str.Obj)->str + i;
+    ps = s->str + i;
     while (i++ <= j)
     {
         if (flag)
         {
-            if (*s >= 'a' && *s <= 'z')
-                *s++ -= d;
+            if (*ps >= 'a' && *ps <= 'z')
+                *ps++ -= d;
         }
         else
         {
-            if (*s >= 'A' && *s <= 'Z')
-                *s++ += d;
+            if (*ps >= 'A' && *ps <= 'Z')
+                *ps++ += d;
         }
     }
 
-    fun->ret.val.inum = 1;
     return 1;
 }
 
 char czl_sys_upper(czl_gp *gp, czl_fun *fun)
 {
-    return czl_str_toul(fun, 1);
+    return czl_str_toul(gp, fun, 1);
 }
 
 char czl_sys_lower(czl_gp *gp, czl_fun *fun)
 {
-    return czl_str_toul(fun, 0);
+    return czl_str_toul(gp, fun, 0);
 }
 ///////////////////////////////////////////////////////////////
 char czl_sys_abort(czl_gp *gp, czl_fun *fun)
@@ -2527,54 +2550,6 @@ char czl_sys_clock(czl_gp *gp, czl_fun *fun)
     }
     return 1;
 }
-
-#ifdef CZL_TIMER
-char czl_sys_settimer(czl_gp *gp, czl_fun *fun)
-{
-	czl_var *time;
-	czl_var *cb_fun;
-	czl_var *mode;
-	czl_var *limit;
-
-    fun->ret.val.inum = 0;
-
-    if (gp->timer_flag)
-        return 1;
-
-    time = fun->vars;
-    cb_fun = fun->vars + 1;
-    mode = fun->vars + 2;
-    limit = fun->vars + 3;
-
-    if (limit->val.inum < 0 || cb_fun->val.fun->enter_vars_count)
-        return 1;
-
-    gp->timeout = time->val.inum;
-    gp->timer_limit = limit->val.inum;
-    gp->timer_flag = 1;
-    gp->timer_mode = mode->val.inum;
-    gp->timer_count = 0;
-    gp->begin_time = CZL_CLOCK;
-    gp->cb_fun = cb_fun->val.fun;
-
-    fun->ret.val.inum = 1;
-
-    return 1;
-}
-
-char czl_sys_gettimer(czl_gp *gp, czl_fun *fun)
-{
-    fun->ret.val.inum = (gp->timer_flag ? gp->timer_count : -1);
-    return 1;
-}
-
-char czl_sys_stoptimer(czl_gp *gp, czl_fun *fun)
-{
-    fun->ret.val.inum = gp->timer_flag;
-    gp->timer_flag = 0;
-    return 1;
-}
-#endif //defined CZL_TIMER
 #endif //#if (defined CZL_SYSTEM_LINUX || defined CZL_SYSTEM_WINDOWS)
 
 char czl_sys_ltime(czl_gp *gp, czl_fun *fun)
@@ -2708,6 +2683,7 @@ void czl_gp_copy(czl_gp *a, czl_gp *b)
     a->mmp_tab = b->mmp_tab;
     a->mmp_arr = b->mmp_arr;
     a->mmp_sq = b->mmp_sq;
+    a->mmp_file = b->mmp_file;
     a->mmp_ref = b->mmp_ref;
     a->mmp_rank = b->mmp_rank;
     a->mmp_selfAdapt = b->mmp_selfAdapt;
@@ -2849,23 +2825,14 @@ char czl_sys_rc(czl_gp *gp, czl_fun *fun)
 
     switch (obj->type)
     {
-    case CZL_INT: case CZL_FLOAT: case CZL_FILE: case CZL_FUN_REF:
+    case CZL_INT: case CZL_FLOAT: case CZL_FUN_REF:
         fun->ret.val.inum = 1;
         break;
     case CZL_STRING:
         fun->ret.val.inum = CZL_STR(obj->val.str.Obj)->rc;
         break;
-    case CZL_INSTANCE:
+    default:
         fun->ret.val.inum = CZL_INS(obj->val.Obj)->rc;
-        break;
-    case CZL_TABLE:
-        fun->ret.val.inum = CZL_TAB(obj->val.Obj)->rc;
-        break;
-    case CZL_ARRAY:
-        fun->ret.val.inum = CZL_ARR(obj->val.Obj)->rc;
-        break;
-    default: //CZL_STACK/CZL_QUEUE
-        fun->ret.val.inum = CZL_SQ(obj->val.Obj)->rc;
         break;
     }
 
@@ -3170,14 +3137,38 @@ char czl_sys_kill(czl_gp *gp, czl_fun *fun)
 {
     unsigned long id = (unsigned long)fun->vars->val.inum;
     void **obj = czl_sys_hash_find(CZL_INT, CZL_NIL, (char*)id, &gp->coroutines_hash);
-    czl_coroutine *c = (obj ? CZL_COR(obj) : NULL);
 
-    if (!c || CZL_IN_BUSY == c->fun->state)
-        fun->ret.val.inum = 0;
+    if (obj)
+    {
+        czl_coroutine *c = CZL_COR(obj);
+        if (CZL_IN_BUSY == c->fun->state)
+            fun->ret.val.inum = 0;
+        else
+        {
+            fun->ret.val.inum = 1;
+            czl_coroutine_delete(gp, (czl_var*)c->vars, obj);
+        }
+    }
     else
     {
-        fun->ret.val.inum = 1;
-        czl_coroutine_delete(gp, (czl_var*)c->vars, obj);
+    #ifdef CZL_MULT_THREAD
+        czl_thread *t = (czl_thread*)czl_sys_hash_find(CZL_INT, CZL_NIL,
+                                                       (char*)id, &gp->threads_hash);
+        if (!t)
+            fun->ret.val.inum = 0;
+        else
+        {
+            fun->ret.val.inum = 1;
+            t->pipe->alive = 0;
+            t->pipe->kill = 1;
+            czl_event_send(&t->pipe->notify_event);
+            t->pipe = NULL;
+            extern void czl_thread_delete(czl_gp*, czl_thread*);
+            czl_thread_delete(gp, t);
+        }
+    #else
+        fun->ret.val.inum = 0;
+    #endif //#ifdef CZL_MULT_THREAD
     }
 
     return 1;
@@ -3477,7 +3468,6 @@ char czl_thread_para_get
     czl_thread_pipe *pipe
 )
 {
-
     if (!czl_analysis_ele_buf(gp, pipe->para, res))
         return 0;
 
@@ -3625,6 +3615,7 @@ CZL_END:
         pipe->alive = 0;
     else
         czl_thread_pipe_delete(pipe);
+
     return 0;
 }
 
@@ -3700,7 +3691,7 @@ CZL_END:
 czl_thread* czl_thread_find(czl_gp *gp, unsigned long id, czl_fun *fun)
 {
     czl_thread *p = (czl_thread*)czl_sys_hash_find(CZL_INT, CZL_NIL,
-                                      (char*)id, &gp->threads_hash);
+                                                   (char*)id, &gp->threads_hash);
     if (!p)
         return NULL;
 
@@ -3723,6 +3714,11 @@ char czl_sys_wait(czl_gp *gp, czl_fun *fun)
         {
             fun->ret.val.inum = 0;
             return 1;
+        }
+        if (gp->thread_pipe->kill)
+        {
+            gp->exit_code = CZL_EXIT_ABORT;
+            return 0;
         }
         czl_thread_lock(&gp->thread_pipe->notify_lock); //lock
         if (gp->thread_pipe->nb_cnt)
@@ -3775,6 +3771,11 @@ char czl_sys_listen(czl_gp *gp, czl_fun *fun)
         {
             fun->ret.val.inum = 0;
             return 1;
+        }
+        if (gp->thread_pipe->kill)
+        {
+            gp->exit_code = CZL_EXIT_ABORT;
+            return 0;
         }
         czl_thread_lock(&gp->thread_pipe->notify_lock); //lock
         if (gp->thread_pipe->nb_cnt)
