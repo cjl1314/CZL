@@ -5965,7 +5965,7 @@ static char czl_ins_fork(czl_gp *gp, czl_ins *ins, czl_value *val, char flag)
     return 1;
 }
 
-static char czl_array_fork(czl_gp *gp, czl_array *arr, czl_value *val, char flag)
+char czl_array_fork(czl_gp *gp, czl_array *arr, czl_value *val, char flag)
 {
     void **obj = czl_array_create(gp, arr->sum, arr->cnt);
     if (!obj)

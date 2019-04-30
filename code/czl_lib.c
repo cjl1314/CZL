@@ -67,6 +67,8 @@ char czl_sys_gc(czl_gp*, czl_fun*);
 #endif //#ifdef CZL_MM_MODULE
 char czl_sys_runshl(czl_gp*, czl_fun*);
 //
+char czl_sys_sort(czl_gp*, czl_fun*);
+//
 char czl_sys_hcac(czl_gp*, czl_fun*);
 char czl_sys_hdod(czl_gp*, czl_fun*);
 //
@@ -182,7 +184,7 @@ const czl_sys_fun czl_lib_os[] =
 #endif //#ifdef CZL_MM_MODULE
     {"runshl",    czl_sys_runshl,     3,  "str_v1,&v2,v3=0"},
     //排序函数
-    //{"sort",      czl_sys_sort,       2,  "int_v2=0"},
+    {"sort",      czl_sys_sort,       2,  "&v1,int_v2=0"},
     //哈希表内建函数
     {"hcac",      czl_sys_hcac,       1,  "table_v1"},
     {"hdod",      czl_sys_hdod,       3,  "table_v1,int_v2,int_v3"},
@@ -2730,6 +2732,269 @@ char czl_sys_runshl(czl_gp *gp, czl_fun *fun)
     }
     czl_shell_free(&new_gp);
     czl_gp_copy(gp, &new_gp);
+
+    return 1;
+}
+///////////////////////////////////////////////////////////////
+char czl_key_cmp(const czl_tabkv *a, const czl_tabkv *b)
+{
+    if (CZL_INT == a->type)
+    {
+        if (CZL_INT == b->type)
+        {
+            if (a->key.inum == b->key.inum) return 0;
+            else if (a->key.inum < b->key.inum) return -1;
+            else return 1;
+        }
+        else
+            return -1;
+    }
+    else
+    {
+        if (CZL_STRING == b->type)
+            return strcmp(CZL_STR(a->key.str.Obj)->str, CZL_STR(b->key.str.Obj)->str);
+        else
+            return 1;
+    }
+}
+
+char czl_val_cmp(const czl_var *a, const czl_var *b)
+{
+    switch (a->type)
+    {
+    case CZL_INT:
+        switch (b->type)
+        {
+        case CZL_INT:
+            if (a->val.inum == b->val.inum) return 0;
+            else if (a->val.inum < b->val.inum) return -1;
+            else return 1;
+        case CZL_FLOAT:
+            if (a->val.inum == b->val.fnum) return 0;
+            else if (a->val.inum < b->val.fnum) return -1;
+            else return 1;
+        default:
+            return -1;
+        }
+    case CZL_FLOAT:
+        switch (b->type)
+        {
+        case CZL_FLOAT:
+            if (a->val.fnum == b->val.fnum) return 0;
+            else if (a->val.fnum < b->val.fnum) return -1;
+            else return 1;
+        case CZL_INT:
+            if (a->val.fnum == b->val.inum) return 0;
+            else if (a->val.fnum < b->val.inum) return -1;
+            else return 1;
+        default:
+            return -1;
+        }
+    case CZL_STRING:
+        switch (b->type)
+        {
+        case CZL_STRING:
+            return strcmp(CZL_STR(a->val.str.Obj)->str, CZL_STR(b->val.str.Obj)->str);
+        case CZL_INT: case CZL_FLOAT:
+            return 1;
+        default:
+            return -1;
+        }
+    default:
+        return 1;
+    }
+}
+
+unsigned long czl_partition_0(czl_var *a, unsigned long rh)
+{
+    unsigned long lh = 1;
+    czl_value tmp;
+
+    for (;;)
+    {
+        while (lh < rh && czl_val_cmp(a+rh, a) >= 0) --rh;
+        while (lh < rh && czl_val_cmp(a+lh, a) < 0) ++lh;
+        if (lh == rh)
+            break;
+        CZL_VAL_SWAP(a[lh].val, a[rh].val, tmp);
+        if (a[lh].type != a[rh].type)
+            CZL_INT_SWAP(a[lh].type, a[rh].type);
+    }
+
+    if (czl_val_cmp(a+lh, a) >= 0)
+        return 0;
+
+    CZL_VAL_SWAP(a->val, a[lh].val, tmp);
+    if (a->type != a[lh].type)
+        CZL_INT_SWAP(a->type, a[lh].type);
+
+    return lh;
+}
+
+unsigned long czl_partition_1(czl_var *a, unsigned long rh)
+{
+    unsigned long lh = 1;
+    czl_value tmp;
+
+    for (;;)
+    {
+        while (lh < rh && czl_val_cmp(a+rh, a) < 0) --rh;
+        while (lh < rh && czl_val_cmp(a+lh, a) >= 0) ++lh;
+        if (lh == rh)
+            break;
+        CZL_VAL_SWAP(a[lh].val, a[rh].val, tmp);
+        if (a[lh].type != a[rh].type)
+            CZL_INT_SWAP(a[lh].type, a[rh].type);
+    }
+
+    if (czl_val_cmp(a+lh, a) < 0)
+        return 0;
+
+    CZL_VAL_SWAP(a->val, a[lh].val, tmp);
+    if (a->type != a[lh].type)
+        CZL_INT_SWAP(a->type, a[lh].type);
+
+    return lh;
+}
+
+void czl_quick_sort_0(czl_var *a, unsigned long n)
+{
+    unsigned long b;
+    if (n < 2)
+        return;
+    b = czl_partition_0(a, n-1);
+    czl_quick_sort_0(a, b);
+    czl_quick_sort_0(a+b+1, n-b-1);
+}
+
+void czl_quick_sort_1(czl_var *a, unsigned long n)
+{
+    unsigned long b;
+    if (n < 2)
+        return;
+    b = czl_partition_1(a, n-1);
+    czl_quick_sort_1(a, b);
+    czl_quick_sort_1(a+b+1, n-b-1);
+}
+
+czl_tabkv* czl_merge(czl_tabkv *first, czl_tabkv *second, const unsigned char mode)
+{
+    czl_tabkv combined;
+    czl_tabkv *last_sorted = &combined;
+
+    while (first && second)
+    {
+        char ret;
+        switch (mode)
+        {
+        case 0:
+            ret = czl_val_cmp((czl_var*)first, (czl_var*)second);
+            break;
+        case 1:
+            ret = (czl_val_cmp((czl_var*)first, (czl_var*)second) < 0 ? 1 : -1);
+            break;
+        case 2:
+            ret = czl_key_cmp(first, second);
+            break;
+        default:
+            ret = (czl_key_cmp(first, second) < 0 ? 1 : -1);
+            break;
+        }
+        if (ret < 0)
+        {
+            last_sorted->next = first;
+            last_sorted = first;
+            first = first->next;
+        }
+        else
+        {
+            last_sorted->next = second;
+            last_sorted = second;
+            second = second->next;
+        }
+    }
+
+    if (!first)
+        last_sorted->next = second;
+    else
+        last_sorted->next = first;
+
+    return combined.next;
+}
+
+czl_tabkv* czl_divide_from(czl_tabkv *sub_list)
+{
+    czl_tabkv *position, *midpoint, *second_half;
+
+    midpoint = sub_list;
+    position = midpoint->next;
+    while (position)
+    {
+        position = position->next;
+        if (position)
+        {
+            midpoint = midpoint->next;
+            position = position->next;
+        }
+    }
+    second_half = midpoint->next;
+    midpoint->next = NULL;
+
+    return second_half;
+}
+
+void czl_recursive_merge_sort(czl_tabkv **sub_list, const unsigned char mode)
+{
+    if (*sub_list && (*sub_list)->next)
+    {
+        czl_tabkv *second_half = czl_divide_from(*sub_list);
+        czl_recursive_merge_sort(sub_list, mode);
+        czl_recursive_merge_sort(&second_half, mode);
+        *sub_list = czl_merge(*sub_list, second_half, mode);
+    }
+}
+
+void czl_fix_tabkv_ptr(czl_table *tab)
+{
+    czl_tabkv *p, *q = NULL;
+    for (p = tab->eles_head; p; p = p->next)
+    {
+        p->last = q;
+        q = p;
+    }
+    tab->eles_tail = q;
+}
+
+char czl_sys_sort(czl_gp *gp, czl_fun *fun)
+{
+    czl_var *var = CZL_GRV(fun->vars);
+
+    if (CZL_ARRAY == var->type)
+    {
+        czl_array *arr = CZL_ARR(var->val.Obj);
+        if (arr->rc > 1)
+        {
+            if (!czl_array_fork(gp, arr, &var->val, 1))
+                return 0;
+            arr = CZL_ARR(var->val.Obj);
+        }
+        if (fun->vars[1].val.inum)
+            czl_quick_sort_1(arr->vars, arr->cnt);
+        else
+            czl_quick_sort_0(arr->vars, arr->cnt);
+    }
+    else if (CZL_TABLE == var->type)
+    {
+        czl_table *tab = CZL_TAB(var->val.Obj);
+        if (tab->rc > 1)
+        {
+            if (!czl_table_fork(gp, tab, &var->val, 1))
+                return 0;
+            tab = CZL_TAB(var->val.Obj);
+        }
+        czl_recursive_merge_sort(&tab->eles_head, fun->vars[1].val.inum);
+        czl_fix_tabkv_ptr(tab);
+    }
 
     return 1;
 }

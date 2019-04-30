@@ -1527,6 +1527,7 @@ void czl_class_parent_node_insert(czl_class_parent**,
                                   czl_class_parent*);
 char czl_instance_delete(czl_gp*, void**);
 void** czl_instance_fork(czl_gp*, czl_class*, char);
+char czl_array_fork(czl_gp*, czl_array*, czl_value*, char);
 char czl_table_fork(czl_gp*, czl_table*, czl_value*, char);
 char czl_sq_fork(czl_gp*, czl_sq*, czl_value*, char);
 czl_glo_var* czl_sqele_node_create

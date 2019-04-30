@@ -418,8 +418,9 @@ char czl_swap_cac(czl_gp *gp, czl_var *left, czl_var *right)
              CZL_STRING == right->type))
         {
 			czl_value tmp;
-            CZL_INT_SWAP(left->type, right->type);
             CZL_VAL_SWAP(left->val, right->val, tmp);
+            if (left->type != right->type)
+                CZL_INT_SWAP(left->type, right->type);
             return 1;
         }
         return 0;

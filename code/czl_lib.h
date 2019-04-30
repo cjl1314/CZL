@@ -16,7 +16,7 @@ extern const unsigned long czl_syslibs_num;
     #define CZL_CLOCK clock()
     #define CZL_SLEEP(t) Sleep(t)
 #else
-    #define CZL_CLOCK ()
+    #define CZL_CLOCK (0)
     #define CZL_SLEEP(t) (t)
 #endif
 
