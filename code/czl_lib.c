@@ -69,6 +69,9 @@ char czl_sys_runshl(czl_gp*, czl_fun*);
 //
 char czl_sys_sort(czl_gp*, czl_fun*);
 //
+char czl_sys_tobin(czl_gp*, czl_fun*);
+char czl_sys_toobj(czl_gp*, czl_fun*);
+//
 char czl_sys_hcac(czl_gp*, czl_fun*);
 char czl_sys_hdod(czl_gp*, czl_fun*);
 //
@@ -185,6 +188,9 @@ const czl_sys_fun czl_lib_os[] =
     {"runshl",    czl_sys_runshl,     3,  "str_v1,&v2,v3=0"},
     //排序函数
     {"sort",      czl_sys_sort,       2,  "&v1,int_v2=0"},
+    //序列化、反序列化函数
+    {"tobin",     czl_sys_tobin,      1,  NULL},
+    {"toobj",     czl_sys_toobj,      1,  "str_v1"},
     //哈希表内建函数
     {"hcac",      czl_sys_hcac,       1,  "table_v1"},
     {"hdod",      czl_sys_hdod,       3,  "table_v1,int_v2,int_v3"},
@@ -2995,6 +3001,33 @@ char czl_sys_sort(czl_gp *gp, czl_fun *fun)
         czl_recursive_merge_sort(&tab->eles_head, fun->vars[1].val.inum);
         czl_fix_tabkv_ptr(tab);
     }
+
+    return 1;
+}
+///////////////////////////////////////////////////////////////
+char czl_sys_tobin(czl_gp *gp, czl_fun *fun)
+{
+    unsigned long obj_size = 4;
+    const char check_sum[4] = {0xF1, 0xE2, 0xC3, 0xB4};
+
+    if (!czl_sizeof_obj(gp, 1, fun->vars, &obj_size) ||
+        !czl_set_ret_str(gp, &fun->ret, NULL, obj_size))
+        return 0;
+
+    memcpy(CZL_STR(fun->ret.val.str.Obj)->str, check_sum, 4);
+    czl_get_obj_buf(gp, fun->vars, CZL_STR(fun->ret.val.str.Obj)->str+4);
+
+    return 1;
+}
+
+char czl_sys_toobj(czl_gp *gp, czl_fun *fun)
+{
+    czl_string *bin = CZL_STR(fun->vars->val.str.Obj);
+    const char check_sum[4] = {0xF1, 0xE2, 0xC3, 0xB4};
+
+    if (bin->len <= 4 || memcmp(check_sum, bin->str, 4) ||
+        !czl_analysis_ele_buf(gp, bin->str+4, &fun->ret))
+        fun->ret.val.inum = 0;
 
     return 1;
 }

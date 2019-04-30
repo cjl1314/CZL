@@ -9068,6 +9068,8 @@ static void czl_set_exp_reg(czl_gp *gp, czl_exp_ele *pc, char flag)
                 {
                     pc->flag = CZL_UNARY2_OPT;
                     pc->ro = pc->lo;
+                    if (flag != 2)
+                        pc->res = czl_set_opt_reg(gp, pc->res, pc);
                 }
                 else
                 {
@@ -9075,8 +9077,6 @@ static void czl_set_exp_reg(czl_gp *gp, czl_exp_ele *pc, char flag)
                 }
                 if (pc->kind >= CZL_NUMBER_NOT)
                     pc->kind -= CZL_NUMBER_NOT;
-                if (flag != 2 && pc->res)
-                    pc->res = czl_set_opt_reg(gp, pc->res, pc);
             }
             break;
         case CZL_BINARY_OPT:
@@ -9094,6 +9094,8 @@ static void czl_set_exp_reg(czl_gp *gp, czl_exp_ele *pc, char flag)
                     pc->flag = CZL_BINARY2_OPT;
                     if (pc->kind >= CZL_ADD)
                         pc->kind = CZL_ADD_A + (pc->kind - CZL_ADD);
+                    if (flag != 2)
+                        pc->res = czl_set_opt_reg(gp, pc->res, pc);
                 }
                 else
                 {
@@ -9101,8 +9103,6 @@ static void czl_set_exp_reg(czl_gp *gp, czl_exp_ele *pc, char flag)
                 }
                 if (pc->kind >= CZL_NUMBER_NOT)
                     pc->kind -= CZL_NUMBER_NOT;
-                if (flag != 2 && pc->res)
-                    pc->res = czl_set_opt_reg(gp, pc->res, pc);
             }
             break;
         case CZL_THREE_END:
