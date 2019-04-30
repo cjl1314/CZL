@@ -3758,6 +3758,9 @@ char czl_store_device_check(czl_gp *gp)
     case CZL_LOOP_BLOCK:
         return czl_store_device_build
                 (gp, fun, &block->block.loop->store_device);
+    case CZL_TASK_BLOCK:
+        return czl_store_device_build
+                (gp, fun, &block->block.task->store_device);
     case CZL_TRY_BLOCK:
         return czl_store_device_build
                 (gp, fun, &block->block.Try->store_device);
@@ -3781,6 +3784,8 @@ czl_store_device* czl_store_device_get(czl_gp *gp)
         return block->block.fun->store_device;
     case CZL_LOOP_BLOCK:
         return block->block.loop->store_device;
+    case CZL_TASK_BLOCK:
+        return block->block.task->store_device;
     case CZL_TRY_BLOCK:
         return block->block.Try->store_device;
     default: //CZL_BRANCH_BLOCK
@@ -4296,6 +4301,11 @@ czl_var* czl_var_find_in_fun
             if (block->block.loop->store_device)
                 node = czl_var_find_in_store(gp, name,
                         block->block.loop->store_device);
+            break;
+        case CZL_TASK_BLOCK:
+            if (block->block.task->store_device)
+                node = czl_var_find_in_store(gp, name,
+                        block->block.task->store_device);
             break;
         case CZL_TRY_BLOCK:
             if (block->block.Try->store_device)
@@ -7586,6 +7596,10 @@ czl_goto_flag* czl_goto_node_create(czl_gp *gp, const char *name)
         p->sentence = block->block.loop->sentences_tail;
         block->block.loop->goto_flag = 1;
         break;
+    case CZL_TASK_BLOCK:
+        p->sentence = block->block.task->sentences_tail;
+        block->block.task->goto_flag = 1;
+        break;
     case CZL_TRY_BLOCK:
         p->sentence = block->block.Try->sentences_tail;
         block->block.Try->goto_flag = 1;
@@ -7674,10 +7688,11 @@ czl_loop* czl_loop_node_create(czl_gp *gp)
 
     switch (gp->tmp->current_loop_type)
     {
-    case CZL_WHILE_LOOP: case CZL_DO_WHILE_LOOP:
+    case CZL_WHILE_LOOP: case CZL_DO_WHILE_LOOP: case CZL_TIMER_LOOP:
         p->condition = gp->tmp->exp_head;
         p->paras_start = NULL;
         p->paras_end = NULL;
+        p->task_cnt = 0;
         gp->tmp->exp_head = NULL;
         break;
     default: //CZL_FOR_LOOP/CZL_FOREACH_LOOP
@@ -7702,6 +7717,23 @@ czl_loop* czl_loop_node_create(czl_gp *gp)
         gp->tmp->for_paras_end = NULL;
         break;
     }
+
+    return p;
+}
+
+czl_task* czl_task_node_create(czl_gp *gp)
+{
+    czl_task *p = (czl_task*)CZL_TMP_MALLOC(gp, sizeof(czl_task));
+    if (!p)
+        return NULL;
+
+    p->goto_flag = 0;
+    p->condition = gp->tmp->exp_head;
+    p->sentences_head = NULL;
+    p->sentences_tail = NULL;
+    p->store_device = NULL;
+
+    gp->tmp->exp_head = NULL;
 
     return p;
 }
@@ -7777,6 +7809,11 @@ czl_sentence* czl_sentence_create(czl_gp *gp, char type)
                 ++gp->cur_fun->foreach_cnt;
         }
         break;
+    case CZL_TASK_BLOCK:
+        p->sentence.task = czl_task_node_create(gp);
+        if (!p->sentence.task)
+            goto CZL_ERROR_END;
+        break;
     case CZL_TRY_BLOCK:
         p->sentence.Try = czl_try_node_create(gp);
         if (!p->sentence.Try)
@@ -7832,6 +7869,10 @@ void czl_sentence_insert(czl_gp *gp, czl_sentence *node)
         head = &current->block.loop->sentences_head;
         tail = &current->block.loop->sentences_tail;
         break;
+    case CZL_TASK_BLOCK:
+        head = &current->block.task->sentences_head;
+        tail = &current->block.task->sentences_tail;
+        break;
     case CZL_TRY_BLOCK:
         head = &current->block.Try->sentences_head;
         tail = &current->block.Try->sentences_tail;
@@ -7878,7 +7919,7 @@ char czl_sentence_block_create_in_fun(czl_gp *gp, char type)
 
     switch (type)
     {
-    case CZL_BRANCH_BLOCK: case CZL_LOOP_BLOCK: case CZL_TRY_BLOCK:
+    case CZL_BRANCH_BLOCK: case CZL_LOOP_BLOCK: case CZL_TASK_BLOCK: case CZL_TRY_BLOCK:
         if (!(node=czl_sentence_create(gp, type)))
             return 0;
         czl_sentence_insert(gp, node);
@@ -8518,6 +8559,30 @@ static czl_exp_ele* czl_switch_case_cmp(const czl_exp_ele *pc)
     }
 }
 
+unsigned long czl_get_time(const czl_var *t)
+{
+    switch (t->type)
+    {
+    case CZL_INT: return t->val.inum >= 0 ? t->val.inum : 1;
+    case CZL_FLOAT: return t->val.fnum >= 0 ? t->val.fnum : 1;
+    default: return 1;
+    }
+}
+
+static czl_exp_ele* czl_task_begin(const czl_var *t, czl_exp_ele *pc)
+{
+    unsigned long time = CZL_CLOCK;
+    unsigned long cycle = czl_get_time(t);
+
+    if (time - (unsigned long)pc->res >= cycle)
+    {
+        pc->res = (czl_var*)time;
+        return pc->pl.pc;
+    }
+
+    return pc->next;
+}
+
 static char czl_fun_run(czl_gp *gp, czl_exp_ele *pc, czl_fun *fun)
 {
     czl_var *lo = NULL, *ro = NULL;
@@ -8693,11 +8758,16 @@ static char czl_fun_run(czl_gp *gp, czl_exp_ele *pc, czl_fun *fun)
             CZL_R_SHIFT_CAC(pc);
             break;
         //
-        case CZL_ADD_SELF_F:
-            CZL_ADD_SELF_F_CAC(pc);
+        case CZL_TASK_BEGIN:
+            pc = czl_task_begin((pc-1)->res, pc);
             break;
-        case CZL_DEC_SELF_F:
-            CZL_DEC_SELF_F_CAC(pc);
+        case CZL_TIMER_SLEEP:
+            CZL_SLEEP(czl_get_time((pc-1)->res));
+            pc = pc->pl.pc;
+            break;
+        case CZL_TIMER_INIT:
+            pc->pl.pc->res = (czl_var*)CZL_CLOCK;
+            ++pc;
             break;
         default:
             break;
@@ -8907,13 +8977,6 @@ static char czl_is_quick_unary_opt(czl_gp *gp, czl_exp_ele *pc, unsigned char to
     if (CZL_ADD_SELF == pc->kind || CZL_DEC_SELF == pc->kind)
     {
         pc->res = pc->lo;
-        if (CZL_FLOAT == pc->lo->ot)
-        {
-            if (CZL_ADD_SELF == pc->kind)
-                pc->kind = CZL_ADD_SELF_F;
-            else
-                pc->kind = CZL_DEC_SELF_F;
-        }
         goto CZL_END;
     }
 
@@ -9104,7 +9167,7 @@ static void czl_set_reg(czl_gp *gp, czl_sentence *p, char flag)
                     czl_set_exp_reg(gp, p->sentence.loop->condition, 0);
             }
             else
-            {   //CZL_FOR_LOOP/CZL_WHILE_LOOP/CZL_DO_WHILE_LOOP
+            {   //CZL_FOR_LOOP/CZL_WHILE_LOOP/CZL_DO_WHILE_LOOP/CZL_TIMER_LOOP
                 czl_set_exp_reg(gp, p->sentence.loop->condition, flag);
                 for (i = p->sentence.loop->paras_start; i; i = i->next)
                     czl_set_exp_reg(gp, i->para, flag);
@@ -9112,6 +9175,10 @@ static void czl_set_reg(czl_gp *gp, czl_sentence *p, char flag)
                     czl_set_exp_reg(gp, i->para, flag);
             }
             czl_set_reg(gp, p->sentence.loop->sentences_head, flag);
+            break;
+        case CZL_TASK_BLOCK:
+            czl_set_exp_reg(gp, p->sentence.task->condition, flag);
+            czl_set_reg(gp, p->sentence.task->sentences_head, flag);
             break;
         case CZL_TRY_BLOCK:
             for (i = p->sentence.Try->paras; i; i = i->next)
@@ -9170,6 +9237,20 @@ unsigned long czl_get_ast_size
         case CZL_LOOP_BLOCK:
             if (CZL_FOREACH_LOOP == p->sentence.loop->type)
                 size += 2; //CZL_FOREACH_BLOCK
+            else if (CZL_TIMER_LOOP == p->sentence.loop->type)
+            {
+                if (!p->sentence.loop->condition && !p->sentence.loop->task_cnt)
+                {
+                    size += 2; //CZL_LOGIC_JUMP
+                    p->sentence.loop->type = CZL_WHILE_LOOP;
+                }
+                else
+                {
+                    size += p->sentence.loop->task_cnt; //CZL_TIMER_INIT
+                    size += CZL_EL(p->sentence.loop->condition);
+                    ++size; //CZL_TIMER_SLEEP/CZL_LOGIC_JUMP
+                }
+            }
             else //CZL_FOR_LOOP/CZL_WHILE_LOOP/CZL_DO_WHILE_LOOP
             {
                 ++size; //CZL_BLOCK_BEGIN/CZL_LOGIC_JUMP
@@ -9185,6 +9266,12 @@ unsigned long czl_get_ast_size
                     size += CZL_EL(i->para);
             }
             size = czl_get_ast_size(p->sentence.loop->sentences_head, size);
+            break;
+        case CZL_TASK_BLOCK:
+            size += CZL_EL(p->sentence.task->condition);
+            ++size; //CZL_TASK_BLOCK
+            size = czl_get_ast_size(p->sentence.task->sentences_head, size);
+            ++size; //CZL_LOGIC_JUMP
             break;
         case CZL_TRY_BLOCK:
             if (CZL_TRY_CONTINUE == p->sentence.Try->type && !p->sentence.Try->paras)
@@ -9300,53 +9387,56 @@ char czl_try_goto_init(czl_gp *gp, czl_try *p, czl_goto_flag *flags)
     return 1;
 }
 ///////////////////////////////////////////////////////////////
-czl_exp_ele* czl_find_break(czl_stack_block *b)
+void czl_set_timer_init(czl_stack_block *b, czl_exp_ele *pc)
 {
     for (;;)
     {
-        if (CZL_LOOP_BLOCK == b->flag ||
-            (CZL_BRANCH_BLOCK == b->flag && CZL_SWITCH_BRANCH == b->type))
-            return b->next;
+        if (CZL_LOOP_BLOCK == b->flag && CZL_TIMER_LOOP == b->type)
+        {
+            czl_exp_ele *task = ((czl_loop*)b->block)->tasks +
+                                ((czl_loop*)b->block)->task_cnt++;
+            task->pl.pc = pc;
+            task->flag = CZL_TIMER_INIT;
+            return;
+        }
         --b;
     }
 }
 
-czl_exp_ele* czl_find_continue(czl_stack_block *b)
+void czl_loop_jump_delete(czl_gp *gp, czl_loop_jump *p)
 {
-    for (;;)
-    {
-        if (CZL_LOOP_BLOCK == b->flag)
-            return b->condition;
-        --b;
-    }
-}
-
-void czl_continue_delete(czl_gp *gp, czl_continue *p)
-{
-    czl_continue *q;
+    czl_loop_jump *q;
     while (p)
     {
         q = p->next;
-        CZL_TMP_FREE(gp, p, sizeof(czl_continue));
+        CZL_TMP_FREE(gp, p, sizeof(czl_loop_jump));
         p = q;
     }
 }
 
-void czl_set_continue(czl_gp *gp, czl_continue *head, czl_stack_block *b)
+void czl_set_loop_jump(czl_gp *gp, czl_loop_jump *head, czl_stack_block *b)
 {
-    czl_continue *p = head;
-    czl_exp_ele *condition = czl_find_continue(b);
+    czl_loop_jump *p;
 
-    do {
-        if (p->last) {
-            if (0XFF == p->last->flag) p->last->pl.pc = condition;
-            else p->last->next = (0xFF == p->last->kind ? condition : p->buf);
+    for (;;)
+    {
+        if (CZL_LOOP_BLOCK == b->flag)
+            break;
+        --b;
+    }
+
+    for (p = head; p; p = p->next)
+    {
+        czl_exp_ele *pc = (CZL_BREAK_SENTENCE == p->buf->kind ? b->next : b->condition);
+        if (p->last)
+        {
+            if (0XFF == p->last->flag) p->last->pl.pc = pc;
+            else p->last->next = p->buf;
         }
-        p->buf->pl.pc = condition;
-        p = p->next;
-    } while (p);
+        p->buf->pl.pc = pc;
+    }
 
-    czl_continue_delete(gp, head);
+    czl_loop_jump_delete(gp, head);
 }
 
 czl_exp_ele* czl_compile_block
@@ -9360,7 +9450,7 @@ czl_exp_ele* czl_compile_block
     czl_exp_ele *buf = b->buf;
     czl_stack_block *cur = b->block+b->i;
     czl_exp_ele *save = NULL;
-    czl_continue *head = NULL, *node;
+    czl_loop_jump *head = NULL, *node;
     czl_para *i;
     czl_branch_child *c;
 
@@ -9400,17 +9490,31 @@ czl_exp_ele* czl_compile_block
             b->last = buf-1;
             break;
         case CZL_LOOP_BLOCK:
-            if (CZL_DO_WHILE_LOOP == p->sentence.loop->type)
+            if (CZL_TIMER_LOOP == p->sentence.loop->type ||
+                CZL_DO_WHILE_LOOP == p->sentence.loop->type)
             {
+                if (CZL_TIMER_LOOP == p->sentence.loop->type && p->sentence.loop->task_cnt)
+                {
+                    unsigned long i;
+                    p->sentence.loop->tasks = buf;
+                    CZL_SOCN(b->last, buf);
+                    for (i = 0; i < p->sentence.loop->task_cnt; ++i)
+                    {
+                        ++buf; //CZL_TIMER_INIT
+                        (buf-1)->next = buf;
+                    }
+                    p->sentence.loop->task_cnt = 0;
+                    b->last = buf-1;
+                }
                 ++b->i;
                 b->block[b->i].flag = CZL_LOOP_BLOCK;
-                b->block[b->i].type = CZL_DO_WHILE_LOOP;
+                b->block[b->i].type = p->sentence.loop->type;
                 b->block[b->i].goto_flag = p->sentence.loop->goto_flag;
                 b->block[b->i].block = p->sentence.loop;
                 b->buf = buf;
                 if (!(buf=czl_compile_block(gp, p->sentence.loop->sentences_head, b)))
                 {
-                    czl_continue_delete(gp, head);
+                    czl_loop_jump_delete(gp, head);
                     return NULL;
                 }
                 --b->i;
@@ -9444,6 +9548,17 @@ czl_exp_ele* czl_compile_block
             p->sentence.loop->block_next = buf;
             b->last = buf-1;
             break;
+        case CZL_TASK_BLOCK:
+            CZL_SOCN(b->last, buf);
+            CZL_CE(p->sentence.task->condition, buf);
+            (buf-1)->next = buf;
+            p->sentence.task->block_condition = buf;
+            czl_set_timer_init(cur, buf);
+            ++buf; //CZL_TASK_BEGIN
+            (buf-1)->next = buf;
+            p->sentence.task->block_next = buf;
+            b->last = buf-1;
+            break;
         case CZL_TRY_BLOCK:
             ++b->i;
             b->block[b->i].flag = CZL_TRY_BLOCK;
@@ -9453,7 +9568,7 @@ czl_exp_ele* czl_compile_block
             b->buf = buf;
             if (!(buf=czl_compile_block(gp, p->sentence.Try->sentences_head, b)))
             {
-                czl_continue_delete(gp, head);
+                czl_loop_jump_delete(gp, head);
                 return NULL;
             }
             --b->i;
@@ -9475,21 +9590,10 @@ czl_exp_ele* czl_compile_block
             b->last = buf;
             ++buf; //CZL_RETURN_SENTENCE/CZL_YEILD_SENTENCE
             break;
-        case CZL_BREAK_SENTENCE:
-            save = czl_find_break(cur);
-            if (b->last) {
-                if (0XFF == b->last->flag) b->last->pl.pc = save;
-                else b->last->next = (0xFF == b->last->kind ? save : buf);
-            }
-            buf->flag = CZL_LOGIC_JUMP;
-            buf->pl.pc = save;
-            b->last = buf;
-            ++buf; //CZL_LOGIC_JUMP
-            break;
-        case CZL_CONTINUE_SENTENCE:
-            if (!(node=CZL_TMP_MALLOC(gp, sizeof(czl_continue))))
+        case CZL_BREAK_SENTENCE: case CZL_CONTINUE_SENTENCE:
+            if (!(node=CZL_TMP_MALLOC(gp, sizeof(czl_loop_jump))))
             {
-                czl_continue_delete(gp, head);
+                czl_loop_jump_delete(gp, head);
                 return NULL;
             }
             node->next = head;
@@ -9497,6 +9601,8 @@ czl_exp_ele* czl_compile_block
             node->last = b->last;
             node->buf = buf;
             buf->flag = CZL_LOGIC_JUMP;
+            buf->kind = p->type;
+            buf->rt = 1; //标记为不可优化的跳转指令
             b->last = buf;
             ++buf; //CZL_LOGIC_JUMP
             break;
@@ -9529,6 +9635,18 @@ czl_exp_ele* czl_compile_block
             CZL_SOCN(b->last, buf);
             CZL_CE(((czl_loop*)cur->block)->condition, buf);
             (buf-1)->next = buf;
+            cur->next = buf+1;
+        }
+        else if (CZL_TIMER_LOOP == cur->type)
+        {
+            cur->condition = buf;
+            CZL_SOCN(b->last, buf);
+            if (((czl_loop*)cur->block)->condition)
+            {
+                CZL_CE(((czl_loop*)cur->block)->condition, buf);
+                (buf-1)->next = buf;
+            }
+            cur->next = buf+1;
         }
         else if (CZL_FOR_LOOP == cur->type)
         {
@@ -9546,7 +9664,7 @@ czl_exp_ele* czl_compile_block
     }
 
     if (head)
-        czl_set_continue(gp, head, cur);
+        czl_set_loop_jump(gp, head, cur);
 
     switch (cur->flag)
     {
@@ -9603,6 +9721,13 @@ czl_exp_ele* czl_compile_block
             buf->flag = CZL_BLOCK_BEGIN;
             ((czl_loop*)cur->block)->block_condition = buf;
         }
+        else if (CZL_TIMER_LOOP == cur->type)
+        {
+            buf->pl.pc = first;
+            buf->flag = (((czl_loop*)cur->block)->condition ?
+                         CZL_TIMER_SLEEP : CZL_LOGIC_JUMP);
+            ((czl_loop*)cur->block)->block_condition = buf;
+        }
         else
         {
             CZL_SOCN(b->last, save);
@@ -9618,7 +9743,7 @@ czl_exp_ele* czl_compile_block
         ++buf;
         break;
     default:
-        if (CZL_IF_BRANCH == cur->type || cur->case_end)
+        if (CZL_TASK_BLOCK == cur->flag || CZL_IF_BRANCH == cur->type || cur->case_end)
             CZL_SOCN(b->last, cur->next)
         else
         {
@@ -9695,9 +9820,9 @@ czl_exp_ele* czl_opcode_create
                 cur->next = p->sentence.branch->block_next;
                 if (CZL_IS_OJ(cur->next))
                     cur->next = cur->next->pl.pc;
-                //
                 if (!p->sentence.branch->childs_head)
                     s->next = cur->next;
+                //
                 s->flag = 0xFF;
                 if (!czl_opcode_create(gp, p->sentence.branch->sentences_head, b, 1))
                     return NULL;
@@ -9726,10 +9851,7 @@ czl_exp_ele* czl_opcode_create
                     cur->next = cur->next->pl.pc;
                 //
                 if (!c->conditions)
-                {
-                    last->kind = 0xFF;
                     b->last = last;
-                }
                 else
                 {
                     s += (CZL_EL(c->conditions->para)+1);
@@ -9771,7 +9893,7 @@ czl_exp_ele* czl_opcode_create
                         {
                             last = s;
                             if (!c->next)
-                                s->next = p->sentence.branch->block_next;
+                                s->next = cur->next;
                         }
                     }
                 } while (i);
@@ -9788,7 +9910,7 @@ czl_exp_ele* czl_opcode_create
                 cur->next = cur->next->pl.pc;
             //
             p->sentence.loop->block_condition->next = cur->next;
-            if (CZL_DO_WHILE_LOOP == cur->type)
+            if (CZL_DO_WHILE_LOOP == cur->type || CZL_TIMER_LOOP == cur->type)
             {
                 if (!czl_opcode_create(gp, p->sentence.loop->sentences_head, b, 0))
                     return NULL;
@@ -9819,6 +9941,23 @@ czl_exp_ele* czl_opcode_create
                     return NULL;
                 s->flag = flag;
             }
+            --b->i;
+            break;
+        case CZL_TASK_BLOCK:
+            s = b->last = p->sentence.task->block_condition;
+            cur = b->block + (++b->i);
+            cur->flag = CZL_TASK_BLOCK;
+            cur->goto_flag = p->sentence.task->goto_flag;
+            cur->block = p->sentence.task;
+            cur->next = p->sentence.task->block_next;
+            if (CZL_IS_OJ(cur->next))
+                cur->next = cur->next->pl.pc;
+            //
+            p->sentence.task->block_condition->next = cur->next;
+            s->flag = 0xFF;
+            if (!czl_opcode_create(gp, p->sentence.task->sentences_head, b, 1))
+                return NULL;
+            s->flag = CZL_TASK_BEGIN;
             --b->i;
             break;
         case CZL_TRY_BLOCK:
@@ -10446,6 +10585,7 @@ void czl_block_delete(czl_gp *gp, char type, void *block, char flag)
     czl_branch *branch;
     czl_branch_child *branch_child, *next_child;
     czl_loop *loop;
+    czl_task *task;
     czl_try *Try;
     unsigned int block_size;
 
@@ -10492,6 +10632,12 @@ void czl_block_delete(czl_gp *gp, char type, void *block, char flag)
                              loop->condition, loop->paras_start,
                              loop->paras_end, flag);
         break;
+    case CZL_TASK_BLOCK:
+        block_size = sizeof(czl_task);
+        task = (czl_task*)block;
+        head = task->sentences_head;
+        czl_exp_stack_delete(gp, task->condition);
+        break;
     default: //CZL_TRY_BLOCK
         block_size = sizeof(czl_try);
         Try = (czl_try*)block;
@@ -10523,6 +10669,9 @@ void czl_block_delete(czl_gp *gp, char type, void *block, char flag)
             break;
         case CZL_LOOP_BLOCK:
             czl_block_delete(gp, CZL_LOOP_BLOCK, p->sentence.loop, flag);
+            break;
+        case CZL_TASK_BLOCK:
+            czl_block_delete(gp, CZL_TASK_BLOCK, p->sentence.task, flag);
             break;
         case CZL_TRY_BLOCK:
             czl_block_delete(gp, CZL_TRY_BLOCK, p->sentence.Try, flag);

@@ -14,6 +14,8 @@ enum czl_keyword_index_enum
     CZL_SWITCH_INDEX,
     CZL_CASE_INDEX,
     CZL_DEFAULT_INDEX,
+    CZL_TIMER_INDEX,
+    CZL_TASK_INDEX,
     CZL_BREAK_INDEX,
     CZL_CONTINUE_INDEX,
     CZL_GOTO_INDEX,
@@ -64,6 +66,8 @@ const czl_keyword czl_keyword_table[] =
     {"switch",      CZL_SWITCH_INDEX},
     {"case",        CZL_CASE_INDEX},
     {"default",     CZL_DEFAULT_INDEX},
+    {"timer",       CZL_TIMER_INDEX},
+    {"task",        CZL_TASK_INDEX},
     {"break",       CZL_BREAK_INDEX},
     {"continue",    CZL_CONTINUE_INDEX},
     {"goto",        CZL_GOTO_INDEX},
@@ -325,7 +329,8 @@ char czl_loop_find(czl_gp *gp)
     for (i = gp->tmp->block_count-1; i >= 0; i--)
         if (CZL_FOR_INDEX == gp->tmp->block_stack[i].index ||
             CZL_WHILE_INDEX == gp->tmp->block_stack[i].index ||
-            CZL_DO_INDEX == gp->tmp->block_stack[i].index)
+            CZL_DO_INDEX == gp->tmp->block_stack[i].index ||
+            CZL_TIMER_INDEX == gp->tmp->block_stack[i].index)
             return 1;
 
     return 0;
@@ -380,6 +385,21 @@ char czl_switch_find(czl_gp *gp)
     return 0;
 }
 
+char czl_timer_find(czl_gp *gp)
+{
+    int i;
+
+    for (i = gp->tmp->code_blocks_count-1; i >= 0; i--)
+        if (CZL_LOOP_BLOCK == gp->tmp->code_blocks[i].type &&
+            CZL_TIMER_LOOP == gp->tmp->code_blocks[i].block.loop->type)
+        {
+            ++gp->tmp->code_blocks[i].block.loop->task_cnt;
+            return 1;
+        }
+
+    return 0;
+}
+
 char czl_block_context_check(czl_gp *gp, int index)
 {
     int last_index = (0 == gp->tmp->block_count ? -1 :
@@ -399,6 +419,13 @@ char czl_block_context_check(czl_gp *gp, int index)
         if (!czl_switch_case_find(gp))
         {
             sprintf(gp->log_buf, "missed switch for case/default, ");
+            return 0;
+        }
+        break;
+    case CZL_TASK_INDEX:
+        if (!czl_timer_find(gp))
+        {
+            sprintf(gp->log_buf, "missed timer for task, ");
             return 0;
         }
         break;
@@ -2810,6 +2837,8 @@ char czl_condition_block_check
         if (CZL_FOR_INDEX == p->index ||
             CZL_WHILE_INDEX == p->index ||
             CZL_DO_INDEX == p->index ||
+            CZL_TIMER_INDEX == p->index ||
+            CZL_TASK_INDEX == p->index ||
             CZL_TRY_INDEX == p->index)
         {
             //do while 语句结束
@@ -2908,6 +2937,13 @@ char czl_code_block_create(czl_gp *gp, int index)
         block_type = CZL_LOOP_BLOCK;
         gp->tmp->current_loop_type = CZL_DO_WHILE_LOOP;
         break;
+    case CZL_TIMER_INDEX:
+        block_type = CZL_LOOP_BLOCK;
+        gp->tmp->current_loop_type = CZL_TIMER_LOOP;
+        break;
+    case CZL_TASK_INDEX:
+        block_type = CZL_TASK_BLOCK;
+        break;
     case CZL_SWITCH_INDEX:
         block_type = CZL_BRANCH_BLOCK;
         gp->tmp->current_branch_type = CZL_SWITCH_BRANCH;
@@ -2983,11 +3019,15 @@ char* czl_code_block_check(czl_gp *gp, char *code, int index)
         if (!(code=czl_for_condition_match(gp, code)))
             return NULL;
         break;
+    case CZL_TASK_INDEX:
+        if (!(code=czl_condition_match(gp, code, 0)))
+            return NULL;
+        break;
     case CZL_TRY_INDEX:
         if (!(code=czl_try_condition_match(gp, code)))
             return NULL;
         break;
-    case CZL_WHILE_INDEX:
+    case CZL_WHILE_INDEX: case CZL_TIMER_INDEX:
         if (!(code=czl_condition_match(gp, code, 1)))
             return NULL;
         break;
@@ -3056,7 +3096,7 @@ char* czl_context_analysis(czl_gp *gp, char *code, int index)
     case CZL_IF_INDEX: case CZL_ELIF_INDEX: case CZL_ELSE_INDEX:
     case CZL_FOR_INDEX: case CZL_WHILE_INDEX: case CZL_DO_INDEX:
     case CZL_SWITCH_INDEX: case CZL_CASE_INDEX: case CZL_DEFAULT_INDEX:
-    case CZL_TRY_INDEX:
+    case CZL_TRY_INDEX: case CZL_TIMER_INDEX: case CZL_TASK_INDEX:
         return czl_code_block_check(gp, code, index);
     case CZL_LBRACKET_INDEX:
         if (!czl_code_blocks_count(gp, index))

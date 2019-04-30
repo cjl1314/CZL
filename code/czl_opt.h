@@ -548,19 +548,13 @@ if (pc->res->name) { \
 }
 ///////////////////////////////////////////////////////////////
 #define CZL_ADD_SELF_CAC(pc) \
-++pc->res->val.inum; \
+if (CZL_INT == pc->lt) ++pc->res->val.inum; \
+else ++pc->res->val.fnum; \
 ++pc;
 
 #define CZL_DEC_SELF_CAC(pc) \
---pc->res->val.inum; \
-++pc;
-
-#define CZL_ADD_SELF_F_CAC(pc) \
-++pc->res->val.fnum; \
-++pc;
-
-#define CZL_DEC_SELF_F_CAC(pc) \
---pc->res->val.fnum; \
+if (CZL_INT == pc->lt) --pc->res->val.inum; \
+else --pc->res->val.fnum; \
 ++pc;
 
 #define CZL_NUMBER_NOT_CAC(pc) \

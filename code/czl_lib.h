@@ -11,8 +11,13 @@ extern const unsigned long czl_syslibs_num;
 
 #ifdef CZL_SYSTEM_LINUX
     #define CZL_CLOCK (clock()/1000)
+    #define CZL_SLEEP(t) usleep(t*1000)
 #elif defined CZL_SYSTEM_WINDOWS
     #define CZL_CLOCK clock()
+    #define CZL_SLEEP(t) Sleep(t)
+#else
+    #define CZL_CLOCK ()
+    #define CZL_SLEEP(t) (t)
 #endif
 
 czl_var* CZL_GCRV(czl_var*);

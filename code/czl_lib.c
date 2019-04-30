@@ -2530,11 +2530,7 @@ char czl_sys_setfun(czl_gp *gp, czl_fun *fun)
 #if (defined CZL_SYSTEM_LINUX || defined CZL_SYSTEM_WINDOWS)
 char czl_sys_sleep(czl_gp *gp, czl_fun* fun)
 {
-#ifdef CZL_SYSTEM_LINUX
-    usleep(fun->vars->val.inum*1000);
-#elif defined CZL_SYSTEM_WINDOWS
-    Sleep(fun->vars->val.inum);
-#endif
+    CZL_SLEEP(fun->vars->val.inum);
     return 1;
 }
 

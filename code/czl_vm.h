@@ -197,9 +197,9 @@ typedef enum czl_opt_enum
     CZL_RETURN_SENTENCE,    //return;
     CZL_YEILD_SENTENCE,     //yeild;
     CZL_TRY_BLOCK,          //try(exit/break/continue)
-    //
-    CZL_ADD_SELF_F, // 浮点数 ++i
-    CZL_DEC_SELF_F, // 浮点数 --i
+    CZL_TASK_BEGIN,         //task
+    CZL_TIMER_INIT,         //task计时初始化
+    CZL_TIMER_SLEEP,        //timer
 } czl_opt_enum;
 
 //单目运算符位置性: 左、右
@@ -312,6 +312,7 @@ typedef enum czl_sentence_type_enum
     CZL_LOOP_BLOCK,         //while/for
     CZL_BRANCH_BLOCK,       //if/switch
     CZL_BRANCH_CHILD_BLOCK, //elif/else/case/default
+    CZL_TASK_BLOCK,         //task
     CZL_BREAK_SENTENCE,     //break;
     CZL_CONTINUE_SENTENCE,  //continue;
     CZL_GOTO_SENTENCE,      //goto flag;
@@ -335,6 +336,7 @@ typedef enum czl_loop_type_enum
     CZL_DO_WHILE_LOOP,
     CZL_FOR_LOOP,
     CZL_FOREACH_LOOP,
+    CZL_TIMER_LOOP,
 } czl_loop_type_enum;
 
 //函数状态
@@ -644,6 +646,7 @@ typedef union czl_logic_block
     struct czl_loop *loop;
     struct czl_branch *branch;
     struct czl_branch_child *branch_child;
+    struct czl_task *task;
     struct czl_try *Try;
 } czl_logic_block;
 
@@ -660,6 +663,7 @@ typedef union czl_sentence_union
     struct czl_exp_ele *exp;
     struct czl_loop *loop;
     struct czl_branch *branch;
+    struct czl_task *task;
     struct czl_goto *Goto;
     struct czl_try *Try;
 } czl_sentence_union;
@@ -682,12 +686,12 @@ typedef struct czl_glo_sentence
 } czl_glo_sentence, *czl_glo_sentence_list;
 
 //
-typedef struct czl_continue
+typedef struct czl_loop_jump
 {
     czl_exp_ele *last;
     czl_exp_ele *buf;
-    struct czl_continue *next;
-} czl_continue;
+    struct czl_loop_jump *next;
+} czl_loop_jump;
 
 //
 typedef struct czl_stack_block
@@ -812,10 +816,25 @@ typedef struct czl_loop
     czl_store_device *store_device;     //数据存储器
     czl_para_list paras_start;          //开始参数列表，仅for循环有
     czl_para_list paras_end;            //结束参数列表，仅for循环有
+    unsigned long task_cnt;             //仅timer循环有
     //
     czl_exp_ele *block_next;            //编译字节码时用到
     czl_exp_ele *block_condition;       //编译字节码时用到
+    czl_exp_ele *tasks;                 //编译字节码时用到
 } czl_loop;
+
+//task语句节点
+typedef struct czl_task
+{
+    char goto_flag;                     //是否有goto_flag标记位
+    czl_exp_ele *condition;		   	    //条件表达式
+    czl_sentence_list sentences_head;	//语句列表头
+    czl_sentence_list sentences_tail;	//语句列表尾
+    czl_store_device *store_device;     //数据存储器
+    //
+    czl_exp_ele *block_next;            //编译字节码时用到
+    czl_exp_ele *block_condition;       //编译字节码时用到
+} czl_task;
 
 //try语句节点
 typedef struct czl_try
