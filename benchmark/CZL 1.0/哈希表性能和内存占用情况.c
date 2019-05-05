@@ -11,7 +11,7 @@ class b
 
 main
 {
-	setrank(0)
+	setRank(0)
 	
 	a = {}
 	for i in (0, 1000*1000)

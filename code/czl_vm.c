@@ -5440,7 +5440,7 @@ char czl_string_new
         return 0;
     }
 
-    if (init && (len=strlen(CZL_STR(init->val.str.Obj)->str)) > (unsigned long)l)
+    if (init && (len=CZL_STR(init->val.str.Obj)->len) > (unsigned long)l)
     {
         res->type = CZL_STRING;
         res->val = init->val;
@@ -5449,7 +5449,7 @@ char czl_string_new
     else
     {
         czl_str str;
-        if (!czl_str_create(gp, &str, l+1, l,
+        if (!czl_str_create(gp, &str, l+1, len,
                             (init ? CZL_STR(init->val.str.Obj)->str : NULL)))
             return 0;
         memset(CZL_STR(str.Obj)->str+len, 0, str.size-len);
@@ -9335,7 +9335,7 @@ char czl_goto_init(czl_gp *gp, czl_goto *p, czl_goto_flag *flags)
         {
             if (strcmp(p->name, q->name) == 0)
             {
-                if (CZL_IS_OJ(q->pc))
+                if (CZL_LOGIC_JUMP == q->pc->flag)
                     q->pc = q->pc->pl.pc;
                 p->pc->flag = CZL_LOGIC_JUMP; //goto语句必须放这里设置标志位
                 p->pc->pl.pc = q->pc;
@@ -9367,7 +9367,7 @@ char czl_try_goto_init(czl_gp *gp, czl_try *p, czl_goto_flag *flags)
         {
             if (strcmp(p->name, q->name) == 0)
             {
-                if (CZL_IS_OJ(q->pc))
+                if (CZL_LOGIC_JUMP == q->pc->flag)
                     q->pc = q->pc->pl.pc;
                 p->pc->pl.pc = q->pc;
                 break;
@@ -9403,20 +9403,46 @@ void czl_set_timer_init(czl_stack_block *b, czl_exp_ele *pc)
     }
 }
 
-void czl_loop_jump_delete(czl_gp *gp, czl_loop_jump *p)
+void czl_block_jump_delete(czl_gp *gp, czl_block_jump *p)
 {
-    czl_loop_jump *q;
+    czl_block_jump *q;
     while (p)
     {
         q = p->next;
-        CZL_TMP_FREE(gp, p, sizeof(czl_loop_jump));
+        CZL_TMP_FREE(gp, p, sizeof(czl_block_jump));
         p = q;
     }
 }
 
-void czl_set_loop_jump(czl_gp *gp, czl_loop_jump *head, czl_stack_block *b)
+void czl_set_break_jump(czl_gp *gp, czl_block_jump *head, czl_stack_block *b)
 {
-    czl_loop_jump *p;
+    czl_block_jump *p;
+
+    for (;;)
+    {
+        if (CZL_LOOP_BLOCK == b->flag ||
+            (CZL_BRANCH_BLOCK == b->flag && CZL_SWITCH_BRANCH == b->type))
+            break;
+        --b;
+    }
+
+    for (p = head; p; p = p->next)
+    {
+        czl_exp_ele *pc = b->next;
+        if (p->last)
+        {
+            if (0XFF == p->last->flag) p->last->pl.pc = pc;
+            else p->last->next = p->buf;
+        }
+        p->buf->pl.pc = pc;
+    }
+
+    czl_block_jump_delete(gp, head);
+}
+
+void czl_set_continue_jump(czl_gp *gp, czl_block_jump *head, czl_stack_block *b)
+{
+    czl_block_jump *p;
 
     for (;;)
     {
@@ -9427,7 +9453,7 @@ void czl_set_loop_jump(czl_gp *gp, czl_loop_jump *head, czl_stack_block *b)
 
     for (p = head; p; p = p->next)
     {
-        czl_exp_ele *pc = (CZL_BREAK_SENTENCE == p->buf->kind ? b->next : b->condition);
+        czl_exp_ele *pc = b->condition;
         if (p->last)
         {
             if (0XFF == p->last->flag) p->last->pl.pc = pc;
@@ -9436,7 +9462,7 @@ void czl_set_loop_jump(czl_gp *gp, czl_loop_jump *head, czl_stack_block *b)
         p->buf->pl.pc = pc;
     }
 
-    czl_loop_jump_delete(gp, head);
+    czl_block_jump_delete(gp, head);
 }
 
 czl_exp_ele* czl_compile_block
@@ -9450,9 +9476,9 @@ czl_exp_ele* czl_compile_block
     czl_exp_ele *buf = b->buf;
     czl_stack_block *cur = b->block+b->i;
     czl_exp_ele *save = NULL;
-    czl_loop_jump *head = NULL, *node;
     czl_para *i;
     czl_branch_child *c;
+    czl_block_jump *breakHead = NULL, *continueHead = NULL, *node;
 
     if (!p && cur->goto_flag)
         czl_goto_flag_check(gp->cur_fun->goto_flags, cur->block, p, first, buf);
@@ -9514,7 +9540,8 @@ czl_exp_ele* czl_compile_block
                 b->buf = buf;
                 if (!(buf=czl_compile_block(gp, p->sentence.loop->sentences_head, b)))
                 {
-                    czl_loop_jump_delete(gp, head);
+                    czl_block_jump_delete(gp, breakHead);
+                    czl_block_jump_delete(gp, continueHead);
                     return NULL;
                 }
                 --b->i;
@@ -9568,7 +9595,8 @@ czl_exp_ele* czl_compile_block
             b->buf = buf;
             if (!(buf=czl_compile_block(gp, p->sentence.Try->sentences_head, b)))
             {
-                czl_loop_jump_delete(gp, head);
+                czl_block_jump_delete(gp, breakHead);
+                czl_block_jump_delete(gp, continueHead);
                 return NULL;
             }
             --b->i;
@@ -9591,18 +9619,26 @@ czl_exp_ele* czl_compile_block
             ++buf; //CZL_RETURN_SENTENCE/CZL_YEILD_SENTENCE
             break;
         case CZL_BREAK_SENTENCE: case CZL_CONTINUE_SENTENCE:
-            if (!(node=CZL_TMP_MALLOC(gp, sizeof(czl_loop_jump))))
+            if (!(node=CZL_TMP_MALLOC(gp, sizeof(czl_block_jump))))
             {
-                czl_loop_jump_delete(gp, head);
+                czl_block_jump_delete(gp, breakHead);
+                czl_block_jump_delete(gp, continueHead);
                 return NULL;
             }
-            node->next = head;
-            head = node;
+            if (CZL_BREAK_SENTENCE == p->type)
+            {
+                node->next = breakHead;
+                breakHead = node;
+            }
+            else
+            {
+                node->next = continueHead;
+                continueHead = node;
+            }
             node->last = b->last;
             node->buf = buf;
             buf->flag = CZL_LOGIC_JUMP;
-            buf->kind = p->type;
-            buf->rt = 1; //标记为不可优化的跳转指令
+            buf->rt = 1; //标记为不可被结构语句next指针优化的跳转指令
             b->last = buf;
             ++buf; //CZL_LOGIC_JUMP
             break;
@@ -9663,8 +9699,10 @@ czl_exp_ele* czl_compile_block
             save = cur->condition;
     }
 
-    if (head)
-        czl_set_loop_jump(gp, head, cur);
+    if (breakHead)
+        czl_set_break_jump(gp, breakHead, cur);
+    if (continueHead)
+        czl_set_continue_jump(gp, continueHead, cur);
 
     switch (cur->flag)
     {
@@ -9683,6 +9721,7 @@ czl_exp_ele* czl_compile_block
         buf->flag = CZL_LOGIC_JUMP;
         buf->kind = cur->type;
         buf->lt = 1; //用于异常查找识别
+        buf->rt = 1; //标记为不可被结构语句next指针优化的跳转指令
         CZL_SOCN(b->last, buf);
         if (CZL_TRY_CONTINUE == cur->type && !((czl_try*)cur->block)->paras)
             buf->next = NULL;
@@ -9748,7 +9787,7 @@ czl_exp_ele* czl_compile_block
         else
         {
             CZL_SOCN(b->last, buf);
-            buf->rt = 1; //标记case结尾是不可优化的跳转指令
+            buf->rt = 1; //标记为不可被结构语句next指针优化的跳转指令
         }
         buf->flag = CZL_LOGIC_JUMP;
         buf->pl.pc = cur->next;
@@ -9875,7 +9914,7 @@ czl_exp_ele* czl_opcode_create
                             {
                                 if (end)
                                 {
-                                    if (CZL_IS_OJ(end+1))
+                                    if (CZL_LOGIC_JUMP == (end+1)->flag && (end+1)->rt)
                                         end->pl.pc = (end+1)->pl.pc;
                                     else
                                         end->pl.pc = (end+1);

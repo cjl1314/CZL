@@ -2,6 +2,8 @@
 #include "czl_opt.h"
 #include "czl_paser.h"
 ///////////////////////////////////////////////////////////////
+//系统函数命名规则: 统一驼峰命名方式
+///////////////////////////////////////////////////////////////
 char czl_sys_echo(czl_gp*, czl_fun*);
 char czl_sys_print(czl_gp*, czl_fun*);
 #ifdef CZL_CONSOLE
@@ -12,6 +14,8 @@ char czl_sys_open(czl_gp*, czl_fun*);
 char czl_sys_close(czl_gp*, czl_fun*);
 char czl_sys_write(czl_gp*, czl_fun*);
 char czl_sys_read(czl_gp*, czl_fun*);
+char czl_sys_printf(czl_gp*, czl_fun*);
+char czl_sys_cleanFile(czl_gp*, czl_fun*);
 //
 char czl_sys_srand(czl_gp*, czl_fun*);
 char czl_sys_rand(czl_gp*, czl_fun*);
@@ -41,36 +45,41 @@ char czl_sys_str(czl_gp*, czl_fun*);
 char czl_sys_split(czl_gp*, czl_fun*);
 char czl_sys_upper(czl_gp*, czl_fun*);
 char czl_sys_lower(czl_gp*, czl_fun*);
+char czl_sys_memset(czl_gp*, czl_fun*);
+char czl_sys_memget(czl_gp*, czl_fun*);
+char czl_sys_memcmp(czl_gp*, czl_fun*);
+char czl_sys_memspn(czl_gp*, czl_fun*);
+char czl_sys_memrep(czl_gp*, czl_fun*);
 //
 char czl_sys_abort(czl_gp*, czl_fun*);
 char czl_sys_assert(czl_gp*, czl_fun*);
-char czl_sys_errline(czl_gp*, czl_fun*);
-char czl_sys_errfile(czl_gp*, czl_fun*);
-char czl_sys_errcode(czl_gp*, czl_fun*);
-char czl_sys_setfun(czl_gp*, czl_fun*);
+char czl_sys_errLine(czl_gp*, czl_fun*);
+char czl_sys_errFile(czl_gp*, czl_fun*);
+char czl_sys_errCode(czl_gp*, czl_fun*);
+char czl_sys_setFun(czl_gp*, czl_fun*);
 #if (defined CZL_SYSTEM_LINUX || defined CZL_SYSTEM_WINDOWS)
 char czl_sys_sleep(czl_gp*, czl_fun*);
 char czl_sys_clock(czl_gp*, czl_fun*);
 #endif //#if (defined CZL_SYSTEM_LINUX || defined CZL_SYSTEM_WINDOWS)
-char czl_sys_ltime(czl_gp*, czl_fun*);
-char czl_sys_usemem(czl_gp*, czl_fun*);
-char czl_sys_maxmem(czl_gp*, czl_fun*);
-char czl_sys_setmem(czl_gp*, czl_fun*);
+char czl_sys_time(czl_gp*, czl_fun*);
+char czl_sys_useMem(czl_gp*, czl_fun*);
+char czl_sys_maxMem(czl_gp*, czl_fun*);
+char czl_sys_setMem(czl_gp*, czl_fun*);
 #ifdef CZL_MM_MODULE
 #ifdef CZL_MM_CACHE
-char czl_sys_setcache(czl_gp*, czl_fun*);
+char czl_sys_setCache(czl_gp*, czl_fun*);
 #endif //#ifdef CZL_MM_CACHE
-char czl_sys_setrank(czl_gp*, czl_fun*);
-char czl_sys_setsa(czl_gp*, czl_fun*);
-char czl_sys_setgc(czl_gp*, czl_fun*);
+char czl_sys_setRank(czl_gp*, czl_fun*);
+char czl_sys_setSa(czl_gp*, czl_fun*);
+char czl_sys_setGc(czl_gp*, czl_fun*);
 char czl_sys_gc(czl_gp*, czl_fun*);
 #endif //#ifdef CZL_MM_MODULE
-char czl_sys_runshl(czl_gp*, czl_fun*);
+char czl_sys_runShell(czl_gp*, czl_fun*);
 //
 char czl_sys_sort(czl_gp*, czl_fun*);
 //
-char czl_sys_tobin(czl_gp*, czl_fun*);
-char czl_sys_toobj(czl_gp*, czl_fun*);
+char czl_sys_toBin(czl_gp*, czl_fun*);
+char czl_sys_toObj(czl_gp*, czl_fun*);
 //
 char czl_sys_hcac(czl_gp*, czl_fun*);
 char czl_sys_hdod(czl_gp*, czl_fun*);
@@ -99,14 +108,14 @@ char czl_sys_listen(czl_gp*, czl_fun*);
 char czl_sys_waitfor(czl_gp*, czl_fun*);
 char czl_sys_report(czl_gp*, czl_fun*);
 char czl_sys_notify(czl_gp*, czl_fun*);
-char czl_sys_notifyall(czl_gp*, czl_fun*);
+char czl_sys_notifyAll(czl_gp*, czl_fun*);
 char czl_sys_thrsta(czl_gp*, czl_fun*);
 #endif //#ifdef CZL_MULT_THREAD
 //
 #ifndef CZL_CONSOLE
-char czl_sys_cleanlog(czl_gp*, czl_fun*);
-char czl_sys_openlog(czl_gp*, czl_fun*);
-char czl_sys_closelog(czl_gp*, czl_fun*);
+char czl_sys_cleanLog(czl_gp*, czl_fun*);
+char czl_sys_openLog(czl_gp*, czl_fun*);
+char czl_sys_closeLog(czl_gp*, czl_fun*);
 char czl_sys_insert(czl_gp*, czl_fun*);
 char czl_sys_get(czl_gp*, czl_fun*);
 char czl_sys_delete(czl_gp*, czl_fun*);
@@ -127,6 +136,8 @@ const czl_sys_fun czl_lib_os[] =
     {"close",     czl_sys_close,      1,  "&v1"},
     {"write",     czl_sys_write,      -2, NULL},
     {"read",      czl_sys_read,       2,  "&v2"},
+    {"printf",    czl_sys_printf,     -2, NULL},
+    {"cleanFile", czl_sys_cleanFile,  1, "str_v1"},
     //随机数函数
     {"srand",     czl_sys_srand,      1,  "int_v1"},
     {"rand",      czl_sys_rand,       0,  NULL},
@@ -156,41 +167,41 @@ const czl_sys_fun czl_lib_os[] =
     {"split",     czl_sys_split,      2,  "str_v1,str_v2=\" \""},
     {"upper",     czl_sys_upper,      3,  "&str_v1,int_v2=0,int_v3=-1"},
     {"lower",     czl_sys_lower,      3,  "&str_v1,int_v2=0,int_v3=-1"},
-//    {"memset",    czl_sys_memset,     3,  "&str_v1,int_v2,int_v3"},
-//    {"memget",    czl_sys_memget,     3,  "str_v1,int_v2,int_v3"},
-//    {"memspn",    czl_sys_memspn,     3,  "str_v1,str_v2,int_v3=0"},
-//    {"memrep",    czl_sys_memrep,     3,  "&str_v1,str_v2,str_v3"},
-//    {"memcmp",    czl_sys_memcmp,     2,  "str_v1,str_v2"},
+    {"memset",    czl_sys_memset,     4,  "&str_v1,int_v2,int_v3=0,int_v4=-1"},
+    {"memget",    czl_sys_memget,     3,  "str_v1,int_v2=0,int_v3=-1"},
+    {"memcmp",    czl_sys_memcmp,     4,  "str_v1,str_v2,int_v3=-1,int_v4=-1"},
+    {"memspn",    czl_sys_memspn,     4,  "str_v1,str_v2,int_v3=0,int_v4=-1"},
+    {"memrep",    czl_sys_memrep,     5,  "&str_v1,str_v2,str_v3,int_v4=0,int_v5=-1"},
     //系统函数
     {"abort",     czl_sys_abort,      0,  NULL},
     {"assert",    czl_sys_assert,     1,  NULL},
-    {"errline",   czl_sys_errline,    0,  NULL},
-    {"errfile",   czl_sys_errfile,    0,  NULL},
-    {"errcode",   czl_sys_errcode,    0,  NULL},
-    {"setfun",    czl_sys_setfun,     2,  "fun_v1,int_v2=0"},
+    {"errLine",   czl_sys_errLine,    0,  NULL},
+    {"errFile",   czl_sys_errFile,    0,  NULL},
+    {"errCode",   czl_sys_errCode,    0,  NULL},
+    {"setFun",    czl_sys_setFun,     2,  "fun_v1,int_v2=0"},
 #if (defined CZL_SYSTEM_LINUX || defined CZL_SYSTEM_WINDOWS)
     {"sleep",     czl_sys_sleep,      1,  "int_v1"},
     {"clock",     czl_sys_clock,      1,  "int_v1=0"},
 #endif //#if (defined CZL_SYSTEM_LINUX || defined CZL_SYSTEM_WINDOWS)
-    {"ltime",     czl_sys_ltime,      1,  "str_v1=\"Y-M-D h:m:s\""},
-    {"usemem",    czl_sys_usemem,     0,  NULL},
-    {"maxmem",    czl_sys_maxmem,     0,  NULL},
-    {"setmem",    czl_sys_setmem,     1,  "int_v1"},
+    {"time",      czl_sys_time,       1,  "str_v1=\"Y-M-D h:m:s\""},
+    {"useMem",    czl_sys_useMem,     0,  NULL},
+    {"maxMem",    czl_sys_maxMem,     0,  NULL},
+    {"setMem",    czl_sys_setMem,     1,  "int_v1"},
 #ifdef CZL_MM_MODULE
     #ifdef CZL_MM_CACHE
-    {"setcache",  czl_sys_setcache,   1,  "int_v1"},
+    {"setCache",  czl_sys_setCache,   1,  "int_v1"},
     #endif //#ifdef CZL_MM_CACHE
-    {"setrank",   czl_sys_setrank,    1,  "int_v1"},
-    {"setsa",     czl_sys_setsa,      1,  "int_v1"},
-    {"setgc",     czl_sys_setgc,      1,  "int_v1"},
+    {"setRank",   czl_sys_setRank,    1,  "int_v1"},
+    {"setSa",     czl_sys_setSa,      1,  "int_v1"},
+    {"setGc",     czl_sys_setGc,      1,  "int_v1"},
     {"gc",        czl_sys_gc,         0,  NULL},
 #endif //#ifdef CZL_MM_MODULE
-    {"runshl",    czl_sys_runshl,     3,  "str_v1,&v2,v3=0"},
+    {"runShell",  czl_sys_runShell,   3,  "str_v1,&v2,v3=0"},
     //排序函数
     {"sort",      czl_sys_sort,       2,  "&v1,int_v2=0"},
     //序列化、反序列化函数
-    {"tobin",     czl_sys_tobin,      1,  NULL},
-    {"toobj",     czl_sys_toobj,      1,  "str_v1"},
+    {"toBin",     czl_sys_toBin,      1,  NULL},
+    {"toObj",     czl_sys_toObj,      1,  "str_v1"},
     //哈希表内建函数
     {"hcac",      czl_sys_hcac,       1,  "table_v1"},
     {"hdod",      czl_sys_hdod,       3,  "table_v1,int_v2,int_v3"},
@@ -224,14 +235,14 @@ const czl_sys_fun czl_lib_os[] =
     {"waitfor",   czl_sys_waitfor,    1,  "int_v1"},
     {"report",    czl_sys_report,     1,  NULL},
     {"notify",    czl_sys_notify,     2,  "int_v1,v2=0"},
-    {"notifyall", czl_sys_notifyall,  1,  "v1=0"},
+    {"notifyAll", czl_sys_notifyAll,  1,  "v1=0"},
     {"thrsta",    czl_sys_thrsta,     1,  "int_v1=0"},
 #endif //#ifdef CZL_MULT_THREAD
 #ifndef CZL_CONSOLE
     //与C/C++栈交互接口函数
-    {"cleanlog",  czl_sys_cleanlog,   0,  NULL},
-    {"openlog",   czl_sys_openlog,    1,  "str_v1"},
-    {"closelog",  czl_sys_closelog,   0,  NULL},
+    {"cleanLog",  czl_sys_cleanLog,   0,  NULL},
+    {"openLog",   czl_sys_openLog,    1,  "str_v1"},
+    {"closeLog",  czl_sys_closeLog,   0,  NULL},
     {"insert",    czl_sys_insert,     2,  "int_v1"},
     {"get",       czl_sys_get,        1,  "int_v1"},
     {"delete",    czl_sys_delete,     1,  "int_v1"},
@@ -622,7 +633,7 @@ void czl_print_str_bin(czl_string *str, char modify_type, FILE *fout)
     }
 }
 
-char czl_modify_print
+char czl_modify_print_obj
 (
     czl_gp *gp,
     char *modify,
@@ -640,22 +651,23 @@ char czl_modify_print
             fprintf(fout, modify, res->val.inum);
         else
             fprintf(fout, modify, res->val.fnum);
-        return 1;
+        break;
     case CZL_FLOAT:
         if (CZL_INT == res->type)
             fprintf(fout, modify, (double)res->val.inum);
         else
             fprintf(fout, modify, res->val.fnum);
-        return 1;
+        break;
     case 'x': case 'X':
         czl_print_str_hex(CZL_STR(res->val.str.Obj), modify_type, fout);
-        return 1;
+        break;
     case 'b': case 'B':
         czl_print_str_bin(CZL_STR(res->val.str.Obj), modify_type, fout);
-        return 1;
+        break;
     default: //CZL_OBJ_REF
         return czl_print_obj(gp, res, fout);
     }
+    return 1;
 }
 
 char czl_sys_echo(czl_gp *gp, czl_fun *fun)
@@ -704,16 +716,64 @@ char czl_sys_echo(czl_gp *gp, czl_fun *fun)
     return ret;
 }
 
-char czl_sys_print(czl_gp *gp, czl_fun *fun)
+char czl_modify_print(czl_gp *gp, czl_para *p, FILE *fout)
 {
-	FILE *fout;
-	char *s;
+    char *s;
     char modify_type;
     char modify[16] = "%";
     czl_var *res;
     czl_str str;
-    czl_para *p;
-    char ret = 1;
+
+    while (p)
+    {
+        if (!(res=czl_exp_cac(gp, p->para)))
+            return 0;
+
+        if (CZL_STRING == res->type)
+        {
+            str = res->val.str;
+            CZL_SRCA1(str); //引用计数加一保证不被释放
+            for (s = CZL_STR(str.Obj)->str; *s; s++)
+            {
+                if ('%' == *s)
+                {
+                    if ('%' == *(s+1))
+                        fputc(*(s++), fout);
+                    else
+                    {
+                        if (!(p=p->next) ||
+                            !(res=czl_exp_cac(gp, p->para)) ||
+                            !(s=czl_print_modify_check(s+1, modify+1,
+                                                       &modify_type, res->type)))
+                        {
+                            CZL_SRCD1(gp, str);
+                            return 0;
+                        }
+                        if (!czl_modify_print_obj(gp, modify, modify_type, res, fout))
+                        {
+                            CZL_SRCD1(gp, str);
+                            return 0;
+                        }
+                    }
+                }
+                else
+                    fputc(*s, fout);
+            }
+            CZL_SRCD1(gp, str);
+        }
+        else if (!czl_print_obj(gp, res, fout))
+            return 0;
+
+        p = p->next;
+    }
+
+    return 1;
+}
+
+char czl_sys_print(czl_gp *gp, czl_fun *fun)
+{
+    char ret;
+	FILE *fout;
 
 #ifdef CZL_CONSOLE
     #ifdef CZL_MULT_THREAD
@@ -733,56 +793,8 @@ char czl_sys_print(czl_gp *gp, czl_fun *fun)
     fun->ret.val.inum = 1;
 #endif
 
-    for (p = (czl_para*)fun->vars; p; p = p->next)
-    {
-        if (!(res=czl_exp_cac(gp, p->para)))
-        {
-            ret = 0;
-            goto CZL_END;
-        }
-        if (CZL_STRING == res->type)
-        {
-            str = res->val.str;
-            CZL_SRCA1(str); //引用计数加一保证不被释放
-            for (s = CZL_STR(str.Obj)->str; *s; s++)
-            {
-                if ('%' == *s)
-                {
-                    if ('%' == *(s+1))
-                        fputc(*(s++), fout);
-                    else
-                    {
-                        if (!(p=p->next) ||
-                            !(res=czl_exp_cac(gp, p->para)) ||
-                            !(s=czl_print_modify_check(s+1, modify+1,
-                                                       &modify_type,
-                                                       res->type)))
-                        {
-                            ret = 0;
-                            CZL_SRCD1(gp, str);
-                            goto CZL_END;
-                        }
-                        if (!czl_modify_print(gp, modify, modify_type, res, fout))
-                        {
-                            ret = 0;
-                            CZL_SRCD1(gp, str);
-                            goto CZL_END;
-                        }
-                    }
-                }
-                else
-                    fputc(*s, fout);
-            }
-            CZL_SRCD1(gp, str);
-        }
-        else if (!czl_print_obj(gp, res, fout))
-        {
-            ret = 0;
-            goto CZL_END;
-        }
-    }
+    ret = czl_modify_print(gp, (czl_para*)fun->vars, fout);
 
-CZL_END:
 #ifdef CZL_CONSOLE
     #ifdef CZL_MULT_THREAD
         czl_print_unlock();
@@ -1385,7 +1397,7 @@ CZL_END:
 char czl_line_write(czl_gp *gp, FILE *fp, char sign, czl_para *p)
 {
     char flag[2];
-    char tmp[128];
+    char tmp[32];
     char *item;
     czl_var *ret;
 
@@ -1800,6 +1812,36 @@ char czl_sys_read(czl_gp *gp, czl_fun *fun)
 
     return 1;
 }
+
+char czl_sys_printf(czl_gp *gp, czl_fun *fun)
+{
+    char ret;
+    FILE *fout;
+    czl_var *res;
+    czl_para *p = (czl_para*)fun->vars;
+
+    if (!(res=czl_exp_cac(gp, p->para)) || res->type != CZL_STRING)
+        return 0;
+
+    if (!(fout=fopen(CZL_STR(res->val.str.Obj)->str, "a")))
+    {
+        fun->ret.val.inum = 0;
+        return 1;
+    }
+    fun->ret.val.inum = 1;
+
+    ret = czl_modify_print(gp, p->next, fout);
+
+    fclose(fout);
+
+    return ret;
+}
+
+char czl_sys_cleanFile(czl_gp *gp, czl_fun *fun)
+{
+    fclose(fopen(CZL_STR(fun->vars->val.str.Obj)->str, "w"));
+    return 1;
+}
 ///////////////////////////////////////////////////////////////
 char czl_sys_srand(czl_gp *gp, czl_fun *fun)
 {
@@ -2052,18 +2094,59 @@ unsigned long czl_itoa(czl_long num, char *dst)
     return l;
 }
 
+int czl_0f_cnt(double num)
+{
+    if (num >= 0.1) return 1;
+    else if (num >= 0.01) return 2;
+    else if (num >= 0.001) return 3;
+    else if (num >= 0.0001) return 4;
+    else if (num >= 0.00001) return 5;
+    else if (num >= 0.000001) return 6;
+    else if (num >= 0.0000001) return 7;
+    else if (num >= 0.00000001) return 8;
+    else if (num >= 0.000000001) return 9;
+    else if (num >= 0.0000000001) return 10;
+    else if (num >= 0.00000000001) return 11;
+    else if (num >= 0.000000000001) return 12;
+    else if (num >= 0.0000000000001) return 13;
+    else if (num >= 0.00000000000001) return 14;
+    else if (num >= 0.000000000000001) return 15;
+    else if (num >= 0.0000000000000001) return 16;
+    else if (num >= 0.00000000000000001) return 17;
+    else return 18;
+}
+
 unsigned long czl_ftoa(double num, char *dst, int _NumOfDec)
 {
     unsigned long i = 0;
     int j, dec, sig;
-    char *s = fcvt(num, _NumOfDec, &dec, &sig);
+    char *s;
+
+    if (_NumOfDec > 20)
+        _NumOfDec = 20;
+
+    s = fcvt(num, _NumOfDec, &dec, &sig);
 
     if (sig)
         dst[i++] = '-';
 
-    for (j = 0; j < dec; j++)
-        dst[i++] = s[j];
-    dst[i++] = '.';
+    if (num < 0)
+        num = -num;
+    if (num >= 1)
+    {
+        for (j = 0; j < dec; ++j)
+            dst[i++] = s[j];
+        dst[i++] = '.';
+    }
+    else
+    {
+        int k = czl_0f_cnt(num);
+        dst[i++] = '0';
+        dst[i++] = '.';
+        for (j = 1; j < k; ++j)
+            dst[i++] = '0';
+        j = 0;
+    }
 
     while (s[j] != '\0')
         dst[i++] = s[j++];
@@ -2135,7 +2218,7 @@ char* czl_get_dec_number_from_str
     char flag_point = 0;
     char flag_e = 0;
     char flag_f = 0;
-    char value[128];
+    char value[32];
     char *tmp = value;
 
     for (;;)
@@ -2193,7 +2276,7 @@ char* czl_get_hex_number_from_str
     char mark
 )
 {
-    char value[128];
+    char value[32];
     char *tmp = value;
 
     for (;;)
@@ -2226,7 +2309,7 @@ char* czl_get_bin_number_from_str
     char mark
 )
 {
-    char value[128];
+    char value[160];
     char *tmp = value;
 
     for (;;)
@@ -2235,7 +2318,7 @@ char* czl_get_bin_number_from_str
             *(tmp++) = *(s++);
         else
             break;
-        if (tmp - value == 127)
+        if (tmp - value == 159)
             break;
     }
 
@@ -2321,7 +2404,7 @@ char* czl_get_number_from_str(char *s, czl_var *res)
 
 char czl_sys_str(czl_gp *gp, czl_fun *fun)
 {
-    char tmp[128];
+    char tmp[64];
     unsigned long len;
 
     switch (fun->vars->type)
@@ -2348,12 +2431,9 @@ char czl_sys_split(czl_gp *gp, czl_fun *fun)
     czl_var *str = fun->vars;
 	czl_var *sign = fun->vars + 1;
 
-    if (!str)
-        return 0;
-    
     s = CZL_STR(str->val.str.Obj)->str;
-    f = CZL_STR(sign->val.str.Obj)->str;
     sl = CZL_STR(str->val.str.Obj)->len;
+    f = CZL_STR(sign->val.str.Obj)->str;
     fl = CZL_STR(sign->val.str.Obj)->len;
 
     while (i < sl)
@@ -2429,16 +2509,18 @@ char czl_str_toul(czl_gp *gp, czl_fun *fun, char flag)
 {
 	char d;
     char *ps;
-	unsigned long i, j;
     czl_var *str = CZL_GCRV(fun->vars);
-	czl_var *begin = fun->vars + 1;
-    czl_var *end = fun->vars + 2;
+    long i = fun->vars[1].val.inum;
+    long j = fun->vars[2].val.inum;
     czl_string *s;
 
     if (!str)
         return 0;
 
     s = CZL_STR(str->val.str.Obj);
+
+    if (i < 0 || (unsigned long)i >= s->len || i > (j = (j >= 0 ? j : (long)s->len-1)))
+        return 1;
 
     if (s->rc > 1)
     {
@@ -2449,14 +2531,9 @@ char czl_str_toul(czl_gp *gp, czl_fun *fun, char flag)
         s = CZL_STR(tmp.Obj);
     }
 
-    if (begin->val.inum < 0 || (unsigned long)begin->val.inum >= s->len)
-        return 1;
-
-    i = (unsigned long)begin->val.inum;
-    j = end->val.inum < 0 ? s->len-1 : (unsigned long)end->val.inum;
-    if (i > j) CZL_INT_SWAP(i, j);
     d = 'a' - 'A';
     ps = s->str + i;
+
     while (i++ <= j)
     {
         if (flag)
@@ -2483,6 +2560,183 @@ char czl_sys_lower(czl_gp *gp, czl_fun *fun)
 {
     return czl_str_toul(gp, fun, 0);
 }
+
+char czl_sys_memset(czl_gp *gp, czl_fun *fun)
+{
+    czl_var *str = CZL_GCRV(fun->vars);
+    long sign = fun->vars[1].val.inum;
+    long i = fun->vars[2].val.inum;
+    long j = fun->vars[3].val.inum;
+    czl_string *s;
+
+    if (!str)
+        return 0;
+
+    s = CZL_STR(str->val.str.Obj);
+
+    if (i < 0 || (unsigned long)i >= s->len || i > (j = (j >= 0 ? j : (long)s->len-1)))
+        return 1;
+
+    if (s->rc > 1)
+    {
+        czl_str tmp;
+        if (!czl_str_create(gp, &tmp, s->len+1, s->len, s->str))
+            return 0;
+        str->val.str = tmp;
+        s = CZL_STR(tmp.Obj);
+    }
+
+    memset(s->str+i, sign, j-i+1);
+
+    return 1;
+}
+
+char czl_sys_memget(czl_gp *gp, czl_fun *fun)
+{
+    czl_var *str = fun->vars;
+    long i = fun->vars[1].val.inum;
+    long j = fun->vars[2].val.inum;
+    czl_string *s = CZL_STR(str->val.str.Obj);
+
+    if (i < 0 || (unsigned long)i >= s->len || i > (j = (j >= 0 ? j : (long)s->len-1)))
+    {
+        fun->ret.val.inum = 0;
+        return 1;
+    }
+
+    return czl_set_ret_str(gp, &fun->ret, s->str+i, j-i+1);
+}
+
+char czl_sys_memcmp(czl_gp *gp, czl_fun *fun)
+{
+    czl_string *a = CZL_STR(fun->vars[0].val.str.Obj);
+    czl_string *b = CZL_STR(fun->vars[1].val.str.Obj);
+    long i = fun->vars[2].val.inum;
+    long size = fun->vars[3].val.inum;
+
+    if (i < 0)
+    {
+        fun->ret.val.inum = memcmp(a->str, b->str, (a->len < b->len ? a->len : b->len));
+        if (!fun->ret.val.inum && a->len != b->len)
+            fun->ret.val.inum = (a->len < b->len ? -1 : 1);
+    }
+    else if (size <= 0)
+    {
+        fun->ret.val.inum = memcmp(a->str+i, b->str+i,
+                                   (a->len < b->len ? a->len : b->len));
+        if (!fun->ret.val.inum && a->len != b->len)
+            fun->ret.val.inum = (a->len < b->len ? -1 : 1);
+    }
+    else
+    {
+        fun->ret.val.inum = memcmp(a->str+i, b->str+i, size);
+    }
+
+    return 1;
+}
+
+long czl_memspn
+(
+    const char *a,
+    const char *b,
+    const unsigned long al,
+    const unsigned long bl
+)
+{
+    unsigned long i = 0, j, k;
+
+    while (i < al)
+    {
+        k = i;
+        for (j = 0; j < bl && i < al && a[i] == b[j]; ++j)
+            ++i;
+        if (j == bl)
+            return k;
+        i = k+1;
+    }
+
+    return -1;
+}
+
+char czl_sys_memspn(czl_gp *gp, czl_fun *fun)
+{
+    czl_string *a = CZL_STR(fun->vars[0].val.str.Obj);
+    czl_string *b = CZL_STR(fun->vars[1].val.str.Obj);
+    long i = fun->vars[2].val.inum;
+    long j = fun->vars[3].val.inum;
+
+    if (i < 0 || (unsigned long)i >= a->len || i > (j = (j >= 0 ? j : (long)a->len-1)) ||
+        0 == b->len)
+    {
+        fun->ret.val.inum = -1;
+        return 1;
+    }
+
+    j = czl_memspn(a->str+i, b->str, j-i+1, b->len);
+    fun->ret.val.inum = (j >= 0 ? i+j : -1);
+    return 1;
+}
+
+char czl_sys_memrep(czl_gp *gp, czl_fun *fun)
+{
+    czl_var *str = CZL_GCRV(fun->vars);
+    czl_string *a = CZL_STR(fun->vars[1].val.str.Obj);
+    czl_string *b = CZL_STR(fun->vars[2].val.str.Obj);
+    long i = fun->vars[3].val.inum;
+    long j = fun->vars[4].val.inum;
+    long k, end;
+    unsigned long len;
+    czl_string *s, *res;
+    czl_str tmp;
+
+    if (!str)
+        return 0;
+
+    s = CZL_STR(str->val.str.Obj);
+    if (i < 0 || (unsigned long)i >= s->len || i > (j = (j >= 0 ? j : (long)s->len-1)) ||
+        0 == a->len)
+    {
+        fun->ret.val.inum = -1;
+        return 1;
+    }
+
+    end = j-i+1;
+    k = czl_memspn(s->str+i, a->str, end, a->len);
+    if (k < 0)
+    {
+        fun->ret.val.inum = -1;
+        return 1;
+    }
+
+    k += i;
+    fun->ret.val.inum = k;
+
+    if (a->len >= b->len)
+        len = s->len - a->len + b->len;
+    else
+        len = (b->len/a->len + (b->len%a->len ? 1:0)) * s->len;
+
+    if (!czl_str_create(gp, &tmp, len+1, 0, NULL))
+        return 0;
+    res = CZL_STR(tmp.Obj);
+
+    for (i = j = 0; k >= 0 && end > i; k = czl_memspn(s->str+i, a->str, end-i, a->len))
+    {
+        memcpy(res->str+j, s->str+i, k);
+        memcpy(res->str+j+k, b->str, b->len);
+        i += k+a->len;
+        j += k+b->len;
+    }
+    memcpy(res->str+j, s->str+i, s->len-i);
+    res->len = j + s->len - i;
+    res->str[res->len] = '\0';
+
+    czl_str_resize(gp, &tmp);
+    CZL_SRCD1(gp, str->val.str);
+    str->val.str = tmp;
+
+    return 1;
+}
 ///////////////////////////////////////////////////////////////
 char czl_sys_abort(czl_gp *gp, czl_fun *fun)
 {
@@ -2499,25 +2753,25 @@ char czl_sys_assert(czl_gp *gp, czl_fun *fun)
     return 0;
 }
 
-char czl_sys_errline(czl_gp *gp, czl_fun *fun)
+char czl_sys_errLine(czl_gp *gp, czl_fun *fun)
 {
     fun->ret.val.inum = gp->error_line;
     return 1;
 }
 
-char czl_sys_errfile(czl_gp *gp, czl_fun *fun)
+char czl_sys_errFile(czl_gp *gp, czl_fun *fun)
 {
     return (gp->error_file ?
             czl_set_ret_str(gp, &fun->ret, gp->error_file, strlen(gp->error_file)) : 1);
 }
 
-char czl_sys_errcode(czl_gp *gp, czl_fun *fun)
+char czl_sys_errCode(czl_gp *gp, czl_fun *fun)
 {
     fun->ret.val.inum = gp->exceptionCode;
     return 1;
 }
 
-char czl_sys_setfun(czl_gp *gp, czl_fun *fun)
+char czl_sys_setFun(czl_gp *gp, czl_fun *fun)
 {
     if (fun->vars->val.fun->enter_vars_count)
         return 1;
@@ -2556,7 +2810,7 @@ char czl_sys_clock(czl_gp *gp, czl_fun *fun)
 }
 #endif //#if (defined CZL_SYSTEM_LINUX || defined CZL_SYSTEM_WINDOWS)
 
-char czl_sys_ltime(czl_gp *gp, czl_fun *fun)
+char czl_sys_time(czl_gp *gp, czl_fun *fun)
 {
     char *modify = CZL_STR(fun->vars->val.str.Obj)->str;
     time_t now;
@@ -2606,19 +2860,19 @@ char czl_sys_ltime(czl_gp *gp, czl_fun *fun)
     return czl_set_ret_str(gp, &fun->ret, time_str, len);
 }
 
-char czl_sys_usemem(czl_gp *gp, czl_fun *fun)
+char czl_sys_useMem(czl_gp *gp, czl_fun *fun)
 {
     fun->ret.val.inum = gp->mm_cnt;
     return 1;
 }
 
-char czl_sys_maxmem(czl_gp *gp, czl_fun *fun)
+char czl_sys_maxMem(czl_gp *gp, czl_fun *fun)
 {
     fun->ret.val.inum = gp->mm_max;
     return 1;
 }
 
-char czl_sys_setmem(czl_gp *gp, czl_fun *fun)
+char czl_sys_setMem(czl_gp *gp, czl_fun *fun)
 {
     czl_ulong limit = (fun->vars->val.inum > CZL_MM_3GB ?
                        CZL_MM_3GB : fun->vars->val.inum);
@@ -2634,27 +2888,27 @@ char czl_sys_setmem(czl_gp *gp, czl_fun *fun)
 #ifdef CZL_MM_MODULE
 
 #ifdef CZL_MM_CACHE
-char czl_sys_setcache(czl_gp *gp, czl_fun *fun)
+char czl_sys_setCache(czl_gp *gp, czl_fun *fun)
 {
     gp->mm_cache_size = fun->vars->val.inum;
     return 1;
 }
 #endif //#ifdef CZL_MM_CACHE
 
-char czl_sys_setrank(czl_gp *gp, czl_fun *fun)
+char czl_sys_setRank(czl_gp *gp, czl_fun *fun)
 {
     if (fun->vars->val.inum >= 0 && gp->mmp_rank <= CZL_MM_SP_HEAP_NUM_MAX)
         gp->mmp_rank = fun->vars->val.inum;
     return 1;
 }
 
-char czl_sys_setsa(czl_gp *gp, czl_fun *fun)
+char czl_sys_setSa(czl_gp *gp, czl_fun *fun)
 {
     gp->mmp_selfAdapt = fun->vars->val.inum;
     return 1;
 }
 
-char czl_sys_setgc(czl_gp *gp, czl_fun *fun)
+char czl_sys_setGc(czl_gp *gp, czl_fun *fun)
 {
     gp->mmp_gc_size = fun->vars->val.inum;
     return 1;
@@ -2705,7 +2959,7 @@ void czl_gp_copy(czl_gp *a, czl_gp *b)
     a->fun_deep = b->fun_deep;
 }
 
-char czl_sys_runshl(czl_gp *gp, czl_fun *fun)
+char czl_sys_runShell(czl_gp *gp, czl_fun *fun)
 {
 	czl_gp new_gp;
     czl_var *path = fun->vars;
@@ -3005,7 +3259,7 @@ char czl_sys_sort(czl_gp *gp, czl_fun *fun)
     return 1;
 }
 ///////////////////////////////////////////////////////////////
-char czl_sys_tobin(czl_gp *gp, czl_fun *fun)
+char czl_sys_toBin(czl_gp *gp, czl_fun *fun)
 {
     unsigned long obj_size = 4;
     const char check_sum[4] = {0xF1, 0xE2, 0xC3, 0xB4};
@@ -3020,7 +3274,7 @@ char czl_sys_tobin(czl_gp *gp, czl_fun *fun)
     return 1;
 }
 
-char czl_sys_toobj(czl_gp *gp, czl_fun *fun)
+char czl_sys_toObj(czl_gp *gp, czl_fun *fun)
 {
     czl_string *bin = CZL_STR(fun->vars->val.str.Obj);
     const char check_sum[4] = {0xF1, 0xE2, 0xC3, 0xB4};
@@ -4152,7 +4406,7 @@ char czl_sys_notify(czl_gp *gp, czl_fun *fun)
     return 1;
 }
 
-char czl_sys_notifyall(czl_gp *gp, czl_fun *fun)
+char czl_sys_notifyAll(czl_gp *gp, czl_fun *fun)
 {
 	czl_thread *p = gp->threads_head;
 
@@ -4207,7 +4461,7 @@ char czl_sys_thrsta(czl_gp *gp, czl_fun *fun)
 #endif //#ifdef CZL_MULT_THREAD
 ///////////////////////////////////////////////////////////////
 #ifndef CZL_CONSOLE
-char czl_sys_cleanlog(czl_gp *gp, czl_fun *fun)
+char czl_sys_cleanLog(czl_gp *gp, czl_fun *fun)
 {
 	FILE *fout;
 
@@ -4228,7 +4482,7 @@ char czl_sys_cleanlog(czl_gp *gp, czl_fun *fun)
     return 1;
 }
 
-char czl_sys_openlog(czl_gp *gp, czl_fun *fun)
+char czl_sys_openLog(czl_gp *gp, czl_fun *fun)
 {
     free(gp->log_path);
     if (!(gp->log_path=malloc(CZL_STR(fun->vars->val.str.Obj)->len+1)))
@@ -4237,7 +4491,7 @@ char czl_sys_openlog(czl_gp *gp, czl_fun *fun)
     return 1;
 }
 
-char czl_sys_closelog(czl_gp *gp, czl_fun *fun)
+char czl_sys_closeLog(czl_gp *gp, czl_fun *fun)
 {
     free(gp->log_path);
     gp->log_path = NULL;

@@ -117,8 +117,8 @@ if (exp) { \
     } \
 }
 
-//是否为可优化的跳转指令: is optimizable jmp
-#define CZL_IS_OJ(order) (CZL_LOGIC_JUMP == (order)->flag && !(order)->rt && !(order)->lt)
+//是否为可被结构语句next指针优化的跳转指令: is optimizable jmp
+#define CZL_IS_OJ(order) (CZL_LOGIC_JUMP == (order)->flag && !(order)->rt)
 ///////////////////////////////////////////////////////////////
 //检查释放数组连接缓存、函数返回值: tmp buf check free
 #define CZL_TB_CF(gp, res) \

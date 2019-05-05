@@ -686,12 +686,12 @@ typedef struct czl_glo_sentence
 } czl_glo_sentence, *czl_glo_sentence_list;
 
 //
-typedef struct czl_loop_jump
+typedef struct czl_block_jump
 {
     czl_exp_ele *last;
     czl_exp_ele *buf;
-    struct czl_loop_jump *next;
-} czl_loop_jump;
+    struct czl_block_jump *next;
+} czl_block_jump;
 
 //
 typedef struct czl_stack_block

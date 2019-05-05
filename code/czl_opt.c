@@ -1062,7 +1062,7 @@ char czl_tab_cac(czl_gp *gp, czl_var *left, czl_var *right, unsigned char add)
 
 char czl_str_link(czl_gp *gp, czl_var *left, czl_var *right)
 {
-	char tmp[128];
+    char tmp[32];
 	unsigned long llen;
     czl_string *a, *b = CZL_STR(right->val.Obj);
 
@@ -1090,7 +1090,7 @@ char czl_str_link(czl_gp *gp, czl_var *left, czl_var *right)
 
 char czl_str_add(czl_gp *gp, czl_var *left, czl_var *right)
 {
-    char tmp[128];
+    char tmp[32];
     char *rstr;
     unsigned long rlen;
     czl_string *l = CZL_STR(left->val.Obj);
@@ -1377,7 +1377,7 @@ char czl_r_shift_a_cac(czl_gp *gp, czl_var *left, czl_var *right)
 char czl_str_cmp(czl_gp *gp, czl_var *left, const czl_var *right)
 {
     char ret;
-    char tmp[128];
+    char tmp[32];
 
     switch (left->type)
     {
