@@ -2583,27 +2583,33 @@ static void czl_runtime_error_report(czl_gp *gp, czl_exp_ele *err)
         gp->exit_flag = 1;
         gp->error_file = NULL;
         gp->error_line = err->pl.msg.line;
-        if (CZL_EXIT_ABNORMAL == gp->exit_code &&
-            CZL_EXCEPTION_NO == gp->exceptionCode)
-            gp->exceptionCode = CZL_EXCEPTION_ORDER_TYPE_NOT_MATCH;
-        if (gp->exceptionFuns[gp->exceptionCode-1])
+        if (CZL_EXIT_ABNORMAL == gp->exit_code)
         {
-            unsigned char exceptionCode = gp->exceptionCode;
-            if (CZL_EXCEPTION_OUT_OF_MEMORY == exceptionCode)
+            if (CZL_EXCEPTION_NO == gp->exceptionCode)
+                gp->exceptionCode = CZL_EXCEPTION_ORDER_TYPE_NOT_MATCH;
+            if (gp->exceptionFuns[gp->exceptionCode-1])
             {
-                if (CZL_MM_4GB == gp->mm_limit)
+                unsigned char exceptionCode = gp->exceptionCode;
+                if (CZL_EXCEPTION_OUT_OF_MEMORY == exceptionCode)
                 {
-                    gp->exceptionCode = CZL_EXCEPTION_DEAD;
-                    return;
+                    if (CZL_MM_4GB == gp->mm_limit)
+                    {
+                        gp->exceptionCode = CZL_EXCEPTION_DEAD;
+                        return;
+                    }
+                    gp->mm_limit_backup = gp->mm_limit;
+                    gp->mm_limit = CZL_MM_4GB;
                 }
-                gp->mm_limit_backup = gp->mm_limit;
-                gp->mm_limit = CZL_MM_4GB;
+                czl_callback_fun_run(gp, gp->exceptionFuns[exceptionCode-1]);
+                if (CZL_MM_4GB == gp->mm_limit &&
+                    CZL_EXCEPTION_OUT_OF_MEMORY == exceptionCode)
+                    gp->mm_limit = gp->mm_limit_backup;
             }
-            czl_callback_fun_run(gp, gp->exceptionFuns[exceptionCode-1]);
-            if (CZL_MM_4GB == gp->mm_limit &&
-                CZL_EXCEPTION_OUT_OF_MEMORY == exceptionCode)
-                gp->mm_limit = gp->mm_limit_backup;
         }
+    #ifdef CZL_MULT_THREAD
+        else if (CZL_EXIT_KILL == gp->exit_code)
+            czl_callback_fun_run(gp, gp->killFun);
+    #endif //#ifdef CZL_MULT_THREAD
     }
 }
 

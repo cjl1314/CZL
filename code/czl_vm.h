@@ -1426,6 +1426,7 @@ typedef struct czl_gp
     czl_sys_hash threads_hash;
     czl_thread *threads_head;
     czl_thread_pipe *thread_pipe;
+    czl_fun *killFun; //子线程被kill回调函数
 #endif //#ifdef CZL_MULT_THREAD
     //
     czl_sys_hash class_hash; //格式化文件读操作需要用到，不能在运行前释放内存
@@ -1484,16 +1485,6 @@ typedef struct czl_gp
     //
     czl_sys_hash coroutines_hash;
     void **coroutines_head;
-    //
-#ifdef CZL_TIMER
-    char timer_flag;
-    char timer_mode;
-    long timer_count;
-    long timer_limit;
-    long timeout;
-    long begin_time;
-    czl_fun *cb_fun;
-#endif //defined CZL_TIMER
 } czl_gp;
 ///////////////////////////////////////////////////////////////
 //单目运算符列表

@@ -2821,18 +2821,24 @@ char czl_sys_errCode(czl_gp *gp, czl_fun *fun)
 
 char czl_sys_setFun(czl_gp *gp, czl_fun *fun)
 {
-    if (fun->vars->val.fun->enter_vars_count)
+    czl_fun *callbackFun = fun->vars[0].val.fun;
+    long exceptionCode = fun->vars[1].val.inum;
+
+    if (callbackFun->enter_vars_count)
         return 1;
 
-    if (0 == fun->vars[1].val.inum)
+    if (0 == exceptionCode)
     {
         unsigned long i;
         for (i = 0; i < CZL_EXCEPTION_CODE_NUM; ++i)
-            gp->exceptionFuns[i] = fun->vars->val.fun;
+            gp->exceptionFuns[i] = callbackFun;
     }
-    else if (fun->vars[1].val.inum >= 1 &&
-             fun->vars[1].val.inum <= CZL_EXCEPTION_CODE_NUM)
-        gp->exceptionFuns[fun->vars[1].val.inum-1] = fun->vars->val.fun;
+    else if (exceptionCode >= 1 && exceptionCode <= CZL_EXCEPTION_CODE_NUM)
+        gp->exceptionFuns[exceptionCode-1] = callbackFun;
+#ifdef CZL_MULT_THREAD
+    else if (-1 == exceptionCode)
+        gp->killFun = callbackFun;
+#endif //#ifdef CZL_MULT_THREAD
 
     return 1;
 }
