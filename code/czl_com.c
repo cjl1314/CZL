@@ -30,7 +30,6 @@ char czl_com_list(czl_gp *gp, czl_fun *fun)
     PORT_INFO_2 *pPort;
     czl_array *arr = NULL;
 	void **obj;
-    char ret = 0;
 
     //获取端口信息，能得到端口信息的大小 pcbNeeded
     EnumPorts(NULL, 2, pBite, 0, &pcbNeeded, &pcReturned);
@@ -76,30 +75,12 @@ char czl_com_list(czl_gp *gp, czl_fun *fun)
         }
     }
 
-    if (arr)
-    {
-		czl_var *vars;
-        vars = CZL_TMP_REALLOC(gp, arr->vars,
-							   arr->cnt*sizeof(czl_var),
-							   arr->sum*sizeof(czl_var));
-		if (vars)
-		{
-			arr->vars = vars;
-			arr->sum = arr->cnt;
-		}
-        ret = 1;
-    }
+    fun->ret.type = CZL_ARRAY;
+    fun->ret.val.Obj = obj;
+    return 1;
 
 CZL_END:
-    if (ret)
-    {
-        fun->ret.type = CZL_ARRAY;
-        fun->ret.val.Obj = obj;
-    }
-    else
-    {
-        fun->ret.val.inum = 0;
-    }
+    fun->ret.val.inum = 0;
     CZL_TMP_FREE(gp, pBite, pcbNeeded*sizeof(unsigned char));
     return 1;
 }

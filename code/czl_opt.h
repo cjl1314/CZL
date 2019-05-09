@@ -85,18 +85,11 @@
 ((p)->val.ref.inx < 0 ? (p)->val.ref.var : \
  (czl_var*)(((czl_array*)(p)->val.ref.var)->vars + (p)->val.ref.inx))
 ///////////////////////////////////////////////////////////////
-#define CZL_1POCF(kind, opr) \
-czl_1p_opt_cac_funs[kind](opr)
-
-#define CZL_2POCF(gp, kind, res, opr) \
-czl_2p_opt_cac_funs[kind](gp, res, opr)
-///////////////////////////////////////////////////////////////
 //表达式是否是操作数: exp is opr
 #define CZL_EIO(exp) (CZL_OPERAND == exp->flag && CZL_OPERAND == exp->lt)
 
 //结果是否为真: res is true
-#define CZL_EIT(res) \
-(CZL_FLOAT == (res)->type ? (res)->val.fnum : (res)->val.inum)
+#define CZL_EIT(res) (res)->val.inum
 ///////////////////////////////////////////////////////////////
 //表达式长度: exp length
 #define CZL_EL(exp) (exp ? exp->pl.msg.cnt : 0)
@@ -126,6 +119,12 @@ if (CZL_ARRBUF_VAR == res->quality || CZL_FUNRET_VAR == res->quality) { \
     czl_val_del(gp, res); \
     res->quality = CZL_DYNAMIC_VAR; \
 }
+
+//临时缓存扩容大小
+#define CZL_TB_SZIE(pc, left, al, bl) \
+((left->quality != CZL_ARRLINK_VAR && left->quality != CZL_ARRBUF_VAR) || \
+ (left == pc->lo && CZL_BINARY2_OPT == pc->flag && CZL_ADD_A == pc->kind) ? \
+ (al)*2+bl+1 : al+bl+1)
 ///////////////////////////////////////////////////////////////
 //与运算检查跳跃: and and operator check jump
 #define CZL_AA_CJ(gp, ret, pc) \
@@ -196,8 +195,18 @@ if (pc->lt != CZL_REG_VAR || CZL_OBJ_REF == pc->lo->type) { \
 } \
 else if (pc->res != pc->lo) \
     pc->res = pc->lo; \
-if (!CZL_1POCF(pc->kind, pc->res)) \
-    goto CZL_EXCEPTION_CATCH; \
+if (CZL_ADD_SELF == pc->kind) \
+    switch (pc->res->type) { \
+    case CZL_INT: ++pc->res->val.inum; break; \
+    case CZL_FLOAT: ++pc->res->val.fnum; break; \
+    default: goto CZL_EXCEPTION_CATCH; \
+    } \
+else \
+    switch (pc->res->type) { \
+    case CZL_INT: --pc->res->val.inum; break; \
+    case CZL_FLOAT: --pc->res->val.fnum; break; \
+    default: goto CZL_EXCEPTION_CATCH; \
+    } \
 ++pc;
 
 //执行有临时结果的单目运算符指令: run unary2 opt
@@ -211,19 +220,23 @@ if (pc->lt != CZL_REG_VAR || CZL_OBJ_REF == pc->lo->type) { \
 else if (pc->ro != pc->lo) \
     pc->ro = pc->lo; \
 CZL_TB_CF(gp, pc->res); \
-if (!CZL_2POCF(gp, pc->kind, pc->res, pc->ro)) \
+if (CZL_CONDITION == pc->kind) { \
+    pc->res->type = CZL_INT; \
+    pc->res->val.inum = CZL_EIT(pc->ro); \
+} \
+else if (!czl_opt_cac_funs[pc->kind](gp, pc->res, pc->ro)) \
     goto CZL_EXCEPTION_CATCH; \
 ++pc;
-
 
 //执行有临时结果的双目运算符指令: run binary2 opt
 #define CZL_RB2O(gp, lo, ro, pc) \
 if (pc->lo != pc->res) \
     CZL_TB_CF(gp, pc->res); \
-if (CZL_ADD_A-CZL_NUMBER_NOT == pc->kind && \
-    pc->res->quality != CZL_ARRLINK_VAR && \
-    pc->res->quality != CZL_ARRBUF_VAR) \
-    pc->res->quality = CZL_ARRLINK_VAR; \
+if (CZL_ADD_A == pc->kind || CZL_DEC_A == pc->kind) { \
+    gp->next_pc = pc+1; \
+    if (pc->res->quality != CZL_ARRLINK_VAR && pc->res->quality != CZL_ARRBUF_VAR) \
+        pc->res->quality = CZL_ARRLINK_VAR; \
+} \
 if (CZL_REG_VAR == pc->lt && pc->lo->type != CZL_OBJ_REF) { \
     lo = pc->lo; \
     if (pc->lo != pc->res) { \
@@ -246,25 +259,44 @@ else { \
 if (CZL_REG_VAR == pc->rt && pc->ro->type != CZL_OBJ_REF) \
     ro = pc->ro; \
 else { \
-    if (CZL_OBJ_ELE == lo->quality) \
-        lo->quality = CZL_LOCK_ELE; \
-    ro = czl_get_opr(gp, pc->rt, pc->ro); \
-    if (CZL_LOCK_ELE == lo->quality) \
-        lo->quality = CZL_OBJ_ELE; \
+    if (lo->quality != CZL_OBJ_ELE) \
+        ro = czl_get_opr(gp, pc->rt, pc->ro); \
+    else { \
+        CZL_LOCK_OBJ(lo); \
+        ro = czl_get_opr(gp, pc->rt, pc->ro); \
+        CZL_UNLOCK_OBJ(lo, CZL_OBJ_ELE); \
+    } \
     if (!ro) { \
-        if (CZL_USR_FUN == pc->rt) { \
-            if (CZL_OBJ_ELE == lo->quality) { \
-                lo->quality = CZL_LOCK_ELE; \
-                pc->res->name = (char*)lo; \
-            } \
-            goto CZL_RUN_FUN; \
-        } \
+        if (CZL_USR_FUN == pc->rt) goto CZL_RUN_FUN; \
         else goto CZL_EXCEPTION_CATCH; \
     } \
 } \
-if (!CZL_2POCF(gp, pc->kind, pc->res, ro)) \
+if (!czl_opt_cac_funs[pc->kind](gp, pc->res, ro)) \
     goto CZL_EXCEPTION_CATCH; \
 ++pc;
+
+//获取左操作数: get left opr
+#define CZL_GLO(gp, pc, ro) \
+switch (pc->lt) { \
+case CZL_REG_VAR: \
+    if (CZL_OBJ_REF == pc->lo->type) pc->res = CZL_GRV(pc->lo); \
+    else if (pc->res != pc->lo) pc->res = pc->lo; \
+    break; \
+case CZL_MEMBER: \
+    if (ro->quality != CZL_OBJ_ELE) \
+        pc->res = czl_get_member_res(gp, (czl_obj_member*)pc->lo); \
+    else { \
+        CZL_LOCK_OBJ(ro); \
+        pc->res = czl_get_member_res(gp, (czl_obj_member*)pc->lo); \
+        CZL_UNLOCK_OBJ(ro, CZL_OBJ_ELE); \
+    } \
+    if (!pc->res) goto CZL_EXCEPTION_CATCH; \
+    break; \
+default: \
+    pc->res = (CZL_OBJ_REF == ((czl_ins_var*)pc->lo)->var->type ? \
+               CZL_GRV(((czl_ins_var*)pc->lo)->var) : ((czl_ins_var*)pc->lo)->var); \
+    break; \
+}
 
 //执行双目运算符指令: run binary opt
 #define CZL_RBO(gp, ro, pc) \
@@ -274,19 +306,9 @@ else if (!(ro=czl_get_opr(gp, pc->rt, pc->ro))) { \
     if (CZL_USR_FUN == pc->rt) goto CZL_RUN_FUN; \
     else goto CZL_EXCEPTION_CATCH; \
 } \
-if (CZL_MEMBER == pc->lt && CZL_OBJ_ELE == ro->quality) \
-    ro->quality = CZL_LOCK_ELE; \
-if (pc->lt != CZL_REG_VAR || CZL_OBJ_REF == pc->lo->type) \
-    pc->res = czl_get_opr(gp, pc->lt, pc->lo); \
-else if (pc->res != pc->lo) \
-    pc->res = pc->lo; \
-if (CZL_LOCK_ELE == ro->quality) \
-    ro->quality = CZL_OBJ_ELE; \
-if (!pc->res || !CZL_2POCF(gp, pc->kind, pc->res, ro)) { \
-    if (pc->res && CZL_STR_ELE == lo->quality) \
-        czl_set_char(gp); \
+CZL_GLO(gp, pc, ro); \
+if (!czl_opt_cac_funs[pc->kind](gp, pc->res, ro)) \
     goto CZL_EXCEPTION_CATCH; \
-} \
 if (CZL_STR_ELE == pc->res->quality) \
     czl_set_char(gp); \
 ++pc;
@@ -309,24 +331,12 @@ if (CZL_OBJ_REF == ro->type) { \
     else if (pc->res != pc->lo) \
         pc->res = pc->lo; \
 } \
-else {\
-    if (CZL_MEMBER == pc->lt && CZL_OBJ_ELE == ro->quality) \
-        ro->quality = CZL_LOCK_ELE; \
-    if (pc->lt != CZL_REG_VAR || CZL_OBJ_REF == pc->lo->type) \
-        pc->res = czl_get_opr(gp, pc->lt, pc->lo); \
-    else if (pc->res != pc->lo) \
-        pc->res = pc->lo; \
-    if (CZL_LOCK_ELE == ro->quality) \
-        ro->quality = CZL_OBJ_ELE; \
-    if (!pc->res) goto CZL_EXCEPTION_CATCH; \
-} \
+else \
+    CZL_GLO(gp, pc, ro); \
 if (CZL_CIRCLE_REF_VAR == gp->tmp_var.quality) \
     ro = &gp->tmp_var; \
-if (!czl_ass_cac(gp, pc->res, ro)) { \
-    if (CZL_STR_ELE == pc->res->quality) \
-        czl_set_char(gp); \
+if (!czl_ass_cac(gp, pc->res, ro)) \
     goto CZL_EXCEPTION_CATCH; \
-} \
 if (CZL_STR_ELE == pc->res->quality) \
     czl_set_char(gp); \
 ++pc;
@@ -392,14 +402,18 @@ if (var->type != CZL_INT) { \
 //执行函数单目运算符指令: run fun unary opt
 #define CZL_RFUO(gp, lo, pc) \
 CZL_TB_CF(gp, pc->res); \
-if (!CZL_2POCF(gp, pc->kind, pc->res, lo)) \
+if (CZL_CONDITION == pc->kind) { \
+    pc->res->type = CZL_INT; \
+    pc->res->val.inum = CZL_EIT(lo); \
+} \
+else if (!czl_opt_cac_funs[pc->kind](gp, pc->res, lo)) \
     goto CZL_EXCEPTION_CATCH; \
 CZL_CF_FR2(gp, lo); \
 ++pc;
 
 //执行函数双目运算符指令: run fun binary opt
 #define CZL_RFBO(gp, ro, pc) \
-if (!CZL_2POCF(gp, pc->kind, pc->res, ro)) { \
+if (!czl_opt_cac_funs[pc->kind](gp, pc->res, ro)) { \
     if (CZL_STR_ELE == pc->res->quality) \
         czl_set_char(gp); \
     goto CZL_EXCEPTION_CATCH; \
@@ -411,7 +425,7 @@ CZL_CF_FR2(gp, ro); \
 
 //执行函数带临时结果双目运算符指令: run fun binary2 opt
 #define CZL_RFB2O(gp, ro, pc) \
-if (!CZL_2POCF(gp, pc->kind, pc->res, ro)) \
+if (!czl_opt_cac_funs[pc->kind](gp, pc->res, ro)) \
     goto CZL_EXCEPTION_CATCH; \
 CZL_CF_FR(gp, ro); \
 ++pc;
@@ -432,10 +446,6 @@ else if (pc->res != pc->lo) \
 #define CZL_SFB2OO(gp, ro, pc, cur, index) \
 if (pc->lt != CZL_USR_FUN) { \
     ro = &cur->fun->ret; \
-    if (pc->res->name) { \
-        ((czl_var*)pc->res->name)->quality = CZL_OBJ_ELE; \
-        pc->res->name = NULL; \
-    } \
 } \
 else if (pc->rt != CZL_USR_FUN) { \
     if (CZL_REG_VAR == pc->rt && pc->ro->type != CZL_OBJ_REF) \
@@ -541,10 +551,6 @@ if ((cur->fun=czl_fun_run_prepare(gp, (czl_exp_fun*)lo))) { \
     ++index; \
     pc = (cur->fun->pc ? cur->fun->pc : cur->fun->opcode); \
     goto CZL_BEGIN; \
-} \
-if (pc->res->name) { \
-    ((czl_var*)pc->res->name)->quality = CZL_OBJ_ELE; \
-    pc->res->name = NULL; \
 }
 ///////////////////////////////////////////////////////////////
 #define CZL_ADD_SELF_CAC(pc) \
@@ -770,10 +776,8 @@ pc->res->val.inum = pc->lo->val.inum << pc->ro->val.inum; \
 pc->res->val.inum = pc->lo->val.inum >> pc->ro->val.inum; \
 ++pc;
 ///////////////////////////////////////////////////////////////
-extern char (*const czl_1p_opt_cac_funs[])(czl_var*);
-extern char (*const czl_2p_opt_cac_funs[])(czl_gp*, czl_var*, czl_var*);
+extern char (*const czl_opt_cac_funs[])(czl_gp*, czl_var*, czl_var*);
 ///////////////////////////////////////////////////////////////
-char czl_str_resize(czl_gp*, czl_str*);
 char czl_val_copy(czl_gp*, czl_var*, czl_var*);
 ///////////////////////////////////////////////////////////////
 char czl_ass_cac(czl_gp*, czl_var*, czl_var*);

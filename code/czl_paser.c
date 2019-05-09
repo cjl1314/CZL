@@ -108,11 +108,13 @@ const unsigned long czl_keyword_table_num =
 ///////////////////////////////////////////////////////////////
 //是否是转义关键字
 #define CZL_IS_ESCAPE_KW(index) \
-(CZL_INT_INDEX == index || CZL_FLOAT_INDEX == index || CZL_STR_INDEX == index)
+(CZL_INT_INDEX == index || CZL_FLOAT_INDEX == index || \
+ CZL_NUM_INDEX == index || CZL_STR_INDEX == index)
 
 //是否是对象关键字
 #define CZL_IS_OBJ_KW(index) \
-(CZL_INT_INDEX == index || CZL_FLOAT_INDEX == index || CZL_STR_INDEX == index || \
+(CZL_INT_INDEX == index || CZL_FLOAT_INDEX == index || \
+ CZL_NUM_INDEX == index || CZL_STR_INDEX == index || \
  CZL_THIS_INDEX == index || CZL_NEW_INDEX == index || CZL_NIL_INDEX == index || \
  CZL_NULL_INDEX == index || CZL_TRUE_INDEX == index || CZL_FALSE_INDEX == index)
 ///////////////////////////////////////////////////////////////

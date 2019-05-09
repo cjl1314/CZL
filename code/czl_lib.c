@@ -23,6 +23,7 @@ char czl_sys_rrand(czl_gp*, czl_fun*);
 //
 char czl_sys_int(czl_gp*, czl_fun*);
 char czl_sys_float(czl_gp*, czl_fun*);
+char czl_sys_num(czl_gp*, czl_fun*);
 char czl_sys_abs(czl_gp*, czl_fun*);
 char czl_sys_exp(czl_gp*, czl_fun*);
 char czl_sys_log(czl_gp*, czl_fun*);
@@ -145,6 +146,7 @@ const czl_sys_fun czl_lib_os[] =
     //数值处理函数
     {"int",       czl_sys_int,        1,  NULL},
     {"float",     czl_sys_float,      1,  NULL},
+    {"num",       czl_sys_num,        1,  NULL},
     {"abs",       czl_sys_abs,        1,  "int_v1"},
     {"exp",       czl_sys_exp,        1,  "float_v1"},
     {"log",       czl_sys_log,        1,  "float_v1"},
@@ -826,7 +828,7 @@ unsigned long czl_sizeof_int(czl_long num)
         return 2;
     else if (num >= -32768 && num <= 32767)
         return 3;
-    else if (num >= -2147483648 && num <= 2147483647)
+    else if (num >= -2147483647 && num <= 2147483647)
         return 5;
     else
         return 9;
@@ -1099,7 +1101,7 @@ char* czl_get_int_buf(czl_long num, char *buf)
         *buf = 3;
         *((short*)(buf+1)) = num;
     }
-    else if (num >= -2147483648 && num <= 2147483647)
+    else if (num >= -2147483647 && num <= 2147483647)
     {
         *buf = 5;
         *((long*)(buf+1)) = num;
@@ -1928,6 +1930,30 @@ char czl_sys_float(czl_gp *gp, czl_fun *fun)
     return 1;
 }
 
+char czl_sys_num(czl_gp *gp, czl_fun *fun)
+{
+    switch (fun->vars->type)
+    {
+    case CZL_STRING:
+        if ('\0' == *CZL_STR(fun->vars->val.str.Obj)->str ||
+            !czl_get_number_from_str(CZL_STR(fun->vars->val.str.Obj)->str, &fun->ret))
+            fun->ret.val.fnum = 0;
+        break;
+    case CZL_INT:
+        fun->ret.val.inum = fun->vars->val.inum;
+        break;
+    case CZL_FLOAT:
+        fun->ret.type = CZL_FLOAT;
+        fun->ret.val.fnum = fun->vars->val.fnum;
+        break;
+    default:
+        fun->ret.val.inum = 0;
+        break;
+    }
+
+    return 1;
+}
+
 char czl_sys_abs(czl_gp *gp, czl_fun *fun)
 {
 	if (fun->vars->val.inum >= 0)
@@ -2061,37 +2087,66 @@ char czl_get_num_by_char(char ch)
         return 0;
 }
 
-unsigned long czl_itoa(czl_long num, char *dst)
+unsigned long czl_itoa32(long num, char *dst)
 {
-	char ch;
-	czl_long tmp;
-    unsigned long i = 0, j = 0, k, l;
+    char res[64];
+    long tmp;
+    unsigned long i = 0, j = 0;
 
     if (num < 0)
     {
-        dst[i++] = '-';
+        dst[0] = '-';
         num = -num;
         j = 1;
     }
-    
+
     do {
         tmp = num;
-        dst[i++] = (char)(tmp - (num/=10)*10) + '0';
+        res[i++] = (char)(tmp - (num/=10)*10) + '0';
     } while (num);
-    
-    dst[i] = '\0';
-    l = i;
-    k = (i--/2) + j;
 
-    //翻转
-    while (j < k)
+    do {
+        dst[j++] = res[--i];
+    } while (i > 0);
+
+    dst[j] = '\0';
+
+    return j;
+}
+
+unsigned long czl_itoa64(czl_long num, char *dst)
+{
+    char res[64];
+    czl_long tmp;
+    unsigned long i = 0, j = 0;
+
+    if (num < 0)
     {
-        ch = dst[j];
-        dst[j++] = dst[i];
-        dst[i--] = ch;
+        dst[0] = '-';
+        num = -num;
+        j = 1;
     }
 
-    return l;
+    do {
+        tmp = num;
+        res[i++] = (char)(tmp - (num/=10)*10) + '0';
+    } while (num);
+
+    do {
+        dst[j++] = res[--i];
+    } while (i > 0);
+
+    dst[j] = '\0';
+
+    return j;
+}
+
+unsigned long czl_itoa(czl_long num, char *dst)
+{
+    if (num >= -2147483647 && num <= 2147483647)
+        return czl_itoa32(num, dst);
+    else
+        return czl_itoa64(num, dst);
 }
 
 int czl_0f_cnt(double num)
@@ -2490,15 +2545,6 @@ char czl_sys_split(czl_gp *gp, czl_fun *fun)
 
     if (!obj)
         return 1;
-
-    sign = CZL_TMP_REALLOC(gp, arr->vars,
-                           arr->cnt*sizeof(czl_var),
-                           arr->sum*sizeof(czl_var));
-    if (sign)
-    {
-        arr->vars = sign;
-        arr->sum = arr->cnt;
-    }
 
     fun->ret.type = CZL_ARRAY;
     fun->ret.val.Obj = obj;

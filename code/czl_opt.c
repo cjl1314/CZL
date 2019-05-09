@@ -1,20 +1,6 @@
 #include "czl_opt.h"
 #include "czl_lib.h"
 //////////////////////////////////////////////////////////////////
-char czl_str_resize(czl_gp *gp, czl_str *str)
-{
-	void **obj;
-
-    if (CZL_STR(str->Obj)->len+1 == str->size)
-        return 1;
-
-    if (!(obj=CZL_SR(gp, (*str), CZL_STR(str->Obj)->len+1)))
-        return 0;
-    str->Obj = obj;
-    str->size = CZL_STR(str->Obj)->len + 1;
-    return 1;
-}
-
 char czl_ref_copy(czl_gp *gp, czl_var *left, czl_var *var)
 {
     czl_ref_var *ref = (czl_ref_var*)left->name;
@@ -156,8 +142,6 @@ char czl_val_copy(czl_gp *gp, czl_var *left, czl_var *right)
         return 1;
     case CZL_ARRBUF_VAR:
         right->quality = CZL_DYNAMIC_VAR;
-        if (CZL_STRING == right->type)
-            czl_str_resize(gp, &right->val.str);
         break;
     default:
         if (CZL_STRING == right->type)
@@ -185,26 +169,6 @@ CZL_TYPE_ERROR:
     return 0;
 }
 //////////////////////////////////////////////////////////////////
-char czl_add_self_cac(czl_var *opr)
-{
-    switch (opr->type) // ++i
-    {
-    case CZL_INT: ++opr->val.inum; return 1;
-    case CZL_FLOAT: ++opr->val.fnum; return 1;
-    default: return 0;
-    }
-}
-
-char czl_dec_self_cac(czl_var *opr)
-{
-    switch (opr->type) // --i
-    {
-    case CZL_INT: --opr->val.inum; return 1;
-    case CZL_FLOAT: --opr->val.fnum; return 1;
-    default: return 0;
-    }
-}
-//////////////////////////////////////////////////////////////////
 char czl_number_not_cac(czl_gp *gp, czl_var *res, czl_var *opr)
 {
     switch ((res->type=opr->type)) // -
@@ -218,11 +182,8 @@ char czl_number_not_cac(czl_gp *gp, czl_var *res, czl_var *opr)
 char czl_logic_not_cac(czl_gp *gp, czl_var *res, czl_var *opr)
 {
     res->type = CZL_INT;
-    switch (opr->type) // !
-    {
-    case CZL_INT: case CZL_FLOAT: res->val.inum = !opr->val.inum; return 1;
-    default: res->val.inum = 0; return 1;
-    }
+    res->val.inum = !CZL_EIT(opr);
+    return 1;
 }
 
 char czl_logic_flit_cac(czl_gp *gp, czl_var *res, czl_var *opr)
@@ -310,39 +271,11 @@ char czl_obj_cnt_cac(czl_gp *gp, czl_var *res, czl_var *opr)
     case CZL_FILE:
         res->val.inum = czl_get_file_size(CZL_FIL(opr->val.Obj)->fp);
         break;
-    case CZL_TABLE_LIST:
-        res->val.inum = CZL_TAB_LIST(opr->val.Obj)->paras_count;
-        break;
-    case CZL_ARRAY_LIST:
-        res->val.inum = CZL_ARR_LIST(opr->val.Obj)->paras_count;
-        break;
     default:
         res->val.inum = 1;
         break;
     }
     return 1;
-}
-
-char czl_or_or_cac(czl_gp *gp, czl_var *res, czl_var *opr)
-{
-    res->type = CZL_INT;
-    switch (opr->type) // ||
-    {
-    case CZL_INT: res->val.inum = opr->val.inum || 0; return 1;
-    case CZL_FLOAT: res->val.inum = opr->val.fnum || 0; return 1;
-    default: res->val.inum = 1; return 1;
-    }
-}
-
-char czl_and_and_cac(czl_gp *gp, czl_var *res, czl_var *opr)
-{
-    res->type = CZL_INT;
-    switch (opr->type) // &&
-    {
-    case CZL_INT: res->val.inum = opr->val.inum && 1; return 1;
-    case CZL_FLOAT: res->val.inum = opr->val.fnum && 1; return 1;
-    default: res->val.inum = 1; return 1;
-    }
 }
 
 char czl_swap_cac_num_type(czl_var *left, czl_var *right)
@@ -544,14 +477,16 @@ char czl_addr_obj_ass_handle(czl_gp *gp, czl_var *left, czl_var *right)
     if (left->type != CZL_OBJ_REF)
     {
 		char ret;
-		const unsigned char quality = var->quality;
         if (CZL_VAR_EXIST_REF(left))
             czl_ref_obj_delete(gp, left);
-        if (CZL_OBJ_ELE == quality) //处理 a = &a[0] 问题
+        if (var->quality != CZL_OBJ_ELE)
+            ret = czl_val_del(gp, left);
+        else //处理 a = &a[0] 问题
+        {
             CZL_LOCK_OBJ(var);
-        ret = czl_val_del(gp, left);
-        if (quality != CZL_LOCK_ELE && CZL_OBJ_IS_LOCK(var))
-            CZL_UNLOCK_OBJ(var, quality);
+            ret = czl_val_del(gp, left);
+            CZL_UNLOCK_OBJ(var, CZL_OBJ_ELE);
+        }
         if (!ret)
             return 0;
     }
@@ -684,8 +619,6 @@ char czl_ass_cac_diff_type(czl_gp *gp, czl_var *left, czl_var *right)
                 CZL_SF(gp, right->val.str);
                 return 0;
             }
-            if (CZL_STRING == right->type)
-                czl_str_resize(gp, &right->val.str);
             left->type = right->type;
             left->val = right->val;
             return 1;
@@ -768,7 +701,6 @@ char czl_ass_cac(czl_gp *gp, czl_var *left, czl_var *right)
         case CZL_ARRBUF_VAR:
             CZL_SRCD1(gp, left->val.str);
             right->quality = CZL_DYNAMIC_VAR;
-            czl_str_resize(gp, &right->val.str);
             break;
         default:
             if (left->val.str.Obj == right->val.str.Obj)
@@ -843,8 +775,9 @@ char czl_arr_link(czl_gp *gp, czl_var *left, czl_var *right)
     if (CZL_ARRAY == right->type)
     {
         czl_array *array = CZL_ARR(right->val.Obj);
+        unsigned long sum = CZL_TB_SZIE(gp->next_pc, left, array->cnt, 0);
         unsigned long cnt = array->cnt + 1;
-        if (!(obj=czl_array_create(gp, cnt, cnt)))
+        if (!(obj=czl_array_create(gp, sum, cnt)))
             return 0;
         arr = CZL_ARR(obj);
         if (!czl_array_vars_new_by_array(gp, arr->vars+1,
@@ -857,8 +790,9 @@ char czl_arr_link(czl_gp *gp, czl_var *left, czl_var *right)
     else //CZL_ARRAY_LIST
     {
         czl_array_list *list = CZL_ARR_LIST(right->val.Obj);
+        unsigned long sum = CZL_TB_SZIE(gp->next_pc, left, list->paras_count, 0);
         unsigned long cnt = list->paras_count + 1;
-        if (!(obj=czl_array_create(gp, cnt, cnt)))
+        if (!(obj=czl_array_create(gp, sum, cnt)))
             return 0;
         arr = CZL_ARR(obj);
         if (!czl_array_vars_new_by_list(gp, arr->vars+1, list->paras))
@@ -888,6 +822,7 @@ char czl_arr_add(czl_gp *gp, czl_var *left, czl_var *right)
     czl_array_list *list;
     unsigned long count;
     unsigned long cnt;
+    unsigned long sum;
 
     switch (right->type)
     {
@@ -908,19 +843,22 @@ char czl_arr_add(czl_gp *gp, czl_var *left, czl_var *right)
     {
         array = CZL_ARR(left->val.Obj);
         count = array->cnt;
-        cnt += array->cnt;
         if (CZL_ARRBUF_VAR == left->quality ||
             CZL_FUNRET_VAR == left->quality ||
             (left->quality != CZL_ARRLINK_VAR && 1 == array->rc))
         {
-            if (!czl_array_resize(gp, array, cnt))
+            sum = array->cnt + cnt;
+            if (sum <= array->sum)
+                array->cnt = sum;
+            else if (!czl_array_resize(gp, array, sum))
                 return 0;
             obj = left->val.Obj;
             arr = array;
         }
         else
         {
-            if (!(obj=czl_array_create(gp, cnt, cnt)))
+            sum = CZL_TB_SZIE(gp->next_pc, left, array->cnt, cnt-1);
+            if (!(obj=czl_array_create(gp, sum, array->cnt+cnt)))
                 return 0;
             arr = CZL_ARR(obj);
             if (!czl_array_vars_new_by_array(gp, arr->vars,
@@ -935,8 +873,8 @@ char czl_arr_add(czl_gp *gp, czl_var *left, czl_var *right)
     {
         list = CZL_ARR_LIST(left->val.Obj);
         count = list->paras_count;
-        cnt += list->paras_count;
-        if (!(obj=czl_array_create(gp, cnt, cnt)))
+        sum = CZL_TB_SZIE(gp->next_pc, left, list->paras_count, cnt-1);
+        if (!(obj=czl_array_create(gp, sum, list->paras_count+cnt)))
             return 0;
         arr = CZL_ARR(obj);
         if (!czl_array_vars_new_by_list(gp, arr->vars, list->paras))
@@ -989,10 +927,16 @@ char czl_tab_cac(czl_gp *gp, czl_var *left, czl_var *right, unsigned char add)
     }
     else
     {
-        if (right->type != CZL_TABLE && right->type != CZL_ARRAY &&
-            right->type != CZL_STACK && right->type != CZL_QUEUE &&
-            right->type != CZL_ARRAY_LIST)
+        switch (right->type)
+        {
+        case CZL_INT: case CZL_FLOAT: case CZL_STRING:
+        case CZL_TABLE: case CZL_ARRAY:
+        case CZL_STACK: case CZL_QUEUE:
+        case CZL_ARRAY_LIST:
+            break;
+        default:
             return 0;
+        }
     }
 
     if (CZL_TABLE_LIST == left->type)
@@ -1032,14 +976,26 @@ char czl_tab_cac(czl_gp *gp, czl_var *left, czl_var *right, unsigned char add)
     else
     {
         left->val.Obj = obj;
-        if (CZL_TABLE == right->type)
+        switch (right->type)
+        {
+        case CZL_INT: case CZL_FLOAT: case CZL_STRING:
+            czl_delete_tabkv(gp, &left->val, right);
+            break;
+        case CZL_TABLE:
             czl_table_mix_by_table(gp, &left->val, CZL_TAB(right->val.Obj)->eles_head);
-        else if (CZL_ARRAY == right->type)
+            break;
+        case CZL_ARRAY:
             czl_table_mix_by_array(gp, &left->val, CZL_ARR(right->val.Obj));
-        else if (CZL_STACK == right->type || CZL_QUEUE == right->type)
+            break;
+        case CZL_STACK: case CZL_QUEUE:
             czl_table_mix_by_sq(gp, &left->val, CZL_SQ(right->val.Obj)->eles_head);
-        else
+            break;
+        case CZL_ARRAY_LIST:
             ret = czl_table_mix_by_list(gp, &left->val, CZL_ARR_LIST(right->val.Obj)->paras);
+            break;
+        default:
+            return 0;
+        }
     }
 
     if (!ret)
@@ -1063,7 +1019,7 @@ char czl_tab_cac(czl_gp *gp, czl_var *left, czl_var *right, unsigned char add)
 char czl_str_link(czl_gp *gp, czl_var *left, czl_var *right)
 {
     char tmp[32];
-	unsigned long llen;
+    unsigned long llen;
     czl_string *a, *b = CZL_STR(right->val.Obj);
 
     if (left->quality != CZL_FUNRET_VAR &&
@@ -1074,7 +1030,9 @@ char czl_str_link(czl_gp *gp, czl_var *left, czl_var *right)
             czl_itoa(left->val.inum, tmp) :
             czl_itoa(left->val.fnum, tmp));
 
-    if (!czl_str_create(gp, &left->val.str, b->len+llen+1, llen, tmp))
+    if (!czl_str_create(gp, &left->val.str,
+                        CZL_TB_SZIE(gp->next_pc, left, llen, b->len),
+                        llen, tmp))
         return 0;
 
     a = CZL_STR(left->val.str.Obj);
@@ -1132,9 +1090,8 @@ char czl_str_add(czl_gp *gp, czl_var *left, czl_var *right)
     {
         czl_str str;
         if (!czl_str_create(gp, &str,
-                            l->len+rlen+1,
-                            l->len,
-                            l->str))
+                            CZL_TB_SZIE(gp->next_pc, left, l->len, rlen),
+                            l->len, l->str))
             return 0;
         --l->rc;
         left->val.str = str;
@@ -1142,7 +1099,7 @@ char czl_str_add(czl_gp *gp, czl_var *left, czl_var *right)
     }
     else if (l->len+rlen >= left->val.str.size)
     {
-        unsigned long size = (l->len+rlen)*2;
+        unsigned long size = CZL_TB_SZIE(gp->next_pc, left, l->len, rlen);
         void **obj = CZL_SR(gp, left->val.str, size);
         if (!obj)
             return 0;
@@ -1918,16 +1875,8 @@ char czl_ele_inx(czl_gp *gp, czl_var *left, czl_var *right)
     return 1;
 }
 //////////////////////////////////////////////////////////////////
-//单参运算符计算函数集合
-char (*const czl_1p_opt_cac_funs[])(czl_var*) =
-{
-    //单参单目运算符函数
-    czl_add_self_cac,
-    czl_dec_self_cac,
-};
-
 //双参运算符计算函数集合
-char (*const czl_2p_opt_cac_funs[])(czl_gp*, czl_var*, czl_var*) =
+char (*const czl_opt_cac_funs[])(czl_gp*, czl_var*, czl_var*) =
 {
     //双参单目运算符函数
     czl_number_not_cac,
@@ -1937,8 +1886,6 @@ char (*const czl_2p_opt_cac_funs[])(czl_gp*, czl_var*, czl_var*) =
     czl_self_dec_cac,
     czl_addr_obj_cac,
     czl_obj_cnt_cac,
-    czl_or_or_cac,
-    czl_and_and_cac,
     //双参双目运算符函数
     czl_swap_cac,
     czl_ass_cac,

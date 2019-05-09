@@ -124,19 +124,13 @@ do { objs[i]->quality = quality[i]; } while (++i < j);
 typedef enum czl_opt_enum
 {
     //单目运算符
-    CZL_ADD_SELF,	// ++i 必须从0开始
-    CZL_DEC_SELF,	// --i
-    //
-    CZL_NUMBER_NOT,	// - 必须放在双参运算符的第一个
+    CZL_NUMBER_NOT,	// - 必须从0开始映射到czl_opt_cac_funs函数指针数组下标
     CZL_LOGIC_NOT,	// !
     CZL_LOGIC_FLIP,	// ~
     CZL_SELF_ADD,	// i++
     CZL_SELF_DEC,	// i--
     CZL_REF_VAR,	// &
     CZL_OBJ_CNT,    // #
-    //|| && 在运行时转为单目执行
-    CZL_OR_OR,		// ||
-    CZL_AND_AND,	// &&
     //双目运算符
     CZL_SWAP,       // ><
     CZL_ASS,		// =
@@ -177,6 +171,12 @@ typedef enum czl_opt_enum
     //? : 三目运算符没有处理函数所以需要放在最后
     CZL_QUE,        // ?
     CZL_COL,        // :
+    //
+    CZL_ADD_SELF,	// ++i
+    CZL_DEC_SELF,	// --i
+    //
+    CZL_OR_OR,		// ||
+    CZL_AND_AND,	// &&
     //
     CZL_CONDITION,  //&&、||条件判断
     //
@@ -465,7 +465,7 @@ typedef struct czl_file
 typedef union czl_value
 {
     czl_long inum;      //整型数值
-    double fnum;        //浮点型数值
+    czl_float fnum;     //浮点型数值
     czl_str str;        //字符串
     czl_ref ref;        //引用
     czl_foreach_msg msg;//foreach专用
@@ -1468,6 +1468,8 @@ typedef struct czl_gp
     char yeild_end;             //用于foreach协程标记其是否结束
     czl_exp_ele *yeild_pc;      //用于栈空间上函数yeild返回PC地址
     //
+    czl_exp_ele *next_pc;       //用于字符串连接判断是否是最后一个+指令
+    //
     czl_char_var *ch_head;      //字符串元素缓冲区链表头
     //
     czl_var *fun_ret;           //函数返回值
@@ -1544,6 +1546,7 @@ char czl_array_vars_new_by_array(czl_gp*, czl_var*, czl_var*, int);
 void** czl_array_create(czl_gp*, unsigned long, unsigned long);
 char czl_array_resize(czl_gp*, czl_array*, unsigned long);
 char czl_array_delete(czl_gp*, void**);
+char czl_str_resize(czl_gp*, czl_str*);
 char czl_str_create(czl_gp*, czl_str*, unsigned long, unsigned long, const void*);
 void** czl_sq_new(czl_gp*, czl_exp_stack len, const czl_array_list*);
 char czl_array_new(czl_gp*, czl_exp_stack len, const czl_array_list*, czl_var*);

@@ -500,7 +500,8 @@ static char czl_is_ref_or_var(czl_gp *gp, czl_exp_ele *exp)
     else if (CZL_EIO(exp) &&
              (CZL_LG_VAR == exp->kind ||
               CZL_INS_VAR == exp->kind ||
-              CZL_REG_VAR == exp->kind || //只有运行动态函数时出现该情况
+              (CZL_REG_VAR == exp->kind &&
+               exp->res->quality != CZL_CONST_VAR) || //只有运行动态函数时出现该情况
               (CZL_MEMBER == exp->kind &&
                czl_is_member_var(CZL_MEMBER, (czl_obj_member*)exp->res))))
     {
@@ -510,7 +511,7 @@ static char czl_is_ref_or_var(czl_gp *gp, czl_exp_ele *exp)
         exp->ro = exp->lo = exp->res;
         exp->res = gp->exp_reg;
         exp->flag = CZL_UNARY2_OPT;
-        exp->kind = CZL_REF_VAR-CZL_NUMBER_NOT;
+        exp->kind = CZL_REF_VAR;
         return 1;
     }
 
@@ -1180,9 +1181,9 @@ char czl_is_obj_unary_opt(czl_exp_node *p)
     {
         switch (p->type)
         {
-        case CZL_REF_VAR:
         case CZL_ADD_SELF: case CZL_DEC_SELF:
         case CZL_SELF_ADD: case CZL_SELF_DEC:
+        case CZL_REF_VAR: case CZL_OBJ_CNT:
             return 1;
         default:
             break;
@@ -1219,12 +1220,12 @@ char czl_exp_unary_const_merge(czl_gp *gp, czl_exp_node *node)
     {
         if (p == node)
         {
-            if (!CZL_2POCF(gp, p->type-CZL_NUMBER_NOT, &res, var))
+            if (!czl_opt_cac_funs[p->type](gp, &res, var))
                 return 0;
         }
         else
         {
-            if (!CZL_2POCF(gp, p->type-CZL_NUMBER_NOT, &res, &res))
+            if (!czl_opt_cac_funs[p->type](gp, &res, &res))
                 return 0;
         }
     }
@@ -1258,22 +1259,12 @@ char czl_exp_binary_const_merge(czl_gp *gp, czl_exp_node *node)
     switch (node->type)
     {
     case CZL_OR_OR:
-        if (CZL_EIT(left))
-        {
-            res.type = CZL_INT;
-            res.val.inum = 1;
-        }
-        else if (!CZL_2POCF(gp, CZL_OR_OR-CZL_NUMBER_NOT, &res, right))
-            return 0;
+        res.type = CZL_INT;
+        res.val.inum = (CZL_EIT(left) ? 1 : CZL_EIT(right));
         break;
     case CZL_AND_AND:
-        if (!CZL_EIT(left))
-        {
-            res.type = CZL_INT;
-            res.val.inum = 0;
-        }
-        else if (!CZL_2POCF(gp, CZL_AND_AND-CZL_NUMBER_NOT, &res, right))
-            return 0;
+        res.type = CZL_INT;
+        res.val.inum = (CZL_EIT(left) ? CZL_EIT(right) : 0);
         break;
     default:
         res.type = left->type;
@@ -1281,8 +1272,7 @@ char czl_exp_binary_const_merge(czl_gp *gp, czl_exp_node *node)
         res.quality = CZL_ARRLINK_VAR;
         if (node->type >= CZL_ADD)
             node->type = CZL_ADD_A + (node->type - CZL_ADD);
-        node->type -= CZL_NUMBER_NOT;
-        if (!CZL_2POCF(gp, node->type, &res, right))
+        if (!czl_opt_cac_funs[node->type](gp, &res, right))
             return 0;
         break;
     }
@@ -2619,10 +2609,15 @@ static void czl_runtime_error_report(czl_gp *gp, czl_exp_ele *err)
 
 static void czl_fun_ret_check_free(czl_gp *gp, czl_var *res, czl_var *lo, czl_var *ro)
 {
-    if (res && CZL_FUNRET_VAR == res->quality)
+    if (res)
     {
-        czl_val_del(gp, res);
-        res->type = CZL_INT;
+        if (CZL_STR_ELE == res->quality)
+            czl_set_char(gp);
+        else if (CZL_FUNRET_VAR == res->quality)
+        {
+            czl_val_del(gp, res);
+            res->type = CZL_INT;
+        }
     }
     if (lo && CZL_FUNRET_VAR == lo->quality)
     {
@@ -3321,6 +3316,9 @@ czl_tabkv* czl_create_key_str_tabkv
     if (collision_cnt >= CZL_MAX_HASH_COLLISION_CNT)
         czl_hash_key_update(gp, tab);
 
+    if (!czl_str_resize(gp, &res->val.str))
+        return NULL;
+
     if (!(p=(czl_tabkv*)czl_malloc(gp, sizeof(czl_tabkv)
                        #ifdef CZL_MM_MODULE
                        , &tab->pool
@@ -3330,25 +3328,13 @@ czl_tabkv* czl_create_key_str_tabkv
 
     if (CZL_ARRBUF_VAR == res->quality)
     {
-        if (!czl_str_resize(gp, &res->val.str))
-            goto CZL_ERROR_END;
         res->quality = CZL_DYNAMIC_VAR;
         p->key = res->val;
     }
     else if (CZL_FUNRET_VAR == res->quality)
     {
-        if (!czl_str_resize(gp, &res->val.str))
-            goto CZL_ERROR_END;
         p->key.str = res->val.str;
         res->type = CZL_INT;
-    }
-    else if (res->val.str.size != CZL_STR(res->val.str.Obj)->len + 1)
-    {
-        if (!czl_str_create(gp, &p->key.str,
-                            CZL_STR(res->val.str.Obj)->len+1,
-                            CZL_STR(res->val.str.Obj)->len,
-                            CZL_STR(res->val.str.Obj)->str))
-            goto CZL_ERROR_END;
     }
     else
     {
@@ -3365,14 +3351,6 @@ czl_tabkv* czl_create_key_str_tabkv
 
     czl_hash_tabkv_insert(tab, p, index, ins);
     return p;
-
-CZL_ERROR_END:
-    czl_free(gp, p, sizeof(czl_tabkv)
-             #ifdef CZL_MM_MODULE
-             , &tab->pool
-             #endif
-             );
-    return NULL;
 }
 
 czl_tabkv* czl_create_key_num_tabkv
@@ -4293,9 +4271,7 @@ czl_var* czl_var_find_in_fun
             if (CZL_IN_ANY == gp->tmp->variable_field &&
                 (node=(czl_var*)czl_loc_var_find
                         (name, block->block.fun->loc_vars)))
-            {
                 return node;
-            }
             return NULL;
         case CZL_LOOP_BLOCK:
             if (block->block.loop->store_device)
@@ -5400,6 +5376,20 @@ char czl_str_create
     if (init && len > 0)
         memcpy(s->str, init, len);
 
+    return 1;
+}
+
+char czl_str_resize(czl_gp *gp, czl_str *str)
+{
+    void **obj;
+
+    if (CZL_STR(str->Obj)->len+1 == str->size)
+        return 1;
+
+    if (!(obj=CZL_SR(gp, (*str), CZL_STR(str->Obj)->len+1)))
+        return 0;
+    str->Obj = obj;
+    str->size = CZL_STR(str->Obj)->len + 1;
     return 1;
 }
 
@@ -8653,6 +8643,7 @@ static char czl_fun_run(czl_gp *gp, czl_exp_ele *pc, czl_fun *fun)
         case CZL_DEC_SELF:
             CZL_DEC_SELF_CAC(pc);
             break;
+        //
         case CZL_NUMBER_NOT:
             CZL_NUMBER_NOT_CAC(pc);
             break;
@@ -8878,9 +8869,7 @@ static czl_var* czl_set_opr_reg(czl_gp *gp, unsigned char *kind, czl_var *obj, c
     case CZL_FUNCTION:
         czl_set_exp_fun_reg(gp, (czl_exp_fun*)obj);
         ef = (czl_exp_fun*)obj;
-        if (1 == flag &&
-            CZL_STATIC_FUN == ef->quality &&
-            ef->fun->type != CZL_SYS_FUN)
+        if (1 == flag && CZL_STATIC_FUN == ef->quality && ef->fun->type != CZL_SYS_FUN)
         {
             *kind = CZL_USR_FUN;
         }
@@ -8969,8 +8958,7 @@ static char czl_is_quick_unary_opt(czl_gp *gp, czl_exp_ele *pc, unsigned char to
         (pc->lo->ot != CZL_INT && pc->lo->ot != CZL_FLOAT))
         return 0;
 
-    if (tof ||
-        (pc->kind >= CZL_REF_VAR && pc->kind <= CZL_AND_AND) ||
+    if (tof || pc->kind >= CZL_REF_VAR ||
         (CZL_LOGIC_FLIP == pc->kind && pc->lo->ot != CZL_INT))
         return 0;
 
@@ -9064,19 +9052,17 @@ static void czl_set_exp_reg(czl_gp *gp, czl_exp_ele *pc, char flag)
             pc->lo = czl_set_opr_reg(gp, &pc->lt, pc->lo, flag);
             if (flag != 1 || !czl_is_quick_unary_opt(gp, pc, tof))
             {
-                if (pc->kind >= CZL_NUMBER_NOT)
+                if (CZL_ADD_SELF == pc->kind || CZL_DEC_SELF == pc->kind)
+                    pc->res = pc->lo;
+                else
                 {
                     pc->flag = CZL_UNARY2_OPT;
                     pc->ro = pc->lo;
                     if (flag != 2)
                         pc->res = czl_set_opt_reg(gp, pc->res, pc);
+                    if (CZL_OR_OR == pc->kind || CZL_AND_AND == pc->kind)
+                        pc->kind = CZL_CONDITION;
                 }
-                else
-                {
-                    pc->res = pc->lo;
-                }
-                if (pc->kind >= CZL_NUMBER_NOT)
-                    pc->kind -= CZL_NUMBER_NOT;
             }
             break;
         case CZL_BINARY_OPT:
@@ -9096,13 +9082,12 @@ static void czl_set_exp_reg(czl_gp *gp, czl_exp_ele *pc, char flag)
                         pc->kind = CZL_ADD_A + (pc->kind - CZL_ADD);
                     if (flag != 2)
                         pc->res = czl_set_opt_reg(gp, pc->res, pc);
+                    if (CZL_USR_FUN == pc->rt &&
+                        czl_is_member_var(pc->lt, (czl_obj_member*)pc->lo))
+                        pc->rt = CZL_FUNCTION; //处理 a.v + fun(a=0) 情况
                 }
                 else
-                {
                     pc->res = pc->lo;
-                }
-                if (pc->kind >= CZL_NUMBER_NOT)
-                    pc->kind -= CZL_NUMBER_NOT;
             }
             break;
         case CZL_THREE_END:
@@ -10279,7 +10264,8 @@ char czl_nsef_check(czl_gp *gp)
             if (CZL_IN_STATEMENT == p->ef->fun->state ||
                 !czl_fun_paras_check(gp, p->ef, p->ef->fun))
             {
-                sprintf(gp->log_buf, "undefined function %s, ", p->ef->fun->name);
+                if (CZL_IN_STATEMENT == p->ef->fun->state)
+                    sprintf(gp->log_buf, "undefined function %s, ", p->ef->fun->name);
                 gp->error_file = p->err_file;
                 gp->error_line = p->err_line;
                 return 0;
