@@ -3888,13 +3888,14 @@ char czl_exec_shell_prepare(czl_gp *gp, char *path, char flag)
     if (!code)
         ret = 0;
 
-    //保存脚本名
-    if (ret && !czl_shell_name_save(gp, path, 0))
-        ret = 0;
-    gp->error_file = gp->sn_head->name;
-
-    if (ret) //解析脚本生成抽象语法树ast
+    //解析脚本
+    if (ret && czl_shell_name_save(gp, path, 0))
+    {
+        gp->error_file = gp->sn_head->name;
         ret = czl_shell_analysis(gp, code);
+    }
+    else
+        gp->error_file = path;
 
     CZL_TMP_FREE(gp, code, code_size);
 

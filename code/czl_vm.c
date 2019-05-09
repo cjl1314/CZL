@@ -8576,7 +8576,6 @@ static czl_exp_ele* czl_task_begin(const czl_var *t, czl_exp_ele *pc)
 static char czl_fun_run(czl_gp *gp, czl_exp_ele *pc, czl_fun *fun)
 {
     czl_var *lo = NULL, *ro = NULL;
-    //
     czl_usrfun_stack *stack = NULL, *cur;
     unsigned long index = 0, size = 0;
 
@@ -8612,12 +8611,21 @@ static char czl_fun_run(czl_gp *gp, czl_exp_ele *pc, czl_fun *fun)
             break;
         case CZL_FOREACH_BLOCK:
             CZL_RFS(gp, pc);
+            #ifdef CZL_MULT_THREAD
+                CZL_CTS(gp);
+            #endif //#ifdef CZL_MULT_THREAD
             break;
         case CZL_BLOCK_BEGIN:
             pc = (CZL_EIT((pc-1)->res) ? pc->pl.pc : pc->next);
+            #ifdef CZL_MULT_THREAD
+                CZL_CTS(gp);
+            #endif //#ifdef CZL_MULT_THREAD
             break;
         case CZL_LOGIC_JUMP:
             pc = pc->pl.pc;
+            #ifdef CZL_MULT_THREAD
+                CZL_CTS(gp);
+            #endif //#ifdef CZL_MULT_THREAD
             break;
         case CZL_CASE_SENTENCE:
             CZL_RCS(pc);

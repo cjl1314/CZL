@@ -399,9 +399,12 @@ typedef enum czl_try_type_enum
 typedef enum czl_exit_code_enum
 {
     CZL_EXIT_ABNORMAL,
-    CZL_EXIT_ABORT,
     CZL_EXIT_ASSERT,
-    CZL_EXIT_TRY
+    CZL_EXIT_ABORT,
+    CZL_EXIT_TRY,
+#ifdef CZL_MULT_THREAD
+    CZL_EXIT_KILL,
+#endif //#ifdef CZL_MULT_THREAD
 } czl_exit_code_enum;
 
 //增删异常码后需要同步更新 CZL_EXCEPTION_CODE_NUM
@@ -1281,6 +1284,7 @@ typedef struct czl_thread_pipe
     //线程同步标志位必须加volatile声明，否则会被编译器优化无法检测到真实的状态
     volatile unsigned char alive;
     volatile unsigned char kill;
+    volatile unsigned char suspend;
 } czl_thread_pipe;
 
 //线程节点结构

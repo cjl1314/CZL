@@ -97,9 +97,9 @@ char czl_sys_out(czl_gp*, czl_fun*);
 char czl_sys_ins(czl_gp*, czl_fun*);
 //
 char czl_sys_coroutine(czl_gp*, czl_fun*);
-char czl_sys_resume(czl_gp*, czl_fun*);
-char czl_sys_corsta(czl_gp*, czl_fun*);
 char czl_sys_reset(czl_gp*, czl_fun*);
+char czl_sys_corsta(czl_gp*, czl_fun*);
+char czl_sys_resume(czl_gp*, czl_fun*);
 char czl_sys_kill(czl_gp*, czl_fun*);
 //
 #ifdef CZL_MULT_THREAD
@@ -111,6 +111,7 @@ char czl_sys_report(czl_gp*, czl_fun*);
 char czl_sys_notify(czl_gp*, czl_fun*);
 char czl_sys_notifyAll(czl_gp*, czl_fun*);
 char czl_sys_thrsta(czl_gp*, czl_fun*);
+char czl_sys_suspend(czl_gp*, czl_fun*);
 #endif //#ifdef CZL_MULT_THREAD
 //
 #ifndef CZL_CONSOLE
@@ -220,10 +221,10 @@ const czl_sys_fun czl_lib_os[] =
     {"ins",       czl_sys_ins,        4,  "&table_v1"},
     //协程框架接口函数
     {"coroutine", czl_sys_coroutine,  2,  "fun_v1,int_v2=0"},
-    {"resume",    czl_sys_resume,     -1, NULL},
-    {"corsta",    czl_sys_corsta,     1,  "int_v1"},
     {"reset",     czl_sys_reset,      1,  NULL},
+    {"corsta",    czl_sys_corsta,     1,  "int_v1"},
     //线程和协程共用kill函数
+    {"resume",    czl_sys_resume,     -1, NULL},
     {"kill",      czl_sys_kill,       1,  "int_v1"},
 #ifdef CZL_MULT_THREAD
     //多线程框架接口函数
@@ -239,6 +240,7 @@ const czl_sys_fun czl_lib_os[] =
     {"notify",    czl_sys_notify,     2,  "int_v1,v2=0"},
     {"notifyAll", czl_sys_notifyAll,  1,  "v1=0"},
     {"thrsta",    czl_sys_thrsta,     1,  "int_v1=0"},
+    {"suspend",   czl_sys_suspend,    1,  "int_v1"},
 #endif //#ifdef CZL_MULT_THREAD
 #ifndef CZL_CONSOLE
     //与C/C++栈交互接口函数
@@ -3647,49 +3649,6 @@ char czl_sys_coroutine(czl_gp *gp, czl_fun *fun)
     return 1;
 }
 
-char czl_sys_resume(czl_gp *gp, czl_fun *fun)
-{
-    void **obj;
-	unsigned long id;
-	czl_coroutine *c;
-    czl_para *p = (czl_para*)fun->vars;
-    czl_var *ret = czl_exp_cac(gp, p->para);
-    if (!ret)
-        return 0;
-
-    fun->ret.val.inum = 0;
-
-    if (ret->type != CZL_INT)
-        return 1;
-    id = (unsigned long)ret->val.inum;
-    if (!(obj=czl_sys_hash_find(CZL_INT, CZL_NIL, (char*)id, &gp->coroutines_hash)))
-        return 1;
-
-    c = CZL_COR(obj);
-
-    if ((unsigned long)c->fun->enter_vars_count < fun->paras_cnt-1)
-        return 1;
-
-    if (!(ret=czl_coroutine_run(gp, p->next, fun->paras_cnt-1, obj)))
-        return 0;
-
-    fun->ret.type = ret->type;
-    fun->ret.val = ret->val;
-    ret->type = CZL_INT;
-
-    return gp->yeild_end ? 1 : 2;
-}
-
-char czl_sys_corsta(czl_gp *gp, czl_fun *fun)
-{
-    unsigned long id = (unsigned long)fun->vars->val.inum;
-    if (czl_sys_hash_find(CZL_INT, CZL_NIL, (char*)id, &gp->coroutines_hash))
-        fun->ret.val.inum = 1;
-    else
-        fun->ret.val.inum = 0;
-    return 1;
-}
-
 char czl_sys_reset(czl_gp *gp, czl_fun *fun)
 {
     if (CZL_FUN_REF == fun->vars->type)
@@ -3725,6 +3684,60 @@ char czl_sys_reset(czl_gp *gp, czl_fun *fun)
 
     fun->ret.val.inum = 1;
     return 1;
+}
+
+char czl_sys_corsta(czl_gp *gp, czl_fun *fun)
+{
+    unsigned long id = (unsigned long)fun->vars->val.inum;
+    if (czl_sys_hash_find(CZL_INT, CZL_NIL, (char*)id, &gp->coroutines_hash))
+        fun->ret.val.inum = 1;
+    else
+        fun->ret.val.inum = 0;
+    return 1;
+}
+
+char czl_sys_resume(czl_gp *gp, czl_fun *fun)
+{
+    void **obj;
+    unsigned long id;
+    czl_coroutine *c;
+    czl_para *p = (czl_para*)fun->vars;
+    czl_var *ret = czl_exp_cac(gp, p->para);
+    if (!ret)
+        return 0;
+
+    fun->ret.val.inum = 0;
+
+    if (ret->type != CZL_INT)
+        return 1;
+    id = (unsigned long)ret->val.inum;
+    if (!(obj=czl_sys_hash_find(CZL_INT, CZL_NIL, (char*)id, &gp->coroutines_hash)))
+    {
+    #ifdef CZL_MULT_THREAD
+        czl_thread *t = (czl_thread*)czl_sys_hash_find(CZL_INT, CZL_NIL,
+                                                       (char*)id, &gp->threads_hash);
+        if (t)
+        {
+            czl_event_send(&t->pipe->notify_event);
+            fun->ret.val.inum = 1;
+        }
+    #endif //#ifdef CZL_MULT_THREAD
+        return 1;
+    }
+
+    c = CZL_COR(obj);
+
+    if ((unsigned long)c->fun->enter_vars_count < fun->paras_cnt-1)
+        return 1;
+
+    if (!(ret=czl_coroutine_run(gp, p->next, fun->paras_cnt-1, obj)))
+        return 0;
+
+    fun->ret.type = ret->type;
+    fun->ret.val = ret->val;
+    ret->type = CZL_INT;
+
+    return gp->yeild_end ? 1 : 2;
 }
 
 char czl_sys_kill(czl_gp *gp, czl_fun *fun)
@@ -4150,7 +4163,6 @@ czl_thread_pipe* czl_thread_pipe_create(czl_gp *gp, czl_var *obj)
 
     czl_lock_init(&pipe->report_lock);
     pipe->alive = 1;
-
     return pipe;
 
 CZL_END:
@@ -4166,7 +4178,7 @@ void*
 #endif
 czl_run_thread(void *argv)
 {
-	czl_gp *gp;
+    czl_gp *gp;
     czl_thread_pipe *pipe = (czl_thread_pipe*)((void**)argv)[0];
     char *shell_path = (char*)((void**)argv)[1];
 #ifndef CZL_CONSOLE
@@ -4221,12 +4233,8 @@ char czl_sys_thread(czl_gp *gp, czl_fun *fun)
     char *log_path = NULL;
 #endif //#ifndef CZL_CONSOLE
     void **argv = NULL;
-    FILE *out = fopen(CZL_STR(fun->vars->val.str.Obj)->str, "r");
 
     fun->ret.val.inum = 0;
-
-    if (!out)
-        return 1;
 
     if (!(p=czl_thread_create(gp)))
         return 1;
@@ -4277,8 +4285,8 @@ CZL_END:
 #ifndef CZL_CONSOLE
     free(log_path);
 #endif
+    free(gp);
     czl_thread_delete(gp, p);
-
     return 1;
 }
 
@@ -4308,11 +4316,6 @@ char czl_sys_wait(czl_gp *gp, czl_fun *fun)
         {
             fun->ret.val.inum = 0;
             return 1;
-        }
-        if (gp->thread_pipe->kill)
-        {
-            gp->exit_code = CZL_EXIT_ABORT;
-            return 0;
         }
         czl_thread_lock(&gp->thread_pipe->notify_lock); //lock
         if (gp->thread_pipe->nb_cnt)
@@ -4365,11 +4368,6 @@ char czl_sys_listen(czl_gp *gp, czl_fun *fun)
         {
             fun->ret.val.inum = 0;
             return 1;
-        }
-        if (gp->thread_pipe->kill)
-        {
-            gp->exit_code = CZL_EXIT_ABORT;
-            return 0;
         }
         czl_thread_lock(&gp->thread_pipe->notify_lock); //lock
         if (gp->thread_pipe->nb_cnt)
@@ -4502,6 +4500,19 @@ char czl_sys_thrsta(czl_gp *gp, czl_fun *fun)
         }
     }
 
+    return 1;
+}
+
+char czl_sys_suspend(czl_gp *gp, czl_fun *fun)
+{
+    czl_thread *t = czl_thread_find(gp, (unsigned long)fun->vars->val.inum, NULL);
+    if (!t)
+        fun->ret.val.inum = 0;
+    else
+    {
+        t->pipe->suspend = 1;
+        fun->ret.val.inum = 1;
+    }
     return 1;
 }
 #endif //#ifdef CZL_MULT_THREAD

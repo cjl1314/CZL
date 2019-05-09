@@ -126,6 +126,21 @@ if (CZL_ARRBUF_VAR == res->quality || CZL_FUNRET_VAR == res->quality) { \
  (left == pc->lo && CZL_BINARY2_OPT == pc->flag && CZL_ADD_A == pc->kind) ? \
  (al)*2+bl+1 : al+bl+1)
 ///////////////////////////////////////////////////////////////
+#ifdef CZL_MULT_THREAD
+//检查线程状态: check thread state
+#define CZL_CTS(gp) \
+if (!gp->thread_pipe) \
+    break; \
+else if (gp->thread_pipe->kill) { \
+    gp->exit_code = CZL_EXIT_KILL; \
+    goto CZL_EXCEPTION_CATCH; \
+} \
+else if (gp->thread_pipe->suspend) { \
+    gp->thread_pipe->suspend = 0; \
+    czl_event_wait(&gp->thread_pipe->notify_event); \
+}
+#endif //#ifdef CZL_MULT_THREAD
+///////////////////////////////////////////////////////////////
 //与运算检查跳跃: and and operator check jump
 #define CZL_AA_CJ(gp, ret, pc) \
 if (!CZL_EIT(ret)) { \

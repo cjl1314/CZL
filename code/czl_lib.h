@@ -56,6 +56,14 @@ void czl_event_send
     sem_t*
 #endif
 );
+void czl_event_wait
+(
+#ifdef CZL_SYSTEM_WINDOWS
+    HANDLE *event
+#elif defined CZL_SYSTEM_LINUX
+    sem_t *event
+#endif
+);
 char czl_thread_para_get(czl_gp*, czl_var*, czl_thread_pipe*);
 void czl_thread_pipe_delete(czl_thread_pipe*);
 #endif //#ifdef CZL_MULT_THREAD

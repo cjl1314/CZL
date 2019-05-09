@@ -1533,10 +1533,10 @@ void czl_free
 #ifdef CZL_MM_MODULE
     czl_mm_free(gp, (char*)buf, size, pool);
 #else
-	if (buf)
-	{
-		free(buf);
-		gp->mm_cnt -= size;
-	}
+    if (buf)
+    {
+        free(buf);
+        gp->mm_cnt -= size;
+    }
 #endif
 }
