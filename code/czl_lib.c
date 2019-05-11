@@ -206,8 +206,8 @@ const czl_sys_fun czl_lib_os[] =
     {"toBin",     czl_sys_toBin,      1,  NULL},
     {"toObj",     czl_sys_toObj,      1,  "str_v1"},
     //哈希表内建函数
-    {"hcac",      czl_sys_hcac,       1,  "table_v1"},
-    {"hdod",      czl_sys_hdod,       3,  "table_v1,int_v2,int_v3"},
+    {"hcac",      czl_sys_hcac,       1,  "map_v1"},
+    {"hdod",      czl_sys_hdod,       3,  "map_v1,int_v2,int_v3"},
     //变量内建函数
     {"tp",        czl_sys_tp,         1,  NULL},
     {"ot",        czl_sys_ot,         1,  "&v1"},
@@ -218,7 +218,7 @@ const czl_sys_fun czl_lib_os[] =
     {"pop",       czl_sys_pop,        1,  "&stack_v1"},
     {"in",        czl_sys_in,         2,  "&queue_v1"},
     {"out",       czl_sys_out,        1,  "&queue_v1"},
-    {"ins",       czl_sys_ins,        4,  "&table_v1"},
+    {"ins",       czl_sys_ins,        4,  "&map_v1"},
     //协程框架接口函数
     {"coroutine", czl_sys_coroutine,  2,  "fun_v1,int_v2=0"},
     {"reset",     czl_sys_reset,      1,  NULL},

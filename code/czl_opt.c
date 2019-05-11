@@ -1823,11 +1823,13 @@ char czl_cmp_cac(czl_gp *gp, czl_var *left, czl_var *right)
 
 char czl_ele_del(czl_gp *gp, czl_var *left, czl_var *right)
 {
-    char ret = 0; // =>
+    char ret; // =>
+
+    if (right->type != CZL_TABLE)
+        return 0;
 
     //对象必须是right，因为left是临时变量，否则在引用计数>1时删除操作不成功
-    if (CZL_TABLE == right->type)
-        ret = czl_delete_tabkv(gp, &right->val, left);
+    ret = czl_delete_tabkv(gp, &right->val, left);
 
     CZL_TB_CF(gp, left);
     left->type = CZL_INT;
@@ -1866,7 +1868,7 @@ char czl_ele_inx(czl_gp *gp, czl_var *left, czl_var *right)
             ret = 1;
         break;
     default:
-        break;
+        return 0;
     }
 
     CZL_TB_CF(gp, left);

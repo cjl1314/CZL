@@ -70,9 +70,7 @@
  (CZL_TABLE_LIST == node->type && \
   CZL_CONST_VAR == CZL_TAB_LIST(((czl_var*)node->op.obj)->val.Obj)->quality) || \
   CZL_FUN_REF == node->type || \
-  CZL_NEW == node->type || \
-  CZL_NIL == node->type || \
-  CZL_OBJ_REF == node->type))
+  CZL_NEW == node->type))
 
 //检查AST节点是否是变量:
 #define CZL_IS_NOT_VAR(node) \
@@ -325,6 +323,8 @@ CZL_GLO(gp, pc, ro); \
 if (!czl_opt_cac_funs[pc->kind](gp, pc->res, ro)) \
     goto CZL_EXCEPTION_CATCH; \
 if (CZL_STR_ELE == pc->res->quality) \
+    czl_set_char(gp); \
+if (CZL_STR_ELE == ro->quality) \
     czl_set_char(gp); \
 ++pc;
 

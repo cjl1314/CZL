@@ -1,10 +1,9 @@
 #ifndef CZL_COM_H
 #define CZL_COM_H
 
-//#define CZL_LIB_COM //第三方库宏控
+#include "czl_lib.h" //CZL扩展库必须包含该头文件
 
 #ifdef CZL_LIB_COM
-    #include "czl_lib.h" //CZL扩展库必须包含该头文件
     #ifdef CZL_SYSTEM_WINDOWS //声明windows平台
         #include <winspool.h> //具体平台的头文件依赖
         extern const czl_sys_fun czl_lib_com[]; //库函数表声明

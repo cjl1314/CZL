@@ -1438,7 +1438,7 @@ typedef struct czl_gp
     czl_var exp_reg[CZL_MAX_REG_CNT]; //全局表达式计算寄存器数组
     unsigned long reg_cnt; //寄存器使用计数
     //
-    //全局临时变量，循环引用fork结果、数组元素&结果、switch-case比较结果
+    //全局临时变量，循环引用fork结果、数组元素&结果
     czl_var tmp_var;
     //
     czl_var enter_var; //用于main函数传参

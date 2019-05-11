@@ -83,7 +83,7 @@ const czl_keyword czl_keyword_table[] =
     {"str",         CZL_STR_INDEX},
     {"file",        CZL_FILE_INDEX},
     {"arr",         CZL_ARR_INDEX},
-    {"table",       CZL_TABLE_INDEX},
+    {"map",         CZL_TABLE_INDEX},
     {"stack",       CZL_STACK_INDEX},
     {"queue",       CZL_QUEUE_INDEX},
     {"static",      CZL_STATIC_INDEX},
@@ -111,15 +111,15 @@ const unsigned long czl_keyword_table_num =
 (CZL_INT_INDEX == index || CZL_FLOAT_INDEX == index || \
  CZL_NUM_INDEX == index || CZL_STR_INDEX == index)
 
-//是否是对象关键字
-#define CZL_IS_OBJ_KW(index) \
-(CZL_INT_INDEX == index || CZL_FLOAT_INDEX == index || \
- CZL_NUM_INDEX == index || CZL_STR_INDEX == index || \
- CZL_THIS_INDEX == index || CZL_NEW_INDEX == index || CZL_NIL_INDEX == index || \
- CZL_NULL_INDEX == index || CZL_TRUE_INDEX == index || CZL_FALSE_INDEX == index)
+//是否是系统常量关键字
+#define CZL_IS_CONST_KW(index) \
+(CZL_NIL_INDEX == index || CZL_NULL_INDEX == index || \
+ CZL_TRUE_INDEX == index || CZL_FALSE_INDEX == index)
 ///////////////////////////////////////////////////////////////
 czl_var czl_true = {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {1}};
 czl_var czl_false = {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {0}};
+czl_var czl_nil = {NULL, CZL_NIL, CZL_CONST_VAR, 0, CZL_NIL, {0}};
+czl_var czl_null = {NULL, CZL_OBJ_REF, CZL_REF_ELE, 0, CZL_NULL, {0}};
 ///////////////////////////////////////////////////////////////
 char* czl_exp_analysis(czl_gp*, char*, czl_exp_handle*);
 char* czl_expression_analysis(czl_gp*, char*);
@@ -282,13 +282,21 @@ char* czl_keyword_find(czl_gp *gp, char *code, int *index, char flag)
 
     if ((*index=czl_is_keyword(gp, name)))
     {
-        if (1 == flag && CZL_IS_ESCAPE_KW(*index))
+        if (1 == flag)
         {
-            error_line_backup = gp->error_line;
-            code = czl_ignore_sign_filt(gp, code);
-            if ('(' == *code)
+            if (CZL_IS_ESCAPE_KW(*index))
             {
-                gp->error_line = error_line_backup;
+                error_line_backup = gp->error_line;
+                code = czl_ignore_sign_filt(gp, code);
+                if ('(' == *code)
+                {
+                    gp->error_line = error_line_backup;
+                    *index = 0;
+                    return tmp;
+                }
+            }
+            else if (CZL_IS_CONST_KW(*index))
+            {
                 *index = 0;
                 return tmp;
             }
@@ -1376,7 +1384,7 @@ char* czl_var_match
             return NULL;
         }
         code = czl_ignore_sign_filt(gp, code);
-        if ('=' == *code)
+        if ('=' == *code && *(code+1) != '=')
         {
             //函数内部可以不用"var"关键字定义变量，全局或类成员变量必须用"var"声明
             if (!(var=czl_dynamic_var_create(gp, name)))
@@ -1396,10 +1404,6 @@ char* czl_var_match
                 return NULL;
             var = (czl_var*)newObj;
         }
-        else if (strcmp("nil", name) == 0)
-            type = CZL_NIL;
-        else if (strcmp("null", name) == 0)
-            type = CZL_OBJ_REF;
         else if (strcmp("true", name) == 0)
         {
             type = CZL_ENUM;
@@ -1409,6 +1413,16 @@ char* czl_var_match
         {
             type = CZL_ENUM;
             var = &czl_false;
+        }
+        else if (strcmp("nil", name) == 0)
+        {
+            type = CZL_ENUM;
+            var = &czl_nil;
+        }
+        else if (strcmp("null", name) == 0)
+        {
+            type = CZL_ENUM;
+            var = &czl_null;
         }
         else
         {
@@ -1602,7 +1616,6 @@ char czl_is_var_or_fun(czl_gp *gp, char **code, czl_exp_node **node, char *flag)
 {
     char name[CZL_NAME_MAX_SIZE];
     char *s = *code;
-    int index;
     char global_flag = 0;
     char this_flag = 0;
     unsigned long line;
@@ -1620,8 +1633,6 @@ char czl_is_var_or_fun(czl_gp *gp, char **code, czl_exp_node **node, char *flag)
 
     if (!(s=czl_name_match(gp, s, name)))
         return 1;
-    if ((index=czl_is_keyword(gp, name)) && !CZL_IS_OBJ_KW(index))
-        return 0;
 
     line = gp->error_line;
     s = czl_ignore_sign_filt(gp, s);
@@ -2176,7 +2187,7 @@ char* czl_var_def(czl_gp *gp, char *code, char quality, char ot)
         if (const_init_flag)
         {
             code = czl_ignore_sign_filt(gp, code);
-            if ('=' == *code)
+            if ('=' == *code && *(code+1) != '=')
             {
                 if (!(code=czl_is_exp_right(gp, code+1)))
                     return NULL;
@@ -2212,7 +2223,7 @@ char* czl_var_def(czl_gp *gp, char *code, char quality, char ot)
         else
         {
             code = czl_ignore_sign_filt(gp, code);
-            if ('=' == *code)
+            if ('=' == *code && *(code+1) != '=')
             {
                 gp->error_line = error_line_backup;
                 if (!(code=czl_is_exp_right(gp, tmp)))
@@ -2340,7 +2351,7 @@ char* czl_obj_paras_def
     case CZL_ARRAY: case CZL_STACK: case CZL_QUEUE:
         newObj->new_obj.arr.init_list = NULL;
         newObj->new_obj.arr.len = len;
-        if ('=' == *code)
+        if ('=' == *code && *(code+1) != '=')
         {
             code = czl_ignore_sign_filt(gp, code+1);
             if (*code != '[')
@@ -2356,7 +2367,7 @@ char* czl_obj_paras_def
     case CZL_STRING:
         newObj->new_obj.arr.init_list = NULL;
         newObj->new_obj.arr.len = len;
-        if ('=' == *code)
+        if ('=' == *code && *(code+1) != '=')
         {
 			czl_var *str;
             code = czl_ignore_sign_filt(gp, code+1);
@@ -2410,7 +2421,7 @@ char* czl_objs_def
         if (!(code=czl_var_create(gp, code, &var, quality, type)))
             return NULL;
         code = czl_ignore_sign_filt(gp, code);
-        if ('=' == *code)
+        if ('=' == *code && *(code+1) != '=')
         {
             if (const_init_flag)
             {
@@ -3066,9 +3077,6 @@ char* czl_context_analysis(czl_gp *gp, char *code, int index)
     int ret;
     char do_while_end = 0;
 
-    //以下1、2、3的步骤不能换
-
-    //1
     ret = czl_condition_block_check(gp, index, &code, &do_while_end);
     if (1 == ret)
     {
@@ -3085,16 +3093,10 @@ char* czl_context_analysis(czl_gp *gp, char *code, int index)
     if (do_while_end)
         return code;
 
-    //2
-    if (!index)
-    {
-        //表达式语句
-        return czl_sentence_match(gp, code);
-    }
-
-    //3
     switch (index)
     {
+    case 0:
+        return czl_sentence_match(gp, code);
     case CZL_IF_INDEX: case CZL_ELIF_INDEX: case CZL_ELSE_INDEX:
     case CZL_FOR_INDEX: case CZL_WHILE_INDEX: case CZL_DO_INDEX:
     case CZL_SWITCH_INDEX: case CZL_CASE_INDEX: case CZL_DEFAULT_INDEX:
@@ -3281,7 +3283,7 @@ char* czl_fun_paras_match(czl_gp *gp, char *code, czl_fun *fun)
                 return NULL;
 
             code = czl_ignore_sign_filt(gp, code);
-            if ('=' == *code)
+            if ('=' == *code && *(code+1) != '=')
             {
                 if (ref_flag)
                     return NULL;

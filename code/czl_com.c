@@ -29,7 +29,7 @@ char czl_com_list(czl_gp *gp, czl_fun *fun)
     unsigned long pcReturned = 0;	//载入缓冲区的结构数量（用于那些能返回多个结构的函数）
     PORT_INFO_2 *pPort;
     czl_array *arr = NULL;
-	void **obj;
+    void **obj;
 
     //获取端口信息，能得到端口信息的大小 pcbNeeded
     EnumPorts(NULL, 2, pBite, 0, &pcbNeeded, &pcReturned);
@@ -52,12 +52,12 @@ char czl_com_list(czl_gp *gp, czl_fun *fun)
             if (hCom != INVALID_HANDLE_VALUE)
             {
                 CloseHandle(hCom);
-				 if (!obj)
-				{
-					if (!(obj=czl_array_create(gp, 1, 0)))
-						goto CZL_END;
-					arr = CZL_ARR(obj);
-				}
+                 if (!obj)
+                {
+                    if (!(obj=czl_array_create(gp, 1, 0)))
+                        goto CZL_END;
+                    arr = CZL_ARR(obj);
+                }
                 if (++arr->cnt > arr->sum &&
                     !czl_array_resize(gp, arr, arr->cnt))
                 {
@@ -293,7 +293,7 @@ char czl_com_read(czl_gp *gp, czl_fun *fun)
                 fun->ret.val.inum = 0;
                 return 1;
             }
-            ret = czl_set_ret_str(gp, fun, buf, size);
+            ret = czl_set_ret_str(gp, &fun->ret, buf, size);
             if (len > 1024)
                 CZL_TMP_FREE(gp, buf, len);
         }
@@ -311,7 +311,7 @@ char czl_com_read(czl_gp *gp, czl_fun *fun)
                     WaitForSingleObject(ov.hEvent, INFINITE);
                     GetOverlappedResult(hCom, &ov, &size, TRUE);
                     if (size)
-                        ret = czl_set_ret_str(gp, fun, buf, size);
+                        ret = czl_set_ret_str(gp, &fun->ret, buf, size);
                     else
                         fun->ret.val.inum = 0;
                 }

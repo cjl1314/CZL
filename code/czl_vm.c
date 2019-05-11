@@ -1065,57 +1065,20 @@ void czl_eles_delete(czl_gp *gp, czl_ele *p)
     }
 }
 
-czl_var* czl_ele_create(czl_gp *gp, char type, void *val)
+czl_var* czl_ele_create(czl_gp *gp, char type, void *obj)
 {
 	czl_ele *p;
-
-    if ((CZL_NIL == type || CZL_OBJ_REF == type) && gp->eles_head)
-    {
-        if (type == gp->eles_head->type)
-            return (czl_var*)gp->eles_head;
-        else if (gp->eles_head->next &&
-                 type == gp->eles_head->next->type)
-            return (czl_var*)gp->eles_head->next;
-    }
 
     if (!(p=(czl_ele*)CZL_RT_MALLOC(gp, sizeof(czl_ele))))
         return NULL;
 
     p->type = type;
-    p->val.Obj = val;
-    if (CZL_OBJ_REF == type)
-    {
-        p->quality = CZL_REF_ELE;
-        p->ot = CZL_NULL;
-    }
-    else
-    {
-        p->quality = CZL_CONST_VAR;
-        p->ot = CZL_NIL;
-    }
+    p->val.Obj = obj;
+    p->quality = CZL_CONST_VAR;
+    p->ot = CZL_NIL;
 
-    if (gp->eles_head &&
-        (CZL_NIL == gp->eles_head->type ||
-         CZL_OBJ_REF == gp->eles_head->type))
-    {
-        if (gp->eles_head->next &&
-            (CZL_NIL == gp->eles_head->next->type ||
-             CZL_OBJ_REF == gp->eles_head->next->type))
-        {
-            p->next = gp->eles_head->next->next;
-            gp->eles_head->next->next = p;
-        }
-        else
-        {
-            p->next = gp->eles_head->next;
-            gp->eles_head->next = p;
-        }
-    }
-    else
-    {
-        p->next = gp->eles_head;
-        gp->eles_head = p;
-    }
+    p->next = gp->eles_head;
+    gp->eles_head = p;
 
     return (czl_var*)p;
 }
@@ -1442,11 +1405,13 @@ char czl_exp_integrity_check(czl_gp *gp, czl_exp_handle *h)
         return 0;
     }
 
-    //nil/null 必须配合 = 使用
+    //null 必须配合 = 使用
     if (CZL_OPERAND == h->root->flag &&
-        (CZL_NIL == h->root->type || CZL_OBJ_REF == h->root->type))
+        CZL_ENUM == h->root->type &&
+        (CZL_OBJ_REF == ((czl_var*)h->root->op.obj)->type ||
+         CZL_NIL == ((czl_var*)h->root->op.obj)->type))
     {
-        sprintf(gp->log_buf, "nil/null should be used with '=' , ");
+        sprintf(gp->log_buf, "null/nil should be used with '=' , ");
         return 0;
     }
 
@@ -1515,8 +1480,7 @@ czl_exp_node* czl_opr_node_create(czl_gp *gp, char type, void *val)
             return NULL;
         type = CZL_ENUM;
         break;
-    case CZL_FUN_REF:
-    case CZL_NEW: case CZL_NIL: case CZL_OBJ_REF:
+    case CZL_FUN_REF: case CZL_NEW:
     case CZL_ARRAY_LIST: case CZL_TABLE_LIST:
         if (!(val=czl_ele_create(gp, type, val)))
             return NULL;
@@ -2630,10 +2594,15 @@ static void czl_fun_ret_check_free(czl_gp *gp, czl_var *res, czl_var *lo, czl_va
         czl_val_del(gp, lo);
         lo->type = CZL_INT;
     }
-    if (ro && CZL_FUNRET_VAR == ro->quality)
+    if (ro)
     {
-        czl_val_del(gp, ro);
-        ro->type = CZL_INT;
+        if (CZL_STR_ELE == ro->quality)
+            czl_set_char(gp);
+        else if (CZL_FUNRET_VAR == ro->quality)
+        {
+            czl_val_del(gp, ro);
+            ro->type = CZL_INT;
+        }
     }
 }
 
@@ -7271,8 +7240,7 @@ char czl_sys_lib_hash_create(czl_gp *gp)
 
     if (0 == czl_syslibs_num) return 1;
 
-    if (!(libs=(czl_syslib*)CZL_TMP_CALLOC(gp, czl_syslibs_num,
-                                      sizeof(czl_syslib))))
+    if (!(libs=(czl_syslib*)CZL_TMP_CALLOC(gp, czl_syslibs_num, sizeof(czl_syslib))))
         return 0;
 
     gp->tmp->syslibs = libs;
