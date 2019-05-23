@@ -13,7 +13,7 @@ main
 {
 	setRank(0)
 	
-	a = {}
+	a := {}
 	for i in (0, 1000*1000)
 		a[i] = new a
 	echo(clock())
@@ -22,7 +22,7 @@ main
 		i => a
 	echo(clock())
 	
-	b = {}
+	b := {}
 	for i in (0, 1000*1000, 2)
 		b[i] = new b
 	echo(clock())

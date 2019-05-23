@@ -121,7 +121,7 @@ do { objs[i]->quality = quality[i]; } while (++i < j);
 ///////////////////////////////////////////////////////////////
 //运算符
 //添加或删除元素后注意修改宏: CZL_UNARY_OPT_NUMBER 和 CZL_BINARY_OPT_NUMBER
-typedef enum czl_opt_enum
+typedef enum czl_op_enum
 {
     //单目运算符
     CZL_NUMBER_NOT,	// - 必须从0开始映射到czl_opt_cac_funs函数指针数组下标
@@ -200,7 +200,7 @@ typedef enum czl_opt_enum
     CZL_TASK_BEGIN,         //task
     CZL_TIMER_INIT,         //task计时初始化
     CZL_TIMER_SLEEP,        //timer
-} czl_opt_enum;
+} czl_op_enum;
 
 //单目运算符位置性: 左、右
 typedef enum czl_unary_opt_pos_enum
@@ -261,8 +261,8 @@ typedef enum czl_bracket_flag_enum
 //查找模式
 typedef enum czl_find_mode_enum
 {
-    CZL_GLOBAL_FIND,
-    CZL_LOCAL_FIND
+    CZL_LOCAL_FIND,
+    CZL_GLOBAL_FIND
 } czl_find_mode_enum;
 
 //变量属性
@@ -480,7 +480,7 @@ typedef union czl_value
 typedef struct czl_unary_operator
 {
     char *name;				//操作符字符串名称
-    char macro;             //操作符枚举: czl_opt_enum
+    char macro;             //操作符枚举: czl_op_enum
     char position;          //运算符位置性: czl_unary_opt_pos_enum
 } czl_unary_operator;
 
@@ -488,7 +488,7 @@ typedef struct czl_unary_operator
 typedef struct czl_binary_operator
 {
     char *name;				//操作符字符串名称
-    char macro;         	//操作符枚举: czl_opt_enum
+    char macro;         	//操作符枚举: czl_op_enum
     char priority;			//优先级: 见 czl_binary_opt_table
     char associativity;     //结合性: czl_binary_opt_ass_enum
 } czl_binary_operator;
@@ -512,8 +512,8 @@ typedef struct czl_exp_node
 {
     czl_exp_op op;              //操作数或运算符
     unsigned char bracket;      //括号标识符: czl_bracket_flag_enum
-    unsigned char flag;         //操作对象标识符: czl_order_type_enum
-    unsigned char type;         //操作数或运算符类型: czl_opr_type_enum/czl_opt_enum
+    unsigned char flag;         //操作对象标识符: czl_op_enum
+    unsigned char type;         //操作数或运算符类型: czl_opr_type_enum/czl_op_enum
     struct czl_exp_node *left;
     struct czl_exp_node *right;
     struct czl_exp_node *parent;
@@ -548,8 +548,8 @@ typedef struct czl_exp_ele
     struct czl_var *lo;    //左操作数
     struct czl_var *ro;    //右操作数
     struct czl_var *res;   //临时变量用于存运算符结果
-    unsigned char flag;    //元素对象标识符: czl_order_type_enum
-    unsigned char kind;    //操作数或运算符指令类型: czl_opr_type_enum/czl_opt_enum
+    unsigned char flag;    //元素对象标识符: czl_op_enum
+    unsigned char kind;    //操作数或运算符指令类型: czl_opr_type_enum/czl_op_enum
     unsigned char lt;      //左操作数类型: czl_opr_type_enum
     unsigned char rt;      //右操作数类型: czl_opr_type_enum
 } czl_exp_ele, *czl_exp_stack;
@@ -674,7 +674,7 @@ typedef union czl_sentence_union
 //语句节点
 typedef struct czl_sentence
 {
-    unsigned long type;			 //语句类型: czl_order_type_enum
+    unsigned long type;			 //语句类型: czl_op_enum
     czl_sentence_union sentence; //语句
     struct czl_sentence *next;
 } czl_sentence, *czl_sentence_list;
@@ -682,7 +682,7 @@ typedef struct czl_sentence
 //全局变量初始化语句节点
 typedef struct czl_glo_sentence
 {
-    unsigned long type;			 //语句类型: czl_order_type_enum
+    unsigned long type;			 //语句类型: czl_op_enum
     czl_sentence_union sentence; //语句
     struct czl_glo_sentence *next;
     char *file;
@@ -904,7 +904,7 @@ typedef struct czl_fun
     czl_sentence_list sentences_head;       //语句列表头
     struct czl_class_ptr_vars *class_vars;  //类成员this变量入参列表
     void **cur_ins;                         //当前类函数所属的实例
-    unsigned long hash;                     //函数名哈希值，用于类函数的快速访问
+    unsigned long hash;                     //函数名哈希值
     czl_exp_ele *pc;                        //yeild语句的下一条pc地址
     czl_foreach *foreachs;                  //foreach语句指针数组
     unsigned short foreach_cnt;             //foreach object语句个数
@@ -945,7 +945,6 @@ typedef struct czl_class
     unsigned char final_flag;           //终节点类标志位
     unsigned short parents_count;       //父类继承个数
     unsigned long vars_count;           //类成员动态变量个数
-    unsigned long hash;                 //类名哈希值
     czl_class_var_list vars;            //类成员变量列表头
     czl_enum_list enums;                //类成员枚举列表头
     czl_fun_list funs;                  //类成员函数列表头
@@ -1166,9 +1165,9 @@ typedef struct czl_exp_fun
 typedef struct czl_nsef
 {
     unsigned char flag;  //1: fun(a,b) 0: @fun
-    czl_exp_fun *ef;
+    unsigned short err_line;
     char *err_file;
-    unsigned long err_line;
+    czl_exp_fun *ef;
     struct czl_nsef *next;
 } czl_nsef;
 
@@ -1240,6 +1239,16 @@ typedef struct czl_syslib
     czl_sys_hash hash;
 } czl_syslib;
 
+typedef struct czl_usrlib
+{
+    char *name;
+    struct czl_usrlib *next;
+    czl_nsef *nsef_head;
+    czl_nsef *nsef_tail;
+    czl_sys_hash vars_hash;
+    czl_sys_hash funs_hash;
+} czl_usrlib;
+
 //协程节点结构
 typedef struct czl_coroutine
 {
@@ -1308,6 +1317,7 @@ typedef struct czl_analysis_gp
     czl_sys_hash syslibs_hash;  //系统库哈希索引
     czl_sys_hash *osfun_hash;   //os系统库函数哈希索引
     czl_sys_hash keyword_hash;  //系统关键字哈希索引
+    czl_sys_hash usrlibs_hash;  //用户库哈希索引
     //
     czl_sys_hash consts_hash;
     czl_sys_hash vars_hash;
@@ -1331,6 +1341,9 @@ typedef struct czl_analysis_gp
     //
     czl_sys_hash sn_hash;       //脚本文件名哈希索引
     //
+    czl_usrlib *cur_usrlib; //当前用户库
+    czl_usrlib *usrlib_head; //用户库链表头节点
+    //
     czl_glo_var_list global_vars_tail;          //指向全局变量尾节点
     //
     czl_sentence_list sentences_tail;           //当前函数语句列表尾
@@ -1342,14 +1355,14 @@ typedef struct czl_analysis_gp
     //
     czl_class_ptr_vars *class_ptr_vars_head;     //引用变量头
     czl_class_ptr_vars *class_ptr_vars_tail;     //引用变量尾
-    czl_class_var *current_class_var;            //当前类函数中的成员变量
-    czl_class *current_var_class;                //czl_current_class_var所属的类
+    czl_class_var *cur_class_var;                //当前类函数中的成员变量
+    czl_class *cur_var_class;                    //czl_cur_class_var所属的类
     czl_ins_var *ins_vars_tail;                  //引用实例变量尾
     //
     unsigned char variable_field;           //当前解析的是变量还是常量
     unsigned char analysis_field;			//当前解析域在全局还是函数内
     //
-    unsigned char current_loop_type;	//当前解释循环语句块类型: for/while
+    unsigned char cur_loop_type;	//当前解释循环语句块类型: for/while
     unsigned char foreach_type;             //foreach类型
     czl_para_list for_paras_start;		//for循环参数开始列表
     czl_para_list for_paras_end;		//for循环参数结尾列表
@@ -1358,7 +1371,7 @@ typedef struct czl_analysis_gp
     czl_try_type_enum try_type; //try语句异常触发行为处理类型
     czl_para_list try_paras; //try语句异常触发执行序列
     //
-    czl_branch_type_enum current_branch_type;//当前解释分支语句块类型: if/switch
+    czl_branch_type_enum cur_branch_type;//当前解释分支语句块类型: if/switch
     czl_para_list branch_child_paras; //elif条件参数或switch语句连续case参数列表
     //
     char *goto_flag_name;   //goto语句标志名称
@@ -1516,7 +1529,8 @@ czl_var* czl_var_find(czl_gp*, char*, char);
 czl_var* czl_var_find_in_exp(czl_gp*, char*, char, char);
 void czl_file_delete(czl_gp*, void**);
 czl_class* czl_class_create(czl_gp*, char*, char);
-czl_class* czl_class_find(czl_gp*, char*);
+czl_class* czl_class_find_in_local(czl_gp*, char*);
+czl_class* czl_class_find(czl_gp*, char*, char);
 char czl_class_insert(czl_gp*, czl_class*);
 czl_class_parent* czl_class_parent_node_create(czl_gp*, czl_class*, char);
 void czl_class_parent_node_insert(czl_class_parent**,
@@ -1653,6 +1667,7 @@ void czl_coroutine_delete(czl_gp*, czl_var*, void**);
 void czl_coroutine_paras_reset(czl_gp*, czl_var*, unsigned long);
 czl_var* czl_coroutine_run(czl_gp*, czl_para*, unsigned long, void**);
 void czl_log(czl_gp*, char*);
+czl_usrlib* czl_usrlib_create(czl_gp*, char*);
 ///////////////////////////////////////////////////////////////
 void* czl_malloc(czl_gp*, czl_ulong
                  #ifdef CZL_MM_MODULE

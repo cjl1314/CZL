@@ -1,9 +1,9 @@
 bubble_sort(&a) 
 {
-	size = #a
+	size := #a
 	for i in (0, size-1)
 	{
-		k = size-2-i
+		k := size-2-i
 		for j in (0, k)
 			if (a[j] < a[j+1])
 				a[j] >< a[j+1]

@@ -997,9 +997,9 @@ char czl_sizeof_obj
         *sum += flag ? 7 : sizeof(czl_file);
         return 1;
     case CZL_INSTANCE:
-        if (flag)
-            *sum += 5;
         czl_sizeof_ins(gp, flag, CZL_INS(obj->val.Obj), sum);
+        if (flag)
+            *sum += (2+strlen(CZL_INS(obj->val.Obj)->pclass->name));
         return 1;
     case CZL_TABLE:
         czl_sizeof_tab(gp, flag, CZL_TAB(obj->val.Obj), sum);
@@ -1143,6 +1143,10 @@ char* czl_get_ins_buf(czl_gp *gp, czl_ins *ins, char *buf)
 {
 	czl_var *var;
 	unsigned long i, j;
+
+
+    strcpy(buf, ins->pclass->name);
+    buf += (strlen(ins->pclass->name)+1);
 
     var = CZL_GIV(ins);
 	for (i = 0, j = ins->pclass->vars_count; i < j; i++)
@@ -1308,8 +1312,7 @@ char* czl_get_obj_buf
     case CZL_STRING:
         return czl_get_str_buf(CZL_STR(obj->val.str.Obj), buf);
     case CZL_INSTANCE:
-        *((unsigned long*)buf) = CZL_INS(obj->val.Obj)->pclass->hash;
-        return czl_get_ins_buf(gp, CZL_INS(obj->val.Obj), buf+4);
+        return czl_get_ins_buf(gp, CZL_INS(obj->val.Obj), buf);
     case CZL_TABLE:
         return czl_get_tab_buf(gp, CZL_TAB(obj->val.Obj), buf);
     case CZL_ARRAY:
@@ -1495,7 +1498,7 @@ char* czl_analysis_ins(czl_gp *gp, char *buf, czl_ins *ins)
 
 char* czl_analysis_ins_buf(czl_gp *gp, char *buf, czl_var *obj)
 {
-    czl_class *pclass = (czl_class*)czl_sys_hash_find(CZL_STRING, CZL_INT,
+    czl_class *pclass = (czl_class*)czl_sys_hash_find(CZL_STRING, CZL_NIL,
                                                       buf, &gp->class_hash);
 
     if (!pclass || !(obj->val.Obj=czl_instance_fork(gp, pclass, 0)))
@@ -1506,7 +1509,7 @@ char* czl_analysis_ins_buf(czl_gp *gp, char *buf, czl_var *obj)
 
     obj->type = CZL_INSTANCE;
 
-    return czl_analysis_ins(gp, buf+4, CZL_INS(obj->val.Obj));
+    return czl_analysis_ins(gp, buf+strlen(buf)+1, CZL_INS(obj->val.Obj));
 }
 
 char* czl_analysis_tab_buf(czl_gp *gp, char *buf, czl_var *obj)

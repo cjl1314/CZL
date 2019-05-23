@@ -1085,7 +1085,7 @@ czl_var* czl_ele_create(czl_gp *gp, char type, void *obj)
 
 czl_var* czl_const_create(czl_gp *gp, char type, const czl_value *val)
 {
-    char *key = (CZL_STRING == type ? CZL_STR(val->str.Obj)->str : (char*)val);
+    char *key = (CZL_STRING == type ? (char*)CZL_STR(val->str.Obj) : (char*)val);
 
     czl_glo_var *p = (czl_glo_var*)czl_sys_hash_find(CZL_ENUM, type,
                                                      key, &gp->tmp->consts_hash);
@@ -2880,7 +2880,7 @@ static char czl_sys_hash_size_update
 void* czl_sys_hash_find
 (
     char type,
-    char flag, //用于 type==CZL_ENUM 时 key 的类型, type==CZL_STRING 时 key 的类型
+    char flag, //用于 type==CZL_ENUM 时 key 的类型
     char *key,
     const czl_sys_hash *table
 )
@@ -2899,17 +2899,14 @@ void* czl_sys_hash_find
         //只要是建有哈希表的存储结构，哈希对象地址必须放在结构的首地址，
         //比如czl_var/czl_fun/czl_class/czl_sys_fun/czl_name/czl_keyword等，
         //这样做可以避免对每种结构哈希时需要判断哈希对象的地址。
-        if (CZL_NIL == flag)
-            CZL_INDEX_CAC(index, czl_bkdr_hash(key, strlen(key)), table->mask);
-        else
-            CZL_INDEX_CAC(index, *((unsigned long*)key), table->mask);
+        CZL_INDEX_CAC(index, czl_bkdr_hash(key, strlen(key)), table->mask);
         break;
     default: //CZL_ENUM 用于常量字符串
         switch (flag)
         {
         case CZL_STRING:
             CZL_INDEX_CAC(index,
-                          czl_bkdr_hash(key, strlen(key)),
+                          czl_bkdr_hash(((czl_string*)key)->str, ((czl_string*)key)->len),
                           table->mask);
             break;
         case CZL_INT:
@@ -2943,7 +2940,10 @@ void* czl_sys_hash_find
         {
         case CZL_STRING:
             while (p && (CZL_STRING != ((czl_var*)p->key)->type ||
-                         strcmp(key, CZL_STR(((czl_var*)p->key)->val.str.Obj)->str)))
+                         ((czl_string*)key)->len !=
+                         CZL_STR(((czl_var*)p->key)->val.str.Obj)->len ||
+                         strcmp(((czl_string*)key)->str,
+                                CZL_STR(((czl_var*)p->key)->val.str.Obj)->str)))
                 p = p->next;
             break;
         case CZL_INT:
@@ -3965,7 +3965,7 @@ czl_loc_var* czl_loc_var_create
 czl_glo_var* czl_glo_var_create
 (
     czl_gp *gp,
-    const char *name,
+    char *name,
     char quality,
     char ot
 )
@@ -3974,19 +3974,12 @@ czl_glo_var* czl_glo_var_create
     if (!p)
         return NULL;
 
-    //系统函数传入参数变量名为空
-    //类实例变量名不分配新空间而是指向类变量名
-    if (!name)
-        p->name = NULL;
-    else
+    if (!(p->name=(char*)CZL_TMP_MALLOC(gp, strlen(name)+1)))
     {
-        if (!(p->name=(char*)CZL_TMP_MALLOC(gp, strlen(name)+1)))
-        {
-            CZL_RT_FREE(gp, p, sizeof(czl_glo_var));
-            return NULL;
-        }
-        strcpy(p->name, name);
+        CZL_RT_FREE(gp, p, sizeof(czl_glo_var));
+        return NULL;
     }
+    strcpy(p->name, name);
 
     p->ot = ot;
     p->quality = quality;
@@ -4120,7 +4113,10 @@ czl_var* czl_var_create_by_field(czl_gp *gp, char *name, char quality, char ot)
         else //变量
             czl_var_node_insert(&gp->vars_head,
                                 &gp->tmp->global_vars_tail, node);
-        if (!czl_sys_hash_insert(gp, CZL_STRING, node, &gp->tmp->vars_hash))
+        if (!czl_sys_hash_insert(gp, CZL_STRING, node,
+                                 gp->tmp->cur_usrlib ?
+                                 &gp->tmp->cur_usrlib->vars_hash :
+                                 &gp->tmp->vars_hash))
             return NULL;
         break;
     case CZL_IN_CLASS:
@@ -4176,8 +4172,10 @@ czl_var* czl_var_create_by_field(czl_gp *gp, char *name, char quality, char ot)
 
 czl_var* czl_var_find_in_global(czl_gp *gp, char *name)
 {
-    czl_var *node = (czl_var*)czl_sys_hash_find(CZL_STRING, CZL_NIL,
-                                                name, &gp->tmp->vars_hash);
+    czl_var *node = (czl_var*)czl_sys_hash_find(CZL_STRING, CZL_NIL, name,
+                                                gp->tmp->cur_usrlib ?
+                                                &gp->tmp->cur_usrlib->vars_hash :
+                                                &gp->tmp->vars_hash);
 
     if (CZL_IN_CONSTANT == gp->tmp->variable_field &&
         node && node->quality != CZL_CONST_VAR)
@@ -4247,7 +4245,7 @@ czl_var* czl_var_find_in_fun
                 (node=(czl_var*)czl_loc_var_find
                         (name, block->block.fun->loc_vars)))
                 return node;
-            return NULL;
+            return CZL_GLOBAL_FIND == mode ? czl_var_find_in_global(gp, name) : NULL;
         case CZL_LOOP_BLOCK:
             if (block->block.loop->store_device)
                 node = czl_var_find_in_store(gp, name,
@@ -4323,8 +4321,8 @@ czl_class_var* czl_var_find_in_class_parents
                 if (CZL_IN_CLASS_FUN == gp->tmp->analysis_field &&
                     CZL_DYNAMIC_VAR == node->quality)
                 {
-                    gp->tmp->current_class_var = node;
-                    gp->tmp->current_var_class = pclass;
+                    gp->tmp->cur_class_var = node;
+                    gp->tmp->cur_var_class = pclass;
                 }
                 return node;
             }
@@ -4356,8 +4354,8 @@ czl_var* czl_var_find_in_class
             CZL_IN_CLASS_FUN == gp->tmp->analysis_field &&
             CZL_DYNAMIC_VAR == node->quality)
         {
-            gp->tmp->current_class_var = node;
-            gp->tmp->current_var_class = gp->tmp->cur_class;
+            gp->tmp->cur_class_var = node;
+            gp->tmp->cur_var_class = gp->tmp->cur_class;
         }
         return (czl_var*)node;
     }
@@ -4377,7 +4375,7 @@ czl_var* czl_var_find(czl_gp *gp, char *name, char mode)
         return czl_var_find_in_global(gp, name);
     case CZL_IN_CLASS:
         return czl_var_find_in_class(gp, name, 0);
-    default: //CZL_IN_GLOBAL_FUN、CZL_IN_CLASS_FUN
+    default: //CZL_IN_GLOBAL_FUN/CZL_IN_CLASS_FUN
         return czl_var_find_in_fun(gp, name, mode);
     }
 }
@@ -4392,14 +4390,14 @@ czl_var* czl_var_find_in_exp
 {
     czl_var *node;
 
-    gp->tmp->current_class_var = NULL;
+    gp->tmp->cur_class_var = NULL;
 
     if (global_flag)
         return czl_var_find_in_global(gp, name);
     else if (this_flag)
     {
         node = czl_var_find_in_class(gp, name, 1);
-        if (gp->tmp->current_class_var)
+        if (gp->tmp->cur_class_var)
             return czl_class_ref_var_node_create(gp);
         return node;
     }
@@ -4419,11 +4417,23 @@ char czl_nsef_create(czl_gp *gp, void *ef, char flag)
     n->err_line = gp->error_line;
     n->next = NULL;
 
-    if (!gp->tmp->nsef_head)
-        gp->tmp->nsef_head = n;
+    if (gp->tmp->cur_usrlib)
+    {
+        czl_usrlib *usrlib = gp->tmp->cur_usrlib;
+        if (!usrlib->nsef_head)
+            usrlib->nsef_head = n;
+        else
+            usrlib->nsef_tail->next = n;
+        usrlib->nsef_tail = n;
+    }
     else
-        gp->tmp->nsef_tail->next = n;
-     gp->tmp->nsef_tail = n;
+    {
+        if (!gp->tmp->nsef_head)
+            gp->tmp->nsef_head = n;
+        else
+            gp->tmp->nsef_tail->next = n;
+        gp->tmp->nsef_tail = n;
+    }
 
     return 1;
 }
@@ -4602,23 +4612,27 @@ void czl_para_explain_list_delete(czl_gp *gp, czl_para_explain *p)
 ///////////////////////////////////////////////////////////////
 czl_class* czl_class_create(czl_gp *gp, char *name, char final_flag)
 {
-    unsigned long len = strlen(name);
+    unsigned long libLen = (gp->tmp->cur_usrlib ? strlen(gp->tmp->cur_usrlib->name)+1 : 0);
     czl_class *p = (czl_class*)CZL_RT_MALLOC(gp, sizeof(czl_class));
     if (!p)
         return NULL;
 
-    if (!(p->name=(char*)CZL_RT_MALLOC(gp, len+1)))
+    if (!(p->name=(char*)CZL_RT_MALLOC(gp, strlen(name)+libLen+1)))
     {
         CZL_RT_FREE(gp, p, sizeof(czl_class));
         return NULL;
     }
-    strcpy(p->name, name);
+    if (libLen)
+    {
+        strcpy(p->name, gp->tmp->cur_usrlib->name);
+        p->name[libLen-1] = '.';
+    }
+    strcpy(p->name+libLen, name);
 
     p->vars = NULL;
     p->flag = CZL_NOT_SURE;
     p->final_flag = final_flag;
     p->vars_count = 0;
-    p->hash = czl_bkdr_hash(name, len);
     p->enums = NULL;
     p->funs = NULL;
     p->parents = NULL;
@@ -4638,9 +4652,26 @@ czl_class* czl_class_create(czl_gp *gp, char *name, char final_flag)
     return p;
 }
 
-czl_class* czl_class_find(czl_gp *gp, char *name)
+czl_class* czl_class_find_in_local(czl_gp *gp, char *name)
 {
+    if (gp->tmp->cur_usrlib)
+    {
+        char tmp[CZL_NAME_MAX_SIZE*2];
+        unsigned long len = strlen(gp->tmp->cur_usrlib->name);
+        strcpy(tmp, gp->tmp->cur_usrlib->name);
+        tmp[len] = '.';
+        strcpy(tmp+len+1, name);
+        name = tmp;
+    }
     return (czl_class*)czl_sys_hash_find(CZL_STRING, CZL_NIL, name, &gp->class_hash);
+}
+
+czl_class* czl_class_find(czl_gp *gp, char *name, char flag)
+{
+    if (flag)
+        return (czl_class*)czl_sys_hash_find(CZL_STRING, CZL_NIL, name, &gp->class_hash);
+    else
+        return czl_class_find_in_local(gp, name);
 }
 
 char czl_class_insert(czl_gp *gp, czl_class *node)
@@ -6117,7 +6148,7 @@ char czl_class_sort
 (
     czl_gp *gp,
     czl_class_ptr_vars **ptr_vars,
-    const czl_class *current_class
+    const czl_class *cur_class
 )
 {
 	int i;
@@ -6134,7 +6165,7 @@ char czl_class_sort
     for (i = 0; i < num; i++)
     {
         czl_class_index_find(p->pclass->name,
-                             current_class,
+                             cur_class,
                              &class_indexs[i]);
         p = p->next;
     }
@@ -6190,10 +6221,10 @@ czl_var* czl_class_ref_var_node_create(czl_gp *gp)
 
     while (ptr_vars)
     {
-        if (gp->tmp->current_var_class == ptr_vars->pclass)
+        if (gp->tmp->cur_var_class == ptr_vars->pclass)
         {
             for (node=ptr_vars->vars; node; node = node->next)
-                if (gp->tmp->current_class_var->index == node->index)
+                if (gp->tmp->cur_class_var->index == node->index)
                     return (czl_var*)node;
             break;
         }
@@ -6205,7 +6236,7 @@ czl_var* czl_class_ref_var_node_create(czl_gp *gp)
         if (!(ptr_vars=(czl_class_ptr_vars*)CZL_RT_MALLOC(gp, sizeof(czl_class_ptr_vars))))
             return NULL;
         ptr_vars->vars = NULL;
-        ptr_vars->pclass = gp->tmp->current_var_class;
+        ptr_vars->pclass = gp->tmp->cur_var_class;
         ptr_vars->next = NULL;
         if (NULL == gp->tmp->class_ptr_vars_head)
             gp->tmp->class_ptr_vars_head = ptr_vars;
@@ -6216,7 +6247,7 @@ czl_var* czl_class_ref_var_node_create(czl_gp *gp)
 
     if (!(node=(czl_ins_var*)CZL_RT_MALLOC(gp, sizeof(czl_ins_var))))
         return NULL;
-    node->index = gp->tmp->current_class_var->index;
+    node->index = gp->tmp->cur_class_var->index;
     node->next = NULL;
     if (NULL == ptr_vars->vars)
         ptr_vars->vars = node;
@@ -7273,8 +7304,7 @@ czl_sys_hash* czl_sys_fun_hash_create(czl_gp *gp, char *name)
     if (table->funs)
         return &table->hash;
 
-    if (!(funs=(czl_sysfun*)CZL_TMP_CALLOC(gp, table->lib->num,
-                                      sizeof(czl_sysfun))))
+    if (!(funs=(czl_sysfun*)CZL_TMP_CALLOC(gp, table->lib->num, sizeof(czl_sysfun))))
         return NULL;
     table->funs = funs;
 
@@ -7404,11 +7434,11 @@ czl_fun* czl_fun_node_create
         p->reg = NULL;
         p->reg_cnt = 0;
         p->opcode = NULL;
-        p->opcode_cnt= 0;
+        p->opcode_cnt = 0;
         if (CZL_USR_CLASS_FUN == type)
         {
-            p->permission = gp->tmp->permission;
             p->hash = czl_bkdr_hash(name, len);
+            p->permission = gp->tmp->permission;
         }
     }
 
@@ -7428,8 +7458,10 @@ char czl_fun_insert(czl_gp *gp, czl_fun *node)
     case CZL_IN_GLOBAL: case CZL_IN_GLOBAL_FUN:
         czl_fun_node_insert(&gp->funs_head, node);
         return czl_sys_hash_insert(gp, CZL_STRING, node,
+                                   gp->tmp->cur_usrlib ?
+                                   &gp->tmp->cur_usrlib->funs_hash :
                                    &gp->tmp->funs_hash);
-    default: //CZL_IN_CLASS、CZL_IN_CLASS_FUN
+    default: //CZL_IN_CLASS/CZL_IN_CLASS_FUN
         czl_fun_node_insert(&gp->tmp->cur_class->funs, node);
         if (czl_hash_repeat_check(node->hash,
                                   &gp->tmp->cur_class->funs_hash,
@@ -7478,24 +7510,27 @@ czl_fun* czl_fun_in_class_parents_find
     return NULL;
 }
 
+czl_fun* czl_fun_find_in_global(czl_gp *gp, char *name)
+{
+    return (czl_fun*)czl_sys_hash_find(CZL_STRING, CZL_NIL, name,
+                                       gp->tmp->cur_usrlib ?
+                                       &gp->tmp->cur_usrlib->funs_hash :
+                                       &gp->tmp->funs_hash);
+}
+
 czl_fun* czl_fun_find(czl_gp *gp, char *name, char mode)
 {
-    czl_fun *node;
-
-    switch (gp->tmp->analysis_field)
+    if (CZL_IN_GLOBAL == gp->tmp->analysis_field ||
+        CZL_IN_GLOBAL_FUN == gp->tmp->analysis_field)
+        return czl_fun_find_in_global(gp, name);
+    else //CZL_IN_CLASS、CZL_IN_CLASS_FUN
     {
-    case CZL_IN_GLOBAL: case CZL_IN_GLOBAL_FUN:
-        return (czl_fun*)czl_sys_hash_find(CZL_STRING, CZL_NIL, name, &gp->tmp->funs_hash);
-    default: //CZL_IN_CLASS、CZL_IN_CLASS_FUN
-        node = czl_fun_node_find(name, &gp->tmp->cur_class->funs_hash);
+        czl_fun *node = czl_fun_node_find(name, &gp->tmp->cur_class->funs_hash);
         if (node || CZL_LOCAL_FIND == mode)
             return node;
-        //CZL_GLOBAL_FIND
-        node = czl_fun_in_class_parents_find
-                (name, gp->tmp->cur_class->parents, 1);
-        if (node)
+        if ((node=czl_fun_in_class_parents_find(name, gp->tmp->cur_class->parents, 1)))
             return node;
-        return (czl_fun*)czl_sys_hash_find(CZL_STRING, CZL_NIL, name, &gp->tmp->funs_hash);
+        return czl_fun_find_in_global(gp, name);
     }
 }
 
@@ -7507,18 +7542,15 @@ czl_fun* czl_fun_find_in_exp
     char this_flag
 )
 {
-    czl_fun *node;
-
     if (global_flag)
-        return (czl_fun*)czl_sys_hash_find(CZL_STRING, CZL_NIL, name, &gp->tmp->funs_hash);
+        return czl_fun_find_in_global(gp, name);
 
     if (this_flag)
     {
-        node = czl_fun_node_find(name, &gp->tmp->cur_class->funs_hash);
+        czl_fun *node = czl_fun_node_find(name, &gp->tmp->cur_class->funs_hash);
         if (node)
             return node;
-        return czl_fun_in_class_parents_find
-                    (name, gp->tmp->cur_class->parents, 1);
+        return czl_fun_in_class_parents_find(name, gp->tmp->cur_class->parents, 1);
     }
 
     return czl_fun_find(gp, name, CZL_GLOBAL_FIND);
@@ -7602,7 +7634,7 @@ czl_branch_child* czl_branch_child_node_create(czl_gp *gp)
     if (!p)
         return NULL;
 
-    p->type = gp->tmp->current_branch_type;
+    p->type = gp->tmp->cur_branch_type;
     p->goto_flag = 0;
     p->conditions = gp->tmp->branch_child_paras;
     p->sentences_head = NULL;
@@ -7621,10 +7653,10 @@ czl_branch* czl_branch_node_create(czl_gp *gp)
     if (!p)
         return NULL;
 
-    if (CZL_SWITCH_BRANCH == gp->tmp->current_branch_type)
+    if (CZL_SWITCH_BRANCH == gp->tmp->cur_branch_type)
         gp->cur_fun->switch_flag = 1;
 
-    p->type = gp->tmp->current_branch_type;
+    p->type = gp->tmp->cur_branch_type;
     p->goto_flag = 0;
     p->condition = gp->tmp->exp_head;
     p->sentences_head = NULL;
@@ -7644,13 +7676,13 @@ czl_loop* czl_loop_node_create(czl_gp *gp)
     if (!p)
         return NULL;
 
-    p->type = gp->tmp->current_loop_type;
+    p->type = gp->tmp->cur_loop_type;
     p->goto_flag = 0;
     p->sentences_head = NULL;
     p->sentences_tail = NULL;
     p->store_device = NULL;
 
-    switch (gp->tmp->current_loop_type)
+    switch (gp->tmp->cur_loop_type)
     {
     case CZL_WHILE_LOOP: case CZL_DO_WHILE_LOOP: case CZL_TIMER_LOOP:
         p->condition = gp->tmp->exp_head;
@@ -7660,7 +7692,7 @@ czl_loop* czl_loop_node_create(czl_gp *gp)
         gp->tmp->exp_head = NULL;
         break;
     default: //CZL_FOR_LOOP/CZL_FOREACH_LOOP
-        if (CZL_FOREACH_LOOP == gp->tmp->current_loop_type)
+        if (CZL_FOREACH_LOOP == gp->tmp->cur_loop_type)
         {
             if (4 == gp->tmp->foreach_type || 5 == gp->tmp->foreach_type)
             {
@@ -10223,52 +10255,6 @@ void czl_vars_name_free(czl_gp *gp)
     }
 }
 ///////////////////////////////////////////////////////////////
-void czl_nsef_delete(czl_gp *gp, czl_nsef *p)
-{
-    czl_nsef *q;
-
-    while (p)
-    {
-        q = p->next;
-        CZL_TMP_FREE(gp, p, sizeof(czl_nsef));
-        p = q;
-    }
-}
-
-char czl_nsef_check(czl_gp *gp)
-{
-    czl_nsef *p = gp->tmp->nsef_head;
-
-    while (p)
-    {
-        if (p->flag)
-        {
-            if (CZL_IN_STATEMENT == p->ef->fun->state ||
-                !czl_fun_paras_check(gp, p->ef, p->ef->fun))
-            {
-                if (CZL_IN_STATEMENT == p->ef->fun->state)
-                    sprintf(gp->log_buf, "undefined function %s, ", p->ef->fun->name);
-                gp->error_file = p->err_file;
-                gp->error_line = p->err_line;
-                return 0;
-            }
-        }
-        else
-        {
-            if (CZL_IN_STATEMENT == ((czl_fun*)p->ef)->state)
-            {
-                sprintf(gp->log_buf, "undefined function %s, ", ((czl_fun*)p->ef)->name);
-                gp->error_file = p->err_file;
-                gp->error_line = p->err_line;
-                return 0;
-            }
-        }
-        p = p->next;
-    }
-
-    return 1;
-}
-
 static void czl_for_paras_delete
 (
     czl_gp *gp,
@@ -10305,19 +10291,118 @@ static void czl_for_paras_delete
     }
 }
 
+void czl_nsef_delete(czl_gp *gp, czl_nsef *p)
+{
+    czl_nsef *q;
+
+    while (p)
+    {
+        q = p->next;
+        CZL_TMP_FREE(gp, p, sizeof(czl_nsef));
+        p = q;
+    }
+}
+
+char czl_nsef_check(czl_gp *gp, czl_nsef *p)
+{
+    while (p)
+    {
+        if (p->flag)
+        {
+            if (CZL_IN_STATEMENT == p->ef->fun->state ||
+                !czl_fun_paras_check(gp, p->ef, p->ef->fun))
+            {
+                if (CZL_IN_STATEMENT == p->ef->fun->state)
+                    sprintf(gp->log_buf, "undefined function %s, ", p->ef->fun->name);
+                gp->error_file = p->err_file;
+                gp->error_line = p->err_line;
+                return 0;
+            }
+        }
+        else
+        {
+            if (CZL_IN_STATEMENT == ((czl_fun*)p->ef)->state)
+            {
+                sprintf(gp->log_buf, "undefined function %s, ", ((czl_fun*)p->ef)->name);
+                gp->error_file = p->err_file;
+                gp->error_line = p->err_line;
+                return 0;
+            }
+        }
+        p = p->next;
+    }
+
+    return 1;
+}
+
+char czl_usrlib_nsef_check(czl_gp *gp)
+{
+    czl_usrlib *l = gp->tmp->usrlib_head;
+
+    while (l)
+    {
+        if (!czl_nsef_check(gp, l->nsef_head))
+            return 0;
+        l = l->next;
+    }
+
+    return 1;
+}
+
+czl_usrlib* czl_usrlib_create(czl_gp *gp, char *name)
+{
+    czl_usrlib *p = (czl_usrlib*)CZL_TMP_MALLOC(gp, sizeof(czl_usrlib));
+    if (!p)
+        return NULL;
+
+    memset(p, 0, sizeof(czl_usrlib));
+
+    if (!(p->name=(char*)CZL_TMP_MALLOC(gp, strlen(name)+1)))
+    {
+        CZL_TMP_FREE(gp, p, sizeof(czl_usrlib));
+        return NULL;
+    }
+    strcpy(p->name, name);
+
+    p->next = gp->tmp->usrlib_head;
+    gp->tmp->usrlib_head = p;
+
+    if (!czl_sys_hash_insert(gp, CZL_STRING, p, &gp->tmp->usrlibs_hash))
+        return NULL;
+
+    return p;
+}
+
+void czl_usrlib_delete(czl_gp *gp, czl_usrlib *p)
+{
+    czl_usrlib *q;
+
+    while (p)
+    {
+        q = p->next;
+        CZL_TMP_FREE(gp, p->name, strlen(p->name)+1);
+        czl_nsef_delete(gp, p->nsef_head);
+        czl_hash_table_delete(gp, &p->vars_hash);
+        czl_hash_table_delete(gp, &p->funs_hash);
+        CZL_TMP_FREE(gp, p, sizeof(czl_usrlib));
+        p = q;
+    }
+}
+
 char czl_integrity_check(czl_gp *gp, char flag)
 {
     if (flag)
     {
-        if (!(gp->cur_fun=czl_fun_node_find(CZL_MAIN_FUN_NAME,
-                                            &gp->tmp->funs_hash)))
+        if (!(gp->cur_fun=czl_fun_node_find(CZL_MAIN_FUN_NAME, &gp->tmp->funs_hash)))
         {
             flag = 0;
             sprintf(gp->log_buf, "less main function, ");
         }
         else
         {
-            flag = czl_nsef_check(gp);
+            flag = czl_nsef_check(gp, gp->tmp->nsef_head);
+            if (flag)
+                flag = czl_usrlib_nsef_check(gp);
         }
     }
     else
@@ -10326,7 +10411,7 @@ char czl_integrity_check(czl_gp *gp, char flag)
         czl_paras_list_delete(gp, gp->tmp->try_paras, 0);
         czl_paras_list_delete(gp, gp->tmp->branch_child_paras, 0);
         czl_class_ptr_vars_delete(gp, gp->tmp->class_ptr_vars_head);
-        czl_for_paras_delete(gp, gp->tmp->current_loop_type,
+        czl_for_paras_delete(gp, gp->tmp->cur_loop_type,
                              gp->tmp->foreach_type,
                              gp->tmp->for_condition,
                              gp->tmp->for_paras_start,
@@ -10361,6 +10446,8 @@ char czl_integrity_check(czl_gp *gp, char flag)
     //释放运行前无用内存
     czl_vars_name_free(gp);
     czl_nsef_delete(gp, gp->tmp->nsef_head);
+    czl_usrlib_delete(gp, gp->tmp->usrlib_head);
+    czl_hash_table_delete(gp, &gp->tmp->usrlibs_hash);
     czl_hash_table_delete(gp, &gp->tmp->consts_hash);
     czl_hash_table_delete(gp, &gp->tmp->vars_hash);
     czl_hash_table_delete(gp, &gp->tmp->funs_hash);
