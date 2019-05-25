@@ -332,7 +332,7 @@ char* czl_keyword_find(czl_gp *gp, char *code, int *index, char flag)
     {
         error_line_backup = gp->error_line;
         code = czl_ignore_sign_filt(gp, code);
-        if (':' == *code && *(code+1) != ':' && *(code+1) != '=')
+        if (':' == *code && *(code+1) != ':')
         {
             if (!czl_goto_flag_insert(gp, name))
                 return NULL;
@@ -537,7 +537,7 @@ char* czl_end_sign_check(czl_gp *gp, char *code)
     switch (*code)
     {
     case '_': case '(': case '{': case '}': case '\"': case '\'':
-    case '$': case '!': case '~': case '+': case '-': case '#': case '\0':
+    case '!': case '~': case '+': case '-': case '#': case '\0':
         return code;
     default:
         return NULL;
@@ -1184,7 +1184,6 @@ char* czl_fun_match
     char *code,
     char *name,
     czl_exp_node **node,
-    char global_flag,
     char this_flag
 )
 {
@@ -1194,7 +1193,7 @@ char* czl_fun_match
 	czl_exp_fun *exp_fun;
 
     //静态用户函数查询
-    if (!(fun=czl_fun_find_in_exp(gp, name, global_flag, this_flag)))
+    if (!(fun=czl_fun_find_in_exp(gp, name, this_flag)))
     {
         //静态系统函数查询
         if (!gp->tmp->osfun_hash &&
@@ -1207,7 +1206,7 @@ char* czl_fun_match
         }
         else
         {
-            fun = (czl_fun*)czl_var_find_in_exp(gp, name, global_flag, this_flag);
+            fun = (czl_fun*)czl_var_find_in_exp(gp, name, this_flag);
             if (fun) //变量调用方式动态函数查询
             {
                 if (gp->tmp->cur_class_var)
@@ -1379,19 +1378,21 @@ char* czl_tab_def(czl_gp *gp, char *code, czl_new_sentence **newObj)
 char* czl_class_name_match(czl_gp *gp, char *code, char *name, char *flag)
 {
     if (!(code=czl_name_match(gp, code, name)))
-    {
-        sprintf(gp->log_buf, "missed class name, ");
-        return NULL;
-    }
+        goto CZL_SYNTAX_ERROR;
     code = czl_ignore_sign_filt(gp, code);
     if ('.' == *code)
     {
-        unsigned long len = strlen(name);
-        name[len] = '.';
-        if (!(code=czl_name_match(gp, code+1, name+len+1)))
+        if (strcmp("g", name) == 0)
         {
-            sprintf(gp->log_buf, "after . should be a class name, ");
-            return NULL;
+            if (!(code=czl_name_match(gp, code+1, name)))
+                goto CZL_SYNTAX_ERROR;
+        }
+        else
+        {
+            unsigned long len = strlen(name);
+            name[len] = '.';
+            if (!(code=czl_name_match(gp, code+1, name+len+1)))
+                goto CZL_SYNTAX_ERROR;
         }
         *flag = 1;
     }
@@ -1399,6 +1400,10 @@ char* czl_class_name_match(czl_gp *gp, char *code, char *name, char *flag)
         *flag = 0;
 
     return code;
+
+CZL_SYNTAX_ERROR:
+    sprintf(gp->log_buf, "missed class name, ");
+    return NULL;
 }
 
 char* czl_ins_def(czl_gp *gp, char *code, czl_new_sentence **newObj)
@@ -1471,37 +1476,29 @@ char* czl_var_match
     char *code,
     char *name,
     czl_exp_node **node,
-    char global_flag,
-    char this_flag,
-    char def_flag
+    char this_flag
 )
 {
     char type;
     czl_var *var;
 
-    if (def_flag)
-    {
-        if (czl_var_find(gp, name, CZL_LOCAL_FIND))
-        {
-            sprintf(gp->log_buf, "redefined variable %s, ", name);
-            return NULL;
-        }
-        //函数内部可以不用"var"关键字定义变量，全局或类成员变量必须用"var"声明
-        if (!(var=czl_dynamic_var_create(gp, name)))
-            return NULL;
-        type = CZL_LG_VAR;
-        *code = ' '; //把 := 转换为 =
-    }
-    else if ((var=czl_var_find_in_exp(gp, name, global_flag, this_flag)))
+    if ((var=czl_var_find_in_exp(gp, name, this_flag)))
     {
         if (gp->tmp->cur_class_var)
             type = CZL_INS_VAR;
         else
             type = (CZL_CONST_VAR == var->quality ? CZL_ENUM : CZL_LG_VAR);
     }
+    else if ('=' == *code && *(code+1) != '=')
+    {
+        if (!(var=czl_dynamic_var_create(gp, name)))
+            return NULL;
+        type = CZL_LG_VAR;
+    }
     else
     {
-        if (global_flag || this_flag)
+
+        if (this_flag)
         {
             sprintf(gp->log_buf, "undefined variable %s, ", name);
             return NULL;
@@ -1685,13 +1682,12 @@ char* czl_class_member_match
     czl_gp *gp,
     char *code,
     czl_exp_node **node,
-    char *name,
-    char flag
+    char *name
 )
 {
 	char type;
 	czl_class_var *var;
-    czl_class *pclass = czl_class_find(gp, name, flag);
+    czl_class *pclass = czl_class_find(gp, name, 0);
     if (!pclass)
     {
         sprintf(gp->log_buf, "undefined class %s, ", name);
@@ -1734,27 +1730,17 @@ char czl_is_var_or_fun(czl_gp *gp, char **code, czl_exp_node **node, char *flag)
 {
     char name[CZL_NAME_MAX_SIZE];
     char *s = *code;
-    char global_flag = 0;
     char this_flag = 0;
-    char def_flag = 0;
     unsigned long line = gp->error_line;
 
-    //用 $ 指定引用全局变量或常量
-    if ('$' == *s)
-    {
-        s++;
-        global_flag = 1;
-    }
-    else if (!((*s >= 'a' && *s <= 'z') ||
-               (*s >= 'A' && *s <= 'Z') ||
-               ('_' == *s)))
+    if (!((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') || ('_' == *s)))
         return 0;
 
     if (!(s=czl_name_match(gp, s, name)))
         return 1;
     s = czl_ignore_sign_filt(gp, s);
 
-    if (flag && !global_flag)
+    if (flag)
     {
         if (0 == strcmp("up", name))
             *flag = 1;
@@ -1771,40 +1757,24 @@ char czl_is_var_or_fun(czl_gp *gp, char **code, czl_exp_node **node, char *flag)
     {
         if (strcmp("this", name) == 0)
         {
-            if (global_flag)
-            {
-                sprintf(gp->log_buf, "$ should not use with this, ");
-                goto CZL_END;
-            }
             if (gp->tmp->analysis_field != CZL_IN_CLASS &&
                 gp->tmp->analysis_field != CZL_IN_CLASS_FUN)
             {
                 sprintf(gp->log_buf, "this should use in class-scope, ");
-                goto CZL_END;
+                goto CZL_SYNTAX_ERROR;
             }
             if (!(s=czl_name_match(gp, s+1, name)))
             {
                 sprintf(gp->log_buf, "missed variable or function after this, ");
-                goto CZL_END;
+                goto CZL_SYNTAX_ERROR;
             }
             this_flag = 1;
         }
     }
     else if (':' == *s && ':' == *(s+1))
     {
-        *code = czl_class_member_match(gp, s+2, node, name, 0);
+        *code = czl_class_member_match(gp, s+2, node, name);
         return 1;
-    }
-    else if (':' == *s && '=' == *(s+1))
-    {
-        if (global_flag || this_flag ||
-            CZL_IN_GLOBAL == gp->tmp->analysis_field ||
-            CZL_IN_CLASS == gp->tmp->analysis_field)
-        {
-            sprintf(gp->log_buf, ":= should be used with local variable, ");
-            goto CZL_END;
-        }
-        def_flag = 1;
     }
 
     s = czl_ignore_sign_filt(gp, s);
@@ -1813,14 +1783,14 @@ char czl_is_var_or_fun(czl_gp *gp, char **code, czl_exp_node **node, char *flag)
         if (CZL_IN_CONSTANT == gp->tmp->variable_field)
         {
             sprintf(gp->log_buf, "should not use function in constant init, ");
-            goto CZL_END;
+            goto CZL_SYNTAX_ERROR;
         }
-        *code = czl_fun_match(gp, s+1, name, node, global_flag, this_flag);
+        *code = czl_fun_match(gp, s+1, name, node, this_flag);
         return 1;
     }
 
-    if (!(s=czl_var_match(gp, s, name, node, global_flag, this_flag, def_flag)))
-        goto CZL_END;
+    if (!(s=czl_var_match(gp, s, name, node, this_flag)))
+        goto CZL_SYNTAX_ERROR;
 
     if ((*node)->type != CZL_FUNCTION)
     {
@@ -1837,7 +1807,7 @@ char czl_is_var_or_fun(czl_gp *gp, char **code, czl_exp_node **node, char *flag)
     *code = s;
     return 1;
 
-CZL_END:
+CZL_SYNTAX_ERROR:
     gp->error_line = line;
     return 1;
 }
@@ -1893,7 +1863,6 @@ char* czl_fun_addr_match(czl_gp *gp, char *code, czl_exp_node **node)
 {
     char name[CZL_NAME_MAX_SIZE];
     char funName[CZL_NAME_MAX_SIZE];
-    char flag = 0;
 	czl_fun *fun;
     czl_sysfun *sys_fun;
     czl_sys_hash *hash;
@@ -1901,61 +1870,20 @@ char* czl_fun_addr_match(czl_gp *gp, char *code, czl_exp_node **node)
 
     *node = NULL;
 
-    code = czl_ignore_sign_filt(gp, code);
-    if ('$' == *code)
-    {
-        flag = 1;
-        code++;
-    }
-
     if (!(code=czl_name_match(gp, code, name)))
     {
         sprintf(gp->log_buf, "missed function name after @, ");
         return NULL;
     }
 
-    if (0 == flag)
+    code = czl_ignore_sign_filt(gp, code);
+    if ('.' == *code)
     {
-        code = czl_ignore_sign_filt(gp, code);
-        if ('.' == *code)
+        if (!(code=czl_name_match(gp, code+1, funName)))
         {
-            flag = 2;
-            if (!(code=czl_name_match(gp, code+1, funName)))
-            {
-                sprintf(gp->log_buf, "missed function name after library %s, ", name);
-                return NULL;
-            }
+            sprintf(gp->log_buf, "missed function name after library %s, ", name);
+            return NULL;
         }
-    }
-
-    switch (flag)
-    {
-    case 0:
-        if (!(fun=czl_fun_find(gp, name, CZL_GLOBAL_FIND)))
-        {
-            if (!gp->tmp->osfun_hash &&
-                !(gp->tmp->osfun_hash=czl_sys_fun_hash_create(gp, CZL_SYS_LIB_NAME)))
-                return NULL;
-            if ((sys_fun=czl_sys_fun_find(name, gp->tmp->osfun_hash)))
-            {
-                if (!(fun=czl_sys_fun_create(gp, sys_fun)))
-                    return NULL;
-            }
-            else if (!(fun=czl_undef_static_fun_create(gp, name)) ||
-                     !czl_nsef_create(gp, fun, 0))
-                return NULL;
-        }
-        break;
-    case 1:
-        if (!(fun = (czl_fun*)czl_sys_hash_find(CZL_STRING, CZL_NIL,
-                                          name, &gp->tmp->funs_hash)))
-        {
-            if (!(fun=czl_undef_static_fun_create(gp, name)) ||
-                !czl_nsef_create(gp, fun, 0))
-                return NULL;
-        }
-        break;
-    default: //2
         if ((lib=(czl_usrlib*)czl_sys_hash_find(CZL_STRING, CZL_NIL,
                                                 name, &gp->tmp->usrlibs_hash)))
         {
@@ -1978,7 +1906,20 @@ char* czl_fun_addr_match(czl_gp *gp, char *code, czl_exp_node **node)
             if (!(fun=czl_sys_fun_create(gp, sys_fun)))
                 return NULL;
         }
-        break;
+    }
+    else if (!(fun=czl_fun_find(gp, name, CZL_GLOBAL_FIND)))
+    {
+        if (!gp->tmp->osfun_hash &&
+            !(gp->tmp->osfun_hash=czl_sys_fun_hash_create(gp, CZL_SYS_LIB_NAME)))
+            return NULL;
+        if ((sys_fun=czl_sys_fun_find(name, gp->tmp->osfun_hash)))
+        {
+            if (!(fun=czl_sys_fun_create(gp, sys_fun)))
+                return NULL;
+        }
+        else if (!(fun=czl_undef_static_fun_create(gp, name)) ||
+                 !czl_nsef_create(gp, fun, 0))
+            return NULL;
     }
 
     if (!(*node=czl_opr_node_create(gp, CZL_FUN_REF, fun)))
@@ -3398,7 +3339,7 @@ char* czl_fun_paras_match(czl_gp *gp, char *code, czl_fun *fun)
         if (')' == *code)
         {
             ++code;
-            goto CZL_END;
+            goto CZL_SYNTAX_ERROR;
         }
         for (;;)
         {
@@ -3467,7 +3408,7 @@ char* czl_fun_paras_match(czl_gp *gp, char *code, czl_fun *fun)
         }
     }
 
-CZL_END:
+CZL_SYNTAX_ERROR:
 
     //全局main函数规定入参不得多于一个
     if (CZL_IN_GLOBAL_FUN == gp->tmp->analysis_field &&
@@ -3638,11 +3579,11 @@ char* czl_read_shell(czl_gp *gp, const char *path, unsigned long *code_size)
     }
 
     if (fseek(out, 0, SEEK_END))
-        goto CZL_END;
+        goto CZL_SYNTAX_ERROR;
 
     *code_size = ftell(out)+1;
     if (!(code=(char*)CZL_TMP_MALLOC(gp, *code_size)))
-        goto CZL_END;
+        goto CZL_SYNTAX_ERROR;
 
     rewind(out);
 
@@ -3652,7 +3593,7 @@ char* czl_read_shell(czl_gp *gp, const char *path, unsigned long *code_size)
         if ('\n' == ch && ++line > 60000)
         {
             sprintf(gp->log_buf, "file line limit 60000, ");
-            goto CZL_END;
+            goto CZL_SYNTAX_ERROR;
         }
     }
     code[i] = '\0';
@@ -3660,7 +3601,7 @@ char* czl_read_shell(czl_gp *gp, const char *path, unsigned long *code_size)
     fclose(out);
     return code;
 
-CZL_END:
+CZL_SYNTAX_ERROR:
     fclose(out);
     return NULL;
 }
@@ -3792,7 +3733,7 @@ char* czl_is_fun_or_obj_def(czl_gp *gp, char *code, int index)
     case CZL_QUEUE_INDEX: ot = CZL_QUEUE; break;
     case CZL_VAR_INDEX: return czl_var_def(gp, code, CZL_DYNAMIC_VAR, CZL_NIL);
     case CZL_CONST_INDEX: return czl_const_def(gp, code);
-    default: return czl_fun_def(gp, code, CZL_NIL);
+    default: return index ? NULL : czl_fun_def(gp, code, CZL_NIL);
     }
 
     if ((tmp=czl_is_fun_def(gp, code, ot, &flag)))
@@ -3996,20 +3937,31 @@ char* czl_class_def
     return czl_class_body_match(gp, code+1, node, analysis_field, permission, parent);
 }
 
-char* czl_lib_def(czl_gp *gp, char *code)
+char* czl_lib_def(czl_gp *gp, char *code, char *flag)
 {
     char name[CZL_NAME_MAX_SIZE];
-    char *tmp = code;
     czl_usrlib *lib;
 
-    if (!(code=czl_name_match(gp, code, name)) || strcmp("lib", name))
-    {
-        gp->error_line = 1;
-        return tmp;
-    }
-
     if (!(code=czl_name_match(gp, code, name)))
+    {
+        sprintf(gp->log_buf, "missed library name after lib, ");
         return NULL;
+    }
+    if (czl_is_keyword(gp, name))
+    {
+        sprintf(gp->log_buf, "library name should not be keyword, ");
+        return NULL;
+    }
+    code = czl_ignore_sign_filt(gp, code);
+    if ('{' == *code)
+    {
+        ++code;
+        *flag = 1;
+    }
+    else
+    {
+        *flag = 0;
+    }
 
     lib = (czl_usrlib*)czl_sys_hash_find(CZL_STRING, CZL_NIL, name, &gp->tmp->usrlibs_hash);
     if (!lib && !(lib=czl_usrlib_create(gp, name)))
@@ -4023,9 +3975,7 @@ char* czl_lib_def(czl_gp *gp, char *code)
 char czl_shell_analysis(czl_gp *gp, char *code)
 {
     int index;
-
-    if (!(code=czl_lib_def(gp, code)))
-        return 0;
+    char libFlag = 0;
 
     while (*code != '\0')
     {
@@ -4037,8 +3987,9 @@ char czl_shell_analysis(czl_gp *gp, char *code)
             code = czl_load_shell(gp, code);
             break;
         case CZL_LIB_INDEX:
-            sprintf(gp->log_buf, "lib defined should be at shell head, ");
-            return 0;
+            if (!(code=czl_lib_def(gp, code, &libFlag)))
+                return 0;
+            break;
         case CZL_CLASS_INDEX: //类定义
             code = czl_class_def(gp, code, CZL_IN_GLOBAL, 0, CZL_PUBLIC, NULL);
             break;
@@ -4049,12 +4000,25 @@ char czl_shell_analysis(czl_gp *gp, char *code)
             code = czl_class_def(gp, code, CZL_IN_GLOBAL, 1, CZL_PUBLIC, NULL);
             break;
         default:
-            code = czl_is_fun_or_obj_def(gp, code, index);
+            if ('}' == *code && libFlag)
+            {
+                ++code;
+                libFlag = 0;
+                gp->tmp->cur_usrlib = NULL;
+            }
+            else
+                code = czl_is_fun_or_obj_def(gp, code, index);
             break;
         }
         if (!code)
             return 0;
         code = czl_ignore_sign_filt(gp, code);
+    }
+
+    if (libFlag)
+    {
+        sprintf(gp->log_buf, "missed } for library end, ");
+        return 0;
     }
 
     return 1;
@@ -4158,6 +4122,10 @@ char czl_global_paras_init(czl_gp *gp)
 
     //系统函数哈希表创建
     if (!czl_sys_lib_hash_create(gp))
+        return 0;
+
+    //全局域创建
+    if (!(gp->tmp->glo_lib=czl_usrlib_create(gp, "g")))
         return 0;
 
     return 1;

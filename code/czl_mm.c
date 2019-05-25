@@ -860,7 +860,6 @@ static void czl_mm_update_tabkv
         *((czl_tabkv**)kv->clsLast) = kv;
     else
         kv->clsLast->clsNext = kv;
-
     if (kv->clsNext)
         kv->clsNext->clsLast = kv;
 }

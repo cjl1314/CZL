@@ -4116,7 +4116,7 @@ czl_var* czl_var_create_by_field(czl_gp *gp, char *name, char quality, char ot)
         if (!czl_sys_hash_insert(gp, CZL_STRING, node,
                                  gp->tmp->cur_usrlib ?
                                  &gp->tmp->cur_usrlib->vars_hash :
-                                 &gp->tmp->vars_hash))
+                                 &gp->tmp->glo_lib->vars_hash))
             return NULL;
         break;
     case CZL_IN_CLASS:
@@ -4175,7 +4175,7 @@ czl_var* czl_var_find_in_global(czl_gp *gp, char *name)
     czl_var *node = (czl_var*)czl_sys_hash_find(CZL_STRING, CZL_NIL, name,
                                                 gp->tmp->cur_usrlib ?
                                                 &gp->tmp->cur_usrlib->vars_hash :
-                                                &gp->tmp->vars_hash);
+                                                &gp->tmp->glo_lib->vars_hash);
 
     if (CZL_IN_CONSTANT == gp->tmp->variable_field &&
         node && node->quality != CZL_CONST_VAR)
@@ -4384,7 +4384,6 @@ czl_var* czl_var_find_in_exp
 (
     czl_gp *gp,
     char *name,
-    char global_flag,
     char this_flag
 )
 {
@@ -4392,14 +4391,10 @@ czl_var* czl_var_find_in_exp
 
     gp->tmp->cur_class_var = NULL;
 
-    if (global_flag)
-        return czl_var_find_in_global(gp, name);
-    else if (this_flag)
+    if (this_flag)
     {
         node = czl_var_find_in_class(gp, name, 1);
-        if (gp->tmp->cur_class_var)
-            return czl_class_ref_var_node_create(gp);
-        return node;
+        return gp->tmp->cur_class_var ? czl_class_ref_var_node_create(gp) : node;
     }
     else
         return czl_var_find(gp, name, CZL_GLOBAL_FIND);
@@ -4428,11 +4423,11 @@ char czl_nsef_create(czl_gp *gp, void *ef, char flag)
     }
     else
     {
-        if (!gp->tmp->nsef_head)
-            gp->tmp->nsef_head = n;
+        if (!gp->tmp->glo_lib->nsef_head)
+            gp->tmp->glo_lib->nsef_head = n;
         else
-            gp->tmp->nsef_tail->next = n;
-        gp->tmp->nsef_tail = n;
+            gp->tmp->glo_lib->nsef_tail->next = n;
+        gp->tmp->glo_lib->nsef_tail = n;
     }
 
     return 1;
@@ -7460,7 +7455,7 @@ char czl_fun_insert(czl_gp *gp, czl_fun *node)
         return czl_sys_hash_insert(gp, CZL_STRING, node,
                                    gp->tmp->cur_usrlib ?
                                    &gp->tmp->cur_usrlib->funs_hash :
-                                   &gp->tmp->funs_hash);
+                                   &gp->tmp->glo_lib->funs_hash);
     default: //CZL_IN_CLASS/CZL_IN_CLASS_FUN
         czl_fun_node_insert(&gp->tmp->cur_class->funs, node);
         if (czl_hash_repeat_check(node->hash,
@@ -7515,7 +7510,7 @@ czl_fun* czl_fun_find_in_global(czl_gp *gp, char *name)
     return (czl_fun*)czl_sys_hash_find(CZL_STRING, CZL_NIL, name,
                                        gp->tmp->cur_usrlib ?
                                        &gp->tmp->cur_usrlib->funs_hash :
-                                       &gp->tmp->funs_hash);
+                                       &gp->tmp->glo_lib->funs_hash);
 }
 
 czl_fun* czl_fun_find(czl_gp *gp, char *name, char mode)
@@ -7538,13 +7533,9 @@ czl_fun* czl_fun_find_in_exp
 (
     czl_gp *gp,
     char *name,
-    char global_flag,
     char this_flag
 )
 {
-    if (global_flag)
-        return czl_fun_find_in_global(gp, name);
-
     if (this_flag)
     {
         czl_fun *node = czl_fun_node_find(name, &gp->tmp->cur_class->funs_hash);
@@ -10303,46 +10294,39 @@ void czl_nsef_delete(czl_gp *gp, czl_nsef *p)
     }
 }
 
-char czl_nsef_check(czl_gp *gp, czl_nsef *p)
-{
-    while (p)
-    {
-        if (p->flag)
-        {
-            if (CZL_IN_STATEMENT == p->ef->fun->state ||
-                !czl_fun_paras_check(gp, p->ef, p->ef->fun))
-            {
-                if (CZL_IN_STATEMENT == p->ef->fun->state)
-                    sprintf(gp->log_buf, "undefined function %s, ", p->ef->fun->name);
-                gp->error_file = p->err_file;
-                gp->error_line = p->err_line;
-                return 0;
-            }
-        }
-        else
-        {
-            if (CZL_IN_STATEMENT == ((czl_fun*)p->ef)->state)
-            {
-                sprintf(gp->log_buf, "undefined function %s, ", ((czl_fun*)p->ef)->name);
-                gp->error_file = p->err_file;
-                gp->error_line = p->err_line;
-                return 0;
-            }
-        }
-        p = p->next;
-    }
-
-    return 1;
-}
-
 char czl_usrlib_nsef_check(czl_gp *gp)
 {
     czl_usrlib *l = gp->tmp->usrlib_head;
 
     while (l)
     {
-        if (!czl_nsef_check(gp, l->nsef_head))
-            return 0;
+        czl_nsef *p = l->nsef_head;
+        while (p)
+        {
+            if (p->flag)
+            {
+                if (CZL_IN_STATEMENT == p->ef->fun->state ||
+                    !czl_fun_paras_check(gp, p->ef, p->ef->fun))
+                {
+                    if (CZL_IN_STATEMENT == p->ef->fun->state)
+                        sprintf(gp->log_buf, "undefined function %s, ", p->ef->fun->name);
+                    gp->error_file = p->err_file;
+                    gp->error_line = p->err_line;
+                    return 0;
+                }
+            }
+            else
+            {
+                if (CZL_IN_STATEMENT == ((czl_fun*)p->ef)->state)
+                {
+                    sprintf(gp->log_buf, "undefined function %s, ", ((czl_fun*)p->ef)->name);
+                    gp->error_file = p->err_file;
+                    gp->error_line = p->err_line;
+                    return 0;
+                }
+            }
+            p = p->next;
+        }
         l = l->next;
     }
 
@@ -10393,17 +10377,14 @@ char czl_integrity_check(czl_gp *gp, char flag)
 {
     if (flag)
     {
-        if (!(gp->cur_fun=czl_fun_node_find(CZL_MAIN_FUN_NAME, &gp->tmp->funs_hash)))
+        if (!(gp->cur_fun=czl_fun_node_find(CZL_MAIN_FUN_NAME,
+                                            &gp->tmp->glo_lib->funs_hash)))
         {
             flag = 0;
             sprintf(gp->log_buf, "less main function, ");
         }
         else
-        {
-            flag = czl_nsef_check(gp, gp->tmp->nsef_head);
-            if (flag)
-                flag = czl_usrlib_nsef_check(gp);
-        }
+            flag = czl_usrlib_nsef_check(gp);
     }
     else
     {
@@ -10445,12 +10426,9 @@ char czl_integrity_check(czl_gp *gp, char flag)
 
     //释放运行前无用内存
     czl_vars_name_free(gp);
-    czl_nsef_delete(gp, gp->tmp->nsef_head);
     czl_usrlib_delete(gp, gp->tmp->usrlib_head);
     czl_hash_table_delete(gp, &gp->tmp->usrlibs_hash);
     czl_hash_table_delete(gp, &gp->tmp->consts_hash);
-    czl_hash_table_delete(gp, &gp->tmp->vars_hash);
-    czl_hash_table_delete(gp, &gp->tmp->funs_hash);
     czl_hash_table_delete(gp, &gp->tmp->sn_hash);
     czl_syslib_delete(gp, gp->tmp->syslibs);
     czl_hash_table_delete(gp, &gp->tmp->syslibs_hash);

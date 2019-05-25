@@ -1320,8 +1320,6 @@ typedef struct czl_analysis_gp
     czl_sys_hash usrlibs_hash;  //用户库哈希索引
     //
     czl_sys_hash consts_hash;
-    czl_sys_hash vars_hash;
-    czl_sys_hash funs_hash;
     //
     czl_block_struct block_stack[CZL_MAX_CODE_NEST_LAYER];
     unsigned long block_count;
@@ -1336,11 +1334,9 @@ typedef struct czl_analysis_gp
     //
     czl_exp_ele *exp_head;      //exp_root对应的表达式栈首元素
     //
-    czl_nsef *nsef_head; //不确定的表达式函数链表头
-    czl_nsef *nsef_tail; //不确定的表达式函数链表尾
-    //
     czl_sys_hash sn_hash;       //脚本文件名哈希索引
     //
+    czl_usrlib *glo_lib; //全局域
     czl_usrlib *cur_usrlib; //当前用户库
     czl_usrlib *usrlib_head; //用户库链表头节点
     //
@@ -1526,7 +1522,7 @@ czl_var* czl_var_create_by_field(czl_gp*, char*, char, char);
 void* czl_loc_var_find(const char*, czl_loc_var*);
 czl_var* czl_var_in_class_find(const char*, char);
 czl_var* czl_var_find(czl_gp*, char*, char);
-czl_var* czl_var_find_in_exp(czl_gp*, char*, char, char);
+czl_var* czl_var_find_in_exp(czl_gp*, char*, char);
 void czl_file_delete(czl_gp*, void**);
 czl_class* czl_class_create(czl_gp*, char*, char);
 czl_class* czl_class_find_in_local(czl_gp*, char*);
@@ -1593,7 +1589,7 @@ void* czl_sys_hash_find(char, char, char*, const czl_sys_hash*);
 char czl_sys_hash_insert(czl_gp*, char, void*, czl_sys_hash*);
 void czl_sys_hash_delete(czl_gp*, unsigned long, czl_sys_hash*);
 czl_fun* czl_fun_find(czl_gp*, char*, char);
-czl_fun* czl_fun_find_in_exp(czl_gp*, char*, char, char);
+czl_fun* czl_fun_find_in_exp(czl_gp*, char*, char);
 char czl_integrity_check(czl_gp*, char);
 char czl_nsef_create(czl_gp*, void*, char);
 czl_exp_fun* czl_exp_fun_create(czl_gp*, czl_fun*, char);
