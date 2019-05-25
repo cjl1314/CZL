@@ -1742,9 +1742,9 @@ char czl_is_var_or_fun(czl_gp *gp, char **code, czl_exp_node **node, char *flag)
 
     if (flag)
     {
-        if (0 == strcmp("up", name))
+        if (0 == strcmp("add", name))
             *flag = 1;
-        else if (0 == strcmp("down", name))
+        else if (0 == strcmp("dec", name))
             *flag = 2;
         if (*flag)
         {
