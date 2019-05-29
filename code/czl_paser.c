@@ -1416,6 +1416,11 @@ char* czl_ins_def(czl_gp *gp, char *code, czl_new_sentence **newObj)
         sprintf(gp->log_buf, "undefined class %s, ", name);
         return NULL;
     }
+    if (CZL_IN_CONSTANT == gp->tmp->variable_field && CZL_NOT_SURE == pclass->flag)
+    {
+        sprintf(gp->log_buf, "unsure class %s, ", name);
+        return NULL;
+    }
     if (!(*newObj=czl_new_sentence_create(gp, pclass->ot_num)))
         return NULL;
     (*newObj)->new_obj.ins.pclass = pclass;
@@ -1424,9 +1429,14 @@ char* czl_ins_def(czl_gp *gp, char *code, czl_new_sentence **newObj)
     code = czl_ignore_sign_filt(gp, code);
     if ('(' == *code)
     {
-        czl_fun *fun = czl_fun_node_find
-                            ((*newObj)->new_obj.ins.pclass->name,
-                            &(*newObj)->new_obj.ins.pclass->funs_hash);
+        czl_fun *fun;
+        if (CZL_IN_CONSTANT == gp->tmp->variable_field)
+        {
+            sprintf(gp->log_buf, "init static/const instance should not be with structure function, ");
+            goto CZL_SYNTAX_ERROR;
+        }
+        fun = czl_fun_node_find((*newObj)->new_obj.ins.pclass->name,
+                                &(*newObj)->new_obj.ins.pclass->funs_hash);
         if (!fun)
         {
             sprintf(gp->log_buf, "undefined structure function in class %s, ", name);
@@ -1493,7 +1503,6 @@ char* czl_var_match
     }
     else
     {
-
         if (my_flag)
         {
             sprintf(gp->log_buf, "undefined variable %s, ", name);
@@ -1506,7 +1515,7 @@ char* czl_var_match
         }
         else if (strcmp("new", name) == 0)
         {
-			czl_new_sentence *newObj;
+            czl_new_sentence *newObj;
             type = CZL_NEW;
             if (!(code=czl_new_sentence_def(gp, code, &newObj)))
                 return NULL;
@@ -2222,10 +2231,12 @@ char* czl_var_create
 
 char czl_default_para_type_check(czl_gp *gp, char ot)
 {
+    czl_exp_ele *exp = gp->tmp->exp_head;
+
     if (CZL_NIL == ot)
         return 1;
 
-    switch (gp->tmp->exp_head->kind)
+    switch (exp->kind)
     {
     case CZL_FUN_REF:
         return (CZL_FUN_REF == ot ? 1 : 0);
@@ -2233,8 +2244,10 @@ char czl_default_para_type_check(czl_gp *gp, char ot)
         return (CZL_ARRAY == ot ? 1 : 0);
     case CZL_TABLE_LIST:
         return (CZL_TABLE == ot ? 1 : 0);
+    case CZL_NEW:
+        return (((czl_new_sentence*)exp->res->val.Obj)->type == ot ? 1 : 0);
     default:
-        switch (gp->tmp->exp_head->res->type)
+        switch (exp->res->type)
         {
         case CZL_INT: case CZL_FLOAT:
             switch (ot) {
