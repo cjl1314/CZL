@@ -50,6 +50,33 @@ char czl_ref_copy(czl_gp *gp, czl_var *left, czl_var *var)
     return 1;
 }
 
+char czl_ref_set(czl_gp *gp, czl_var *left, czl_var *right)
+{
+    czl_var *var = CZL_GRV(right);
+
+    if (left->ot > CZL_NIL)
+    {
+        if (var->type != CZL_INSTANCE ||
+            left->ot != CZL_INS(var->val.Obj)->pclass->ot_num)
+        {
+            gp->exceptionCode = CZL_EXCEPTION_COPY_TYPE_NOT_MATCH;
+            return 0;
+        }
+    }
+    else if (left->ot != CZL_NIL && left->ot != var->type)
+    {
+        gp->exceptionCode = CZL_EXCEPTION_COPY_TYPE_NOT_MATCH;
+        return 0;
+    }
+
+    if (!czl_ref_copy(gp, left, var))
+        return 0;
+
+    left->type = CZL_OBJ_REF;
+    left->val = right->val;
+    return 1;
+}
+
 char czl_val_copy(czl_gp *gp, czl_var *left, czl_var *right)
 {
     if (!right) return 0;
@@ -91,14 +118,7 @@ char czl_val_copy(czl_gp *gp, czl_var *left, czl_var *right)
             goto CZL_TYPE_ERROR;
         }
     case CZL_OBJ_REF:
-        if (left->ot != CZL_NIL && left->ot != CZL_GRV(right)->type)
-            goto CZL_TYPE_ERROR;
-        if (right->quality != CZL_FUNRET_VAR &&
-            !czl_ref_copy(gp, left, CZL_GRV(right)))
-            return 0;
-        left->type = CZL_OBJ_REF;
-        left->val = right->val;
-        return 1;
+        return czl_ref_set(gp, left, right);
     case CZL_FUN_REF:
         if (left->ot != CZL_NIL && left->ot != CZL_FUN_REF)
             goto CZL_TYPE_ERROR;
@@ -127,6 +147,10 @@ char czl_val_copy(czl_gp *gp, czl_var *left, czl_var *right)
         if (left->ot != CZL_NIL && left->ot != CZL_TABLE)
             goto CZL_TYPE_ERROR;
         return czl_table_new(gp, CZL_TAB_LIST(right->val.Obj), left);
+    case CZL_INSTANCE:
+        if (left->ot != CZL_NIL && left->ot != CZL_INS(right->val.Obj)->pclass->ot_num)
+            goto CZL_TYPE_ERROR;
+        break;
     default:
         if (left->ot != CZL_NIL && left->ot != right->type)
             goto CZL_TYPE_ERROR;
@@ -383,9 +407,7 @@ char czl_new_handle(czl_gp *gp, czl_var *left, czl_new_sentence *New)
 
 char czl_nil_obj(czl_gp *gp, czl_var *var)
 {
-    czl_class *pclass = NULL;
-    if (CZL_INSTANCE == var->type)
-        pclass = CZL_INS(var->val.Obj)->pclass;
+    czl_class *pclass = (CZL_INSTANCE == var->type ? CZL_INS(var->val.Obj)->pclass : NULL);
 
     if (!czl_val_del(gp, var))
         return 0;
@@ -402,10 +424,6 @@ char czl_nil_obj(czl_gp *gp, czl_var *var)
         if (!czl_str_create(gp, &var->val.str, 1, 0, NULL))
             goto CZL_END;
         break;
-    case CZL_INSTANCE:
-        if (!(var->val.Obj=czl_instance_fork(gp, pclass, 1)))
-            goto CZL_END;
-        break;
     case CZL_TABLE:
         if (!(var->val.Obj=czl_empty_table_create(gp)))
             goto CZL_END;
@@ -414,13 +432,17 @@ char czl_nil_obj(czl_gp *gp, czl_var *var)
         if (!(var->val.Obj=czl_array_create(gp, 0, 0)))
             goto CZL_END;
         break;
-    default: //CZL_STACK/CZL_QUEUE
+    case CZL_STACK: case CZL_QUEUE:
         if (!(var->val.Obj=czl_sq_create(gp, 0)))
+            goto CZL_END;
+        break;
+    default:
+        if (!(var->val.Obj=czl_instance_fork(gp, pclass, 1)))
             goto CZL_END;
         break;
     }
 
-    var->type = var->ot;
+    var->type = (var->ot > CZL_NIL ? CZL_INSTANCE : var->ot);
     return 1;
 
 CZL_END:
@@ -469,7 +491,13 @@ char czl_addr_obj_ass_handle(czl_gp *gp, czl_var *left, czl_var *right)
         }
         break;
     default:
-        if (left->ot != var->type)
+        if (left->ot > CZL_NIL)
+        {
+            if (var->type != CZL_INSTANCE ||
+                left->ot != CZL_INS(var->val.Obj)->pclass->ot_num)
+                return 0;
+        }
+        else if (left->ot != var->type)
             return 0;
         break;
     }
@@ -504,7 +532,6 @@ char czl_addr_obj_ass_handle(czl_gp *gp, czl_var *left, czl_var *right)
 char czl_arr_tab_list_ass(czl_gp *gp, czl_var *left, czl_var *right)
 {
     void **obj;
-    unsigned char type;
 
     if (!czl_val_del(gp, left))
         return 0;
@@ -519,8 +546,7 @@ char czl_arr_tab_list_ass(czl_gp *gp, czl_var *left, czl_var *right)
         case CZL_STACK: case CZL_QUEUE:
             if (!(obj=czl_sq_new(gp, NULL, CZL_ARR_LIST(right->val.Obj))))
                 return 0;
-            type = left->ot;
-            left->type = type;
+            left->type = left->ot;
             left->val.Obj = obj;
             return 1;
         default:

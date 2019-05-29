@@ -875,7 +875,7 @@ typedef struct czl_fun
     char *name;                             //函数名
     unsigned char state;                    //函数状态: czl_fun_state_enum
     unsigned char type;                     //函数类型: czl_fun_type_enum
-    short enter_vars_count;                 //函数传入变量个数
+    short enter_vars_cnt;                   //函数传入变量个数
     czl_var *vars;                          //函数动态变量
     short dynamic_vars_cnt;                 //动态变量个数
     unsigned short static_vars_cnt;         //静态变量个数
@@ -902,7 +902,7 @@ typedef struct czl_fun
     czl_store_device *store_device_head;    //数据存储器列表头
     czl_goto_flag_list goto_flags;          //goto语句标志列表
     czl_sentence_list sentences_head;       //语句列表头
-    struct czl_class_ptr_vars *class_vars;  //类成员this变量入参列表
+    struct czl_class_ptr_vars *class_vars;  //类成员my变量入参列表
     void **cur_ins;                         //当前类函数所属的实例
     unsigned long hash;                     //函数名哈希值
     czl_exp_ele *pc;                        //yeild语句的下一条pc地址
@@ -943,8 +943,9 @@ typedef struct czl_class
     char *name;                         //类名
     unsigned char flag;                 //标记类是否定义结束
     unsigned char final_flag;           //终节点类标志位
+    unsigned char ot_num;               //用于强类型声明
     unsigned short parents_count;       //父类继承个数
-    unsigned long vars_count;           //类成员动态变量个数
+    unsigned short vars_count;          //类成员动态变量个数
     czl_class_var_list vars;            //类成员变量列表头
     czl_enum_list enums;                //类成员枚举列表头
     czl_fun_list funs;                  //类成员函数列表头
@@ -975,7 +976,7 @@ typedef struct czl_ins_var
     struct czl_ins_var *next;
 } czl_ins_var, *czl_ins_var_list;
 
-//类成员函数this成员变量变量节点
+//类成员函数my成员变量变量节点
 typedef struct czl_class_ptr_vars
 {
     czl_class *pclass;           //变量所属的类指针
@@ -1212,7 +1213,7 @@ typedef struct czl_sys_fun
     char *name;             //函数名
     //系统函数指针: char (*sys_fun)(czl_gp*, czl_fun*);
     void *sys_fun;
-    short enter_vars_count; //入参个数
+    short enter_vars_cnt;   //入参个数
     char *paras_explain;    //入参声明
 } czl_sys_fun;
 
@@ -1348,6 +1349,7 @@ typedef struct czl_analysis_gp
     czl_class_var_list class_vars_tail;         //指向类变量链表尾节点
     czl_class *cur_class;                       //当前类
     unsigned char permission;					//当前变量、函数访问权限
+    unsigned char class_ot_num;                 //类强类型声明编号
     //
     czl_class_ptr_vars *class_ptr_vars_head;     //引用变量头
     czl_class_ptr_vars *class_ptr_vars_tail;     //引用变量尾
@@ -1476,6 +1478,8 @@ typedef struct czl_gp
     unsigned long main_err_line;//main函数错误行号
     char *main_err_file;        //main函数错误文件名
     //
+    char error_flag;            //运行时错误标记
+    //
     char exit_flag;             //脚本中断退出标志位
     char exit_code;             //脚本中断退出方式码
     //
@@ -1563,7 +1567,7 @@ czl_new_sentence* czl_new_sentence_create(czl_gp*, char);
 void czl_new_sentence_delete(czl_gp*, czl_new_sentence*);
 char czl_obj_new(czl_gp*, czl_new_sentence*, czl_var*);
 char czl_obj_fork(czl_gp*, czl_var *left, czl_var *right);
-char czl_this_vars_class_sort(czl_gp*, czl_fun*);
+char czl_my_vars_class_sort(czl_gp*, czl_fun*);
 czl_var* czl_class_ref_var_node_create(czl_gp*);
 char czl_is_member_var(char, const czl_obj_member*);
 czl_obj_member* czl_obj_member_node_create(czl_gp*, char, void*);
@@ -1664,6 +1668,7 @@ void czl_coroutine_paras_reset(czl_gp*, czl_var*, unsigned long);
 czl_var* czl_coroutine_run(czl_gp*, czl_para*, unsigned long, void**);
 void czl_log(czl_gp*, char*);
 czl_usrlib* czl_usrlib_create(czl_gp*, char*);
+char czl_sort_cmp_fun_ret(czl_gp*, czl_var*, czl_var*);
 ///////////////////////////////////////////////////////////////
 void* czl_malloc(czl_gp*, czl_ulong
                  #ifdef CZL_MM_MODULE

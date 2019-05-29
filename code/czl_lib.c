@@ -201,7 +201,7 @@ const czl_sys_fun czl_lib_os[] =
 #endif //#ifdef CZL_MM_MODULE
     {"runShell",  czl_sys_runShell,   3,  "str_v1,&v2,v3=0"},
     //排序函数
-    {"sort",      czl_sys_sort,       2,  "&v1,int_v2=0"},
+    {"sort",      czl_sys_sort,       3,  "&v1,int_v2=0,v3=0"},
     //序列化、反序列化函数
     {"toBin",     czl_sys_toBin,      1,  NULL},
     {"toObj",     czl_sys_toObj,      1,  "str_v1"},
@@ -2827,7 +2827,7 @@ char czl_sys_setFun(czl_gp *gp, czl_fun *fun)
     czl_fun *callbackFun = fun->vars[0].val.fun;
     long exceptionCode = fun->vars[1].val.inum;
 
-    if (callbackFun->enter_vars_count)
+    if (callbackFun->enter_vars_cnt)
         return 1;
 
     if (0 == exceptionCode)
@@ -3075,8 +3075,11 @@ char czl_key_cmp(const czl_tabkv *a, const czl_tabkv *b)
     }
 }
 
-char czl_val_cmp(const czl_var *a, const czl_var *b)
+char czl_val_cmp(czl_gp *gp, czl_var *a, czl_var *b)
 {
+    if (gp->cur_fun)
+        return czl_sort_cmp_fun_ret(gp, a, b);
+
     switch (a->type)
     {
     case CZL_INT:
@@ -3122,15 +3125,17 @@ char czl_val_cmp(const czl_var *a, const czl_var *b)
     }
 }
 
-unsigned long czl_partition_0(czl_var *a, unsigned long rh)
+unsigned long czl_partition_0(czl_gp *gp, czl_var *a, unsigned long rh)
 {
     unsigned long lh = 1;
     czl_value tmp;
 
     for (;;)
     {
-        while (lh < rh && czl_val_cmp(a+rh, a) >= 0) --rh;
-        while (lh < rh && czl_val_cmp(a+lh, a) < 0) ++lh;
+        while (!gp->error_flag && lh < rh && czl_val_cmp(gp, a+rh, a) >= 0) --rh;
+        while (!gp->error_flag && lh < rh && czl_val_cmp(gp, a+lh, a) < 0) ++lh;
+        if (gp->error_flag)
+            return 0;
         if (lh == rh)
             break;
         CZL_VAL_SWAP(a[lh].val, a[rh].val, tmp);
@@ -3138,7 +3143,9 @@ unsigned long czl_partition_0(czl_var *a, unsigned long rh)
             CZL_INT_SWAP(a[lh].type, a[rh].type);
     }
 
-    if (czl_val_cmp(a+lh, a) >= 0)
+    if (czl_val_cmp(gp, a+lh, a) >= 0)
+        return 0;
+    if (gp->error_flag)
         return 0;
 
     CZL_VAL_SWAP(a->val, a[lh].val, tmp);
@@ -3148,15 +3155,17 @@ unsigned long czl_partition_0(czl_var *a, unsigned long rh)
     return lh;
 }
 
-unsigned long czl_partition_1(czl_var *a, unsigned long rh)
+unsigned long czl_partition_1(czl_gp *gp, czl_var *a, unsigned long rh)
 {
     unsigned long lh = 1;
     czl_value tmp;
 
     for (;;)
     {
-        while (lh < rh && czl_val_cmp(a+rh, a) < 0) --rh;
-        while (lh < rh && czl_val_cmp(a+lh, a) >= 0) ++lh;
+        while (!gp->error_flag && lh < rh && czl_val_cmp(gp, a+rh, a) < 0) --rh;
+        while (!gp->error_flag && lh < rh && czl_val_cmp(gp, a+lh, a) >= 0) ++lh;
+        if (gp->error_flag)
+            return 0;
         if (lh == rh)
             break;
         CZL_VAL_SWAP(a[lh].val, a[rh].val, tmp);
@@ -3164,7 +3173,9 @@ unsigned long czl_partition_1(czl_var *a, unsigned long rh)
             CZL_INT_SWAP(a[lh].type, a[rh].type);
     }
 
-    if (czl_val_cmp(a+lh, a) < 0)
+    if (czl_val_cmp(gp, a+lh, a) < 0)
+        return 0;
+    if (gp->error_flag)
         return 0;
 
     CZL_VAL_SWAP(a->val, a[lh].val, tmp);
@@ -3174,27 +3185,35 @@ unsigned long czl_partition_1(czl_var *a, unsigned long rh)
     return lh;
 }
 
-void czl_quick_sort_0(czl_var *a, unsigned long n)
+void czl_quick_sort_0(czl_gp *gp, czl_var *a, unsigned long n)
 {
-    unsigned long b;
+    long b;
     if (n < 2)
         return;
-    b = czl_partition_0(a, n-1);
-    czl_quick_sort_0(a, b);
-    czl_quick_sort_0(a+b+1, n-b-1);
+    b = czl_partition_0(gp, a, n-1);
+    if (!gp->error_flag)
+    {
+        czl_quick_sort_0(gp, a, b);
+        if (!gp->error_flag)
+           czl_quick_sort_0(gp, a+b+1, n-b-1);
+    }
 }
 
-void czl_quick_sort_1(czl_var *a, unsigned long n)
+void czl_quick_sort_1(czl_gp *gp, czl_var *a, unsigned long n)
 {
-    unsigned long b;
+    long b;
     if (n < 2)
         return;
-    b = czl_partition_1(a, n-1);
-    czl_quick_sort_1(a, b);
-    czl_quick_sort_1(a+b+1, n-b-1);
+    b = czl_partition_1(gp, a, n-1);
+    if (!gp->error_flag)
+    {
+        czl_quick_sort_1(gp, a, b);
+        if (!gp->error_flag)
+           czl_quick_sort_1(gp, a+b+1, n-b-1);
+    }
 }
 
-czl_tabkv* czl_merge(czl_tabkv *first, czl_tabkv *second, const unsigned char mode)
+czl_tabkv* czl_merge(czl_gp *gp, czl_tabkv *first, czl_tabkv *second, unsigned char mode)
 {
     czl_tabkv combined;
     czl_tabkv *last_sorted = &combined;
@@ -3205,16 +3224,23 @@ czl_tabkv* czl_merge(czl_tabkv *first, czl_tabkv *second, const unsigned char mo
         switch (mode)
         {
         case 0:
-            ret = czl_val_cmp((czl_var*)first, (czl_var*)second);
+            ret = czl_val_cmp(gp, (czl_var*)first, (czl_var*)second);
+            if (gp->error_flag)
+                mode = 4;
             break;
         case 1:
-            ret = (czl_val_cmp((czl_var*)first, (czl_var*)second) < 0 ? 1 : -1);
+            ret = (czl_val_cmp(gp, (czl_var*)first, (czl_var*)second) < 0 ? 1 : -1);
+            if (gp->error_flag)
+                mode = 4;
             break;
         case 2:
+            ret = (czl_key_cmp(first, second) < 0 ? 1 : -1);
+            break;
+        case 3:
             ret = czl_key_cmp(first, second);
             break;
         default:
-            ret = (czl_key_cmp(first, second) < 0 ? 1 : -1);
+            ret = -1;
             break;
         }
         if (ret < 0)
@@ -3260,14 +3286,15 @@ czl_tabkv* czl_divide_from(czl_tabkv *sub_list)
     return second_half;
 }
 
-void czl_recursive_merge_sort(czl_tabkv **sub_list, const unsigned char mode)
+void czl_recursive_merge_sort(czl_gp *gp, czl_tabkv **sub_list, unsigned char mode)
 {
     if (*sub_list && (*sub_list)->next)
     {
         czl_tabkv *second_half = czl_divide_from(*sub_list);
-        czl_recursive_merge_sort(sub_list, mode);
-        czl_recursive_merge_sort(&second_half, mode);
-        *sub_list = czl_merge(*sub_list, second_half, mode);
+        czl_recursive_merge_sort(gp, sub_list, mode);
+        if (!gp->error_flag)
+            czl_recursive_merge_sort(gp, &second_half, mode);
+        *sub_list = czl_merge(gp, *sub_list, second_half, (gp->error_flag ? 4 : mode));
     }
 }
 
@@ -3285,6 +3312,44 @@ void czl_fix_tabkv_ptr(czl_table *tab)
 char czl_sys_sort(czl_gp *gp, czl_fun *fun)
 {
     czl_var *var = CZL_GRV(fun->vars);
+    unsigned char quality = var->quality;
+    czl_exp_fun exp_fun;
+    czl_para p1, p2;
+    czl_exp_ele e1, e2;
+
+    if (CZL_FUN_REF == fun->vars[2].type)
+    {
+        czl_fun *f = fun->vars[2].val.fun;
+        if (!f || CZL_SYS_FUN == f->type || f->enter_vars_cnt != 2 || f->para_explain)
+        {
+            fun->ret.val.inum = 0;
+            return 1;
+        }
+        //
+        p1.para = &e1;
+        p1.next = &p2;
+        p2.para = &e2;
+        p2.next = NULL;
+        //
+        e1.flag = e1.lt = CZL_OPERAND;
+        e1.kind = CZL_REG_VAR;
+        e2.flag = e2.lt = CZL_OPERAND;
+        e2.kind = CZL_REG_VAR;
+        //
+        exp_fun.fun = fun->vars[2].val.fun;
+        exp_fun.paras = &p1;
+        exp_fun.paras_count = 2;
+        exp_fun.quality = CZL_STATIC_FUN;
+        exp_fun.flag = 1;
+        //
+        gp->cur_fun = (czl_fun*)&exp_fun;
+        //
+        CZL_LOCK_OBJ(var); //防止在排序函数删除中删除了var
+    }
+    else
+        gp->cur_fun = NULL;
+
+    gp->error_flag = 0;
 
     if (CZL_ARRAY == var->type)
     {
@@ -3296,9 +3361,9 @@ char czl_sys_sort(czl_gp *gp, czl_fun *fun)
             arr = CZL_ARR(var->val.Obj);
         }
         if (fun->vars[1].val.inum)
-            czl_quick_sort_1(arr->vars, arr->cnt);
+            czl_quick_sort_1(gp, arr->vars, arr->cnt);
         else
-            czl_quick_sort_0(arr->vars, arr->cnt);
+            czl_quick_sort_0(gp, arr->vars, arr->cnt);
     }
     else if (CZL_TABLE == var->type)
     {
@@ -3309,11 +3374,14 @@ char czl_sys_sort(czl_gp *gp, czl_fun *fun)
                 return 0;
             tab = CZL_TAB(var->val.Obj);
         }
-        czl_recursive_merge_sort(&tab->eles_head, fun->vars[1].val.inum);
+        czl_recursive_merge_sort(gp, &tab->eles_head, fun->vars[1].val.inum);
         czl_fix_tabkv_ptr(tab);
     }
 
-    return 1;
+    CZL_UNLOCK_OBJ(var, quality);
+    fun->ret.val.inum = 1;
+
+    return !gp->error_flag;
 }
 ///////////////////////////////////////////////////////////////
 char czl_sys_toBin(czl_gp *gp, czl_fun *fun)
@@ -3612,7 +3680,7 @@ void** czl_coroutine_create(czl_gp *gp, czl_fun *fun, unsigned char type)
 	czl_coroutine *p;
 	unsigned long cnt;
 
-    if (!fun || !fun->yeild_flag)
+    if (!fun || CZL_SYS_FUN == fun->type || !fun->yeild_flag)
         return 0;
 
     if (!(obj=(void**)CZL_COR_MALLOC(gp)))
@@ -3663,7 +3731,7 @@ char czl_sys_reset(czl_gp *gp, czl_fun *fun)
     if (CZL_FUN_REF == fun->vars->type)
     {
         czl_fun *f = fun->vars->val.fun;
-        if (!f || !f->yeild_flag || CZL_IN_BUSY == f->state)
+        if (!f || CZL_SYS_FUN == f->type || !f->yeild_flag || CZL_IN_BUSY == f->state)
         {
             fun->ret.val.inum = 0;
             return 1;
@@ -3736,7 +3804,7 @@ char czl_sys_resume(czl_gp *gp, czl_fun *fun)
 
     c = CZL_COR(obj);
 
-    if ((unsigned long)c->fun->enter_vars_count < fun->paras_cnt-1)
+    if ((unsigned long)c->fun->enter_vars_cnt < fun->paras_cnt-1)
         return 1;
 
     if (!(ret=czl_coroutine_run(gp, p->next, fun->paras_cnt-1, obj)))

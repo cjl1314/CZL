@@ -5,7 +5,7 @@ int isprime(int n)
 	for (i=2; i<=count; ++i)
 		if (n%i == 0)
 			return false
-	$total++
+	total++
 	return true
 }
 
@@ -14,6 +14,6 @@ main
 	for i in (0, 1000000-1)
 		isprime(i)
 	
-	echo($total)
+	echo(total)
 	echo(clock())
 }

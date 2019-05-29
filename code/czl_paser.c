@@ -39,7 +39,7 @@ enum czl_keyword_index_enum
     CZL_CONST_INDEX,
     CZL_CLASS_INDEX,
     CZL_FINAL_INDEX,
-    CZL_THIS_INDEX,
+    CZL_MY_INDEX,
     CZL_FUNC_INDEX,
     CZL_PUB_INDEX,
     CZL_PRO_INDEX,
@@ -92,7 +92,7 @@ const czl_keyword czl_keyword_table[] =
     {"const",       CZL_CONST_INDEX},
     {"class",       CZL_CLASS_INDEX},
     {"final",       CZL_FINAL_INDEX},
-    {"this",        CZL_THIS_INDEX},
+    {"my",          CZL_MY_INDEX},
     {"func",        CZL_FUNC_INDEX},
     {"pub",         CZL_PUB_INDEX},
     {"pro",         CZL_PRO_INDEX},
@@ -1184,7 +1184,7 @@ char* czl_fun_match
     char *code,
     char *name,
     czl_exp_node **node,
-    char this_flag
+    char my_flag
 )
 {
 	char fun_type = CZL_STATIC_FUN;
@@ -1193,7 +1193,7 @@ char* czl_fun_match
 	czl_exp_fun *exp_fun;
 
     //静态用户函数查询
-    if (!(fun=czl_fun_find_in_exp(gp, name, this_flag)))
+    if (!(fun=czl_fun_find_in_exp(gp, name, my_flag)))
     {
         //静态系统函数查询
         if (!gp->tmp->osfun_hash &&
@@ -1206,7 +1206,7 @@ char* czl_fun_match
         }
         else
         {
-            fun = (czl_fun*)czl_var_find_in_exp(gp, name, this_flag);
+            fun = (czl_fun*)czl_var_find_in_exp(gp, name, my_flag);
             if (fun) //变量调用方式动态函数查询
             {
                 if (gp->tmp->cur_class_var)
@@ -1315,7 +1315,6 @@ char* czl_str_def(czl_gp *gp, char *code, czl_new_sentence **newObj)
     if (!(*newObj=czl_new_sentence_create(gp, CZL_STRING)))
         return NULL;
 
-    (*newObj)->new_obj.arr.init_list = NULL;
     if (!(code=czl_get_arr_len(gp, code, &(*newObj)->new_obj.arr.len)))
         goto CZL_SYNTAX_ERROR;
 
@@ -1340,7 +1339,6 @@ char* czl_arr_def(czl_gp *gp, char *code, czl_new_sentence **newObj, char type)
     if (!(*newObj=czl_new_sentence_create(gp, type)))
         return NULL;
 
-    (*newObj)->new_obj.arr.init_list = NULL;
     if (!(code=czl_get_arr_len(gp, code, &(*newObj)->new_obj.arr.len)))
         goto CZL_SYNTAX_ERROR;
 
@@ -1361,7 +1359,6 @@ char* czl_tab_def(czl_gp *gp, char *code, czl_new_sentence **newObj)
     if (!(*newObj=czl_new_sentence_create(gp, CZL_TABLE)))
         return NULL;
 
-    (*newObj)->new_obj.tab = NULL;
     code = czl_ignore_sign_filt(gp, code);
     if ('{' == *code)
     {
@@ -1410,19 +1407,18 @@ char* czl_ins_def(czl_gp *gp, char *code, czl_new_sentence **newObj)
 {
     char flag;
     char name[CZL_NAME_MAX_SIZE*2];
-
-    if (!(*newObj=czl_new_sentence_create(gp, CZL_INSTANCE)))
-        return NULL;
+    czl_class *pclass;
 
     if (!(code=czl_class_name_match(gp, code, name, &flag)))
-        goto CZL_SYNTAX_ERROR;
-
-    if (!((*newObj)->new_obj.ins.pclass=czl_class_find(gp, name, flag)))
+        return NULL;
+    if (!(pclass=czl_class_find(gp, name, flag)))
     {
         sprintf(gp->log_buf, "undefined class %s, ", name);
-        goto CZL_SYNTAX_ERROR;
+        return NULL;
     }
-    (*newObj)->new_obj.ins.init_fun = NULL;
+    if (!(*newObj=czl_new_sentence_create(gp, pclass->ot_num)))
+        return NULL;
+    (*newObj)->new_obj.ins.pclass = pclass;
     if (!(code=czl_get_arr_len(gp, code, &(*newObj)->new_obj.ins.len)))
         goto CZL_SYNTAX_ERROR;
     code = czl_ignore_sign_filt(gp, code);
@@ -1476,13 +1472,13 @@ char* czl_var_match
     char *code,
     char *name,
     czl_exp_node **node,
-    char this_flag
+    char my_flag
 )
 {
     char type;
     czl_var *var;
 
-    if ((var=czl_var_find_in_exp(gp, name, this_flag)))
+    if ((var=czl_var_find_in_exp(gp, name, my_flag)))
     {
         if (gp->tmp->cur_class_var)
             type = CZL_INS_VAR;
@@ -1498,7 +1494,7 @@ char* czl_var_match
     else
     {
 
-        if (this_flag)
+        if (my_flag)
         {
             sprintf(gp->log_buf, "undefined variable %s, ", name);
             return NULL;
@@ -1730,7 +1726,7 @@ char czl_is_var_or_fun(czl_gp *gp, char **code, czl_exp_node **node, char *flag)
 {
     char name[CZL_NAME_MAX_SIZE];
     char *s = *code;
-    char this_flag = 0;
+    char my_flag = 0;
     unsigned long line = gp->error_line;
 
     if (!((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') || ('_' == *s)))
@@ -1755,20 +1751,20 @@ char czl_is_var_or_fun(czl_gp *gp, char **code, czl_exp_node **node, char *flag)
 
     if ('.' == *s)
     {
-        if (strcmp("this", name) == 0)
+        if (strcmp("my", name) == 0)
         {
             if (gp->tmp->analysis_field != CZL_IN_CLASS &&
                 gp->tmp->analysis_field != CZL_IN_CLASS_FUN)
             {
-                sprintf(gp->log_buf, "this should use in class-scope, ");
+                sprintf(gp->log_buf, "my should use in class-scope, ");
                 goto CZL_SYNTAX_ERROR;
             }
             if (!(s=czl_name_match(gp, s+1, name)))
             {
-                sprintf(gp->log_buf, "missed variable or function after this, ");
+                sprintf(gp->log_buf, "missed variable or function after my, ");
                 goto CZL_SYNTAX_ERROR;
             }
-            this_flag = 1;
+            my_flag = 1;
         }
     }
     else if (':' == *s && ':' == *(s+1))
@@ -1785,11 +1781,11 @@ char czl_is_var_or_fun(czl_gp *gp, char **code, czl_exp_node **node, char *flag)
             sprintf(gp->log_buf, "should not use function in constant init, ");
             goto CZL_SYNTAX_ERROR;
         }
-        *code = czl_fun_match(gp, s+1, name, node, this_flag);
+        *code = czl_fun_match(gp, s+1, name, node, my_flag);
         return 1;
     }
 
-    if (!(s=czl_var_match(gp, s, name, node, this_flag)))
+    if (!(s=czl_var_match(gp, s, name, node, my_flag)))
         goto CZL_SYNTAX_ERROR;
 
     if ((*node)->type != CZL_FUNCTION)
@@ -2410,32 +2406,9 @@ char* czl_obj_paras_def
 
     switch (type)
     {
-    case CZL_INSTANCE:
-        newObj->new_obj.ins.pclass = pclass;
-        newObj->new_obj.ins.init_fun = NULL;
-        newObj->new_obj.ins.len = len;
-        if ('(' == *code)
-        {
-			czl_fun *fun;
-            if (const_init_flag)
-            {
-                sprintf(gp->log_buf, "init static instance should not be with structure function, ");
-                goto CZL_SYNTAX_ERROR;
-            }
-            if (!(fun=czl_fun_node_find(newObj->new_obj.ins.pclass->name,
-									    &newObj->new_obj.ins.pclass->funs_hash)))
-            {
-                sprintf(gp->log_buf, "undefined structure function in class %s, ", pclass->name);
-                goto CZL_SYNTAX_ERROR;
-            }
-            if (!(code=czl_exp_fun_build(gp, code+1,
-                                         &newObj->new_obj.ins.init_fun,
-                                         fun, CZL_STATIC_FUN)))
-                goto CZL_SYNTAX_ERROR;
-        }
+    case CZL_TABLE:
         break;
     case CZL_ARRAY: case CZL_STACK: case CZL_QUEUE:
-        newObj->new_obj.arr.init_list = NULL;
         newObj->new_obj.arr.len = len;
         if ('=' == *code && *(code+1) != '=')
         {
@@ -2451,7 +2424,6 @@ char* czl_obj_paras_def
         }
         break;
     case CZL_STRING:
-        newObj->new_obj.arr.init_list = NULL;
         newObj->new_obj.arr.len = len;
         if ('=' == *code && *(code+1) != '=')
         {
@@ -2467,7 +2439,28 @@ char* czl_obj_paras_def
             newObj->new_obj.arr.init_list = (czl_array_list*)str;
         }
         break;
-    default: //CZL_TABLE
+    default:
+        newObj->new_obj.ins.pclass = pclass;
+        newObj->new_obj.ins.len = len;
+        if ('(' == *code)
+        {
+            czl_fun *fun;
+            if (const_init_flag)
+            {
+                sprintf(gp->log_buf, "init static instance should not be with structure function, ");
+                goto CZL_SYNTAX_ERROR;
+            }
+            if (!(fun=czl_fun_node_find(newObj->new_obj.ins.pclass->name,
+                                        &newObj->new_obj.ins.pclass->funs_hash)))
+            {
+                sprintf(gp->log_buf, "undefined structure function in class %s, ", pclass->name);
+                goto CZL_SYNTAX_ERROR;
+            }
+            if (!(code=czl_exp_fun_build(gp, code+1,
+                                         &newObj->new_obj.ins.init_fun,
+                                         fun, CZL_STATIC_FUN)))
+                goto CZL_SYNTAX_ERROR;
+        }
         break;
     }
 
@@ -2560,7 +2553,7 @@ char* czl_instance_def(czl_gp *gp, char *code, char quality)
         return NULL;
     }
 
-    return czl_objs_def(gp, code, quality, CZL_INSTANCE, pclass);
+    return czl_objs_def(gp, code, quality, pclass->ot_num, pclass);
 }
 
 char* czl_obj_def(czl_gp *gp, char *code, int index, char quality)
@@ -2596,7 +2589,7 @@ char* czl_obj_def(czl_gp *gp, char *code, int index, char quality)
     default:
         if (CZL_STATIC_VAR == quality)
             return czl_var_def(gp, code, quality, CZL_NIL);
-        sprintf(gp->log_buf, "%s used error in this scope, ", czl_keyword_table[index-1].name);
+        sprintf(gp->log_buf, "%s used error in my scope, ", czl_keyword_table[index-1].name);
         return NULL;
     }
 }
@@ -3219,7 +3212,7 @@ char* czl_context_analysis(czl_gp *gp, char *code, int index)
         if (!czl_code_block_create(gp, index))
             return NULL;
         break;
-    case CZL_THIS_INDEX:
+    case CZL_MY_INDEX:
         return czl_sentence_match(gp, code-4);
     case CZL_STATIC_INDEX:
         code = czl_keyword_find(gp, code, &index, 0);
@@ -3285,7 +3278,6 @@ char czl_get_para_ot(czl_gp *gp, char *name)
     case CZL_FLOAT_INDEX: return CZL_FLOAT;
     case CZL_NUM_INDEX: return CZL_NUM;
     case CZL_STR_INDEX: return CZL_STRING;
-    case CZL_INS_INDEX: return CZL_INSTANCE;
     case CZL_TABLE_INDEX: return CZL_TABLE;
     case CZL_ARR_INDEX: return CZL_ARRAY;
     case CZL_STACK_INDEX: return CZL_STACK;
@@ -3306,10 +3298,28 @@ char* czl_para_dec_check(czl_gp *gp, char *code, unsigned char *ot, unsigned cha
 
     if ((code=czl_name_match(gp, code, name)))
     {
+        code = czl_ignore_sign_filt(gp, code);
         *ot = czl_get_para_ot(gp, name);
         if (CZL_NIL == *ot)
-            return tmp;
-        code = czl_ignore_sign_filt(gp, code);
+        {
+            if (',' == *code || ')' == *code || '=' == *code)
+                return tmp;
+            else
+            {
+                char flag;
+                char name[CZL_NAME_MAX_SIZE*2];
+                czl_class *pclass;
+                if (!(code=czl_class_name_match(gp, tmp, name, &flag)))
+                    return NULL;
+                if (!(pclass=czl_class_find(gp, name, flag)))
+                {
+                    sprintf(gp->log_buf, "undefined class %s, ", name);
+                    return NULL;
+                }
+                *ot = pclass->ot_num;
+                code = czl_ignore_sign_filt(gp, code);
+            }
+        }
     }
     else
         code = tmp;
@@ -3343,7 +3353,8 @@ char* czl_fun_paras_match(czl_gp *gp, char *code, czl_fun *fun)
         }
         for (;;)
         {
-            code = czl_para_dec_check(gp, code, &ot, &ref_flag);
+            if (!(code=czl_para_dec_check(gp, code, &ot, &ref_flag)))
+                return NULL;
             if (!(code=czl_name_match(gp, code, name)))
             {
                 if (0 == paras_count && CZL_NIL == ot)
@@ -3435,7 +3446,7 @@ CZL_SYNTAX_ERROR:
         return NULL;
     }
 
-    fun->enter_vars_count = paras_count;
+    fun->enter_vars_cnt = paras_count;
 
     gp->tmp->variable_field = CZL_IN_ANY;
 
@@ -3519,8 +3530,8 @@ char* czl_fun_def(czl_gp *gp, char *code, char ot)
     if (!code)
         return NULL;
 
-    //排序类函数中用到的this变量对应的类，加速类实例函数调用时this参数的传递
-    if (CZL_IN_CLASS_FUN == gp->tmp->analysis_field && !czl_this_vars_class_sort(gp, fun))
+    //排序类函数中用到的my变量对应的类，加速类实例函数调用时my参数的传递
+    if (CZL_IN_CLASS_FUN == gp->tmp->analysis_field && !czl_my_vars_class_sort(gp, fun))
         return NULL;
 
     //编译抽象语法树ast为opcode
@@ -3683,15 +3694,36 @@ char* czl_permission_dec(czl_gp *gp, char *code, int index)
     return code+1;
 }
 
-char* czl_is_fun_def(czl_gp *gp, char *code, char ot, char *flag)
+char* czl_is_fun_obj_def(czl_gp *gp, char *code, char ot, char *error)
 {
-    int error_line_backup = gp->error_line;
-    char *tmp = code;
-    char name[CZL_NAME_MAX_SIZE];
+    char name[CZL_NAME_MAX_SIZE*2];
+    int error_line_backup;
+    char *tmp;
+    czl_class *pclass = NULL;
 
 	if (CZL_IN_GLOBAL_FUN == gp->tmp->analysis_field ||
         CZL_IN_CLASS_FUN == gp->tmp->analysis_field)
         return NULL;
+
+    if (ot == CZL_INSTANCE)
+    {
+        char flag;
+        if (!(code=czl_class_name_match(gp, code, name, &flag)))
+        {
+            *error = 1;
+            return code;
+        }
+        if (!(pclass=czl_class_find(gp, name, flag)))
+        {
+            sprintf(gp->log_buf, "undefined class %s, ", name);
+            *error = 1;
+            return code;
+        }
+        ot = pclass->ot_num;
+    }
+
+    error_line_backup = gp->error_line;
+    tmp = code;
 
     if ((code=czl_name_match(gp, code, name)))
     {
@@ -3701,11 +3733,32 @@ char* czl_is_fun_def(czl_gp *gp, char *code, char ot, char *flag)
             gp->error_line = error_line_backup;
             if (!(code=czl_fun_def(gp, tmp, ot)))
             {
-                *flag = 0;
-                return tmp;
+                *error = 1;
+                return code;
             }
             return code;
         }
+        else if (pclass)
+        {
+            if (CZL_NOT_SURE == pclass->flag)
+            {
+                sprintf(gp->log_buf, "unsure class %s, ", name);
+                *error = 1;
+                return code;
+            }
+            gp->error_line = error_line_backup;
+            if (!(code=czl_objs_def(gp, tmp, CZL_DYNAMIC_VAR, pclass->ot_num, pclass)))
+            {
+                *error = 1;
+                return code;
+            }
+            return code;
+        }
+    }
+    else if (pclass)
+    {
+        *error = 1;
+        return code;
     }
 
     gp->error_line = error_line_backup;
@@ -3715,7 +3768,7 @@ char* czl_is_fun_def(czl_gp *gp, char *code, char ot, char *flag)
 
 char* czl_is_fun_or_obj_def(czl_gp *gp, char *code, int index)
 {
-    char ot, flag = 1;
+    char ot, error = 0;
 	char *tmp;
 
     switch (index)
@@ -3736,8 +3789,8 @@ char* czl_is_fun_or_obj_def(czl_gp *gp, char *code, int index)
     default: return index ? NULL : czl_fun_def(gp, code, CZL_NIL);
     }
 
-    if ((tmp=czl_is_fun_def(gp, code, ot, &flag)))
-		return flag ? tmp : NULL;
+    if ((tmp=czl_is_fun_obj_def(gp, code, ot, &error)))
+        return error ? NULL : tmp;
 
     switch (index)
     {
@@ -3751,8 +3804,6 @@ char* czl_is_fun_or_obj_def(czl_gp *gp, char *code, int index)
         return czl_var_def(gp, code, CZL_DYNAMIC_VAR, CZL_FILE);
     case CZL_FUN_INDEX:
         return czl_var_def(gp, code, CZL_DYNAMIC_VAR, CZL_FUN_REF);
-    case CZL_INS_INDEX:
-        return czl_instance_def(gp, code, CZL_DYNAMIC_VAR);
     case CZL_TABLE_INDEX:
         return czl_objs_def(gp, code, CZL_DYNAMIC_VAR, CZL_TABLE, NULL);
     default: //CZL_STR_INDEX/CZL_ARR_INDEX/
@@ -4115,6 +4166,9 @@ char czl_global_paras_init(czl_gp *gp)
 
     //变量区域限制标志位初始化
     gp->tmp->variable_field = CZL_IN_ANY;
+
+    //初始化类强类型声明编号
+    gp->tmp->class_ot_num = CZL_NIL;
 
     //系统关键字哈希表创建
     if (!czl_sys_keyword_hash_create(gp, czl_keyword_table, czl_keyword_table_num))
