@@ -23,6 +23,7 @@ enum czl_keyword_index_enum
     CZL_YEILD_INDEX,
     CZL_TRY_INDEX,
     CZL_LOAD_INDEX,
+    CZL_AS_INDEX,
     CZL_LIB_INDEX,
     CZL_FUN_INDEX,
     CZL_VAR_INDEX,
@@ -51,8 +52,9 @@ enum czl_keyword_index_enum
     CZL_FALSE_INDEX,
     CZL_LBRACKET_INDEX,
     CZL_RBRACKET_INDEX,
-    //
-    CZL_INS_INDEX //仅起到标记作用
+    //以下仅起到标记作用
+    CZL_INS_INDEX,
+    CZL_GOTO_FLAG
 };
 
 //系统关键字列表
@@ -76,6 +78,7 @@ const czl_keyword czl_keyword_table[] =
     {"yeild",       CZL_YEILD_INDEX},
     {"try",         CZL_TRY_INDEX},
     {"load",        CZL_LOAD_INDEX},
+    {"as",          CZL_AS_INDEX},
     {"lib",         CZL_LIB_INDEX},
     {"fun",         CZL_FUN_INDEX},
     {"var",         CZL_VAR_INDEX},
@@ -238,32 +241,32 @@ czl_goto_flag* czl_goto_node_find(const char *name, czl_goto_flag *p)
     return NULL;
 }
 
-char czl_goto_flag_insert(czl_gp *gp, const char *name)
+char* czl_goto_flag_insert(czl_gp *gp, char *code)
 {
+    char name[CZL_NAME_MAX_SIZE];
 	czl_goto_flag *node;
+
+    if (!(code=czl_name_match(gp, code, name)))
+        return NULL;
+
     if (czl_goto_node_find(name, gp->cur_fun->goto_flags))
     {
         sprintf(gp->log_buf, "redeclared goto_flag %s, ", name);
-        return 0;
+        return NULL;
     }
     if (!(node=czl_goto_node_create(gp, name)))
-        return 0;
+        return NULL;
     czl_goto_node_insert(&gp->cur_fun->goto_flags, node);
 
-    return 1;
+    return czl_ignore_sign_filt(gp, code) + 1;
 }
 
 //系统关键字查找
 char* czl_keyword_find(czl_gp *gp, char *code, int *index, char flag)
 {
-    char *tmp;
     char name[CZL_NAME_MAX_SIZE];
-	unsigned long error_line_backup;
-
-    *index = 0;
-
-    code = czl_ignore_sign_filt(gp, code);
-    tmp = code;
+    unsigned long error_line_backup;
+    char *tmp = code = czl_ignore_sign_filt(gp, code);
 
     if (flag)
     {
@@ -280,7 +283,10 @@ char* czl_keyword_find(czl_gp *gp, char *code, int *index, char flag)
     }
 
     if (!(code=czl_name_match(gp, code, name)))
+    {
+        *index = 0;
         return tmp;
+    }
 
     if ((*index=czl_is_keyword(gp, name)))
     {
@@ -318,29 +324,13 @@ char* czl_keyword_find(czl_gp *gp, char *code, int *index, char flag)
         code = czl_ignore_sign_filt(gp, code);
         flag = 0;
     }
-    if ((*code >= 'a' && *code <= 'z') ||
-        (*code >= 'A' && *code <= 'Z') ||
-        ('_' == *code))
-    {
-        gp->error_line = error_line_backup;
+
+    if ((*code >= 'a' && *code <= 'z') || (*code >= 'A' && *code <= 'Z') || ('_' == *code))
         *index = CZL_INS_INDEX;
-        return tmp;
-    }
+    else if (1 == flag && ':' == *code && *(code+1) != ':')
+        *index = CZL_GOTO_FLAG;
+
     gp->error_line = error_line_backup;
-
-    if (1 == flag)
-    {
-        error_line_backup = gp->error_line;
-        code = czl_ignore_sign_filt(gp, code);
-        if (':' == *code && *(code+1) != ':')
-        {
-            if (!czl_goto_flag_insert(gp, name))
-                return NULL;
-            return czl_keyword_find(gp, code+1, index, 1);
-        }
-        gp->error_line = error_line_backup;
-    }
-
     return tmp;
 }
 
@@ -471,8 +461,7 @@ char czl_block_context_check(czl_gp *gp, int index)
             gp->tmp->block_count--;
             //检查是否是空switch语句
             if (gp->tmp->block_count > 0 &&
-                    CZL_SWITCH_INDEX ==
-                    gp->tmp->block_stack[gp->tmp->block_count-1].index)
+                CZL_SWITCH_INDEX == gp->tmp->block_stack[gp->tmp->block_count-1].index)
                 gp->tmp->block_count--;
         }
         else
@@ -1197,7 +1186,7 @@ char* czl_fun_match
     {
         //静态系统函数查询
         if (!gp->tmp->osfun_hash &&
-            !(gp->tmp->osfun_hash=czl_sys_fun_hash_create(gp, CZL_SYS_LIB_NAME)))
+            !(gp->tmp->osfun_hash=czl_sys_fun_hash_create(gp, "os")))
             return NULL;
         if ((sys_fun=czl_sys_fun_find(name, gp->tmp->osfun_hash)))
         {
@@ -1915,7 +1904,7 @@ char* czl_fun_addr_match(czl_gp *gp, char *code, czl_exp_node **node)
     else if (!(fun=czl_fun_find(gp, name, CZL_GLOBAL_FIND)))
     {
         if (!gp->tmp->osfun_hash &&
-            !(gp->tmp->osfun_hash=czl_sys_fun_hash_create(gp, CZL_SYS_LIB_NAME)))
+            !(gp->tmp->osfun_hash=czl_sys_fun_hash_create(gp, "os")))
             return NULL;
         if ((sys_fun=czl_sys_fun_find(name, gp->tmp->osfun_hash)))
         {
@@ -2817,7 +2806,7 @@ char* czl_try_flag_match(czl_gp *gp, char *code)
 
     if (!(code=czl_name_match(gp, code, name)))
     {
-        sprintf(gp->log_buf, "try missed exit/break/continue, ");
+        sprintf(gp->log_buf, "try missed exit/break/continue or goto_flag, ");
         return NULL;
     }
 
@@ -2902,6 +2891,7 @@ char czl_condition_block_check
         return 0;
 
     p = gp->tmp->block_stack + gp->tmp->block_count - 1;
+
     if (CZL_NOT_SURE == p->flag)
     {
         if ((CZL_IF_INDEX == index ||
@@ -2955,7 +2945,7 @@ char czl_condition_block_check
                 if (!(*code=czl_condition_match(gp, *code, 0)))
                     return -1;
                 gp->tmp->code_blocks[gp->tmp->code_blocks_count-1].
-                        block.loop->condition = gp->tmp->exp_head;
+                                     block.loop->condition = gp->tmp->exp_head;
                 gp->tmp->exp_head = NULL;
                 *do_while_end = 1;
             }
@@ -3164,10 +3154,12 @@ char* czl_code_block_check(czl_gp *gp, char *code, int index)
 
 char* czl_context_analysis(czl_gp *gp, char *code, int index)
 {
-    int ret;
     char do_while_end = 0;
+    int ret = czl_condition_block_check(gp, index, &code, &do_while_end);
 
-    ret = czl_condition_block_check(gp, index, &code, &do_while_end);
+    if (-1 == ret)
+        return NULL;
+
     if (1 == ret)
     {
         //修正 else 语句块为 elif 语句块
@@ -3177,11 +3169,12 @@ char* czl_context_analysis(czl_gp *gp, char *code, int index)
         czl_else_block_to_elif(gp);
         return code;
     }
-    else if (-1 == ret)
-        return NULL;
 
     if (do_while_end)
         return code;
+
+    if (CZL_GOTO_FLAG == index)
+        return czl_goto_flag_insert(gp, code);
 
     switch (index)
     {
@@ -3443,9 +3436,9 @@ CZL_SYNTAX_ERROR:
             sprintf(gp->log_buf, "paras number of function main should not be much 1, ");
             return NULL;
         }
-        if (gp->tmp->cur_usrlib)
+        if (gp->tmp->cur_usrlib != gp->tmp->glo_lib)
         {
-            sprintf(gp->log_buf, "main function defined should not be in lib, ");
+            sprintf(gp->log_buf, "main function defined should be in global, ");
             return NULL;
         }
         gp->main_err_line = gp->error_line;
@@ -3669,7 +3662,6 @@ char* czl_load_shell(czl_gp *gp, char *old_code)
     usrlib_backup = gp->tmp->cur_usrlib;
     gp->error_line = 1;
     gp->error_file = gp->sn_head->name;
-    gp->tmp->cur_usrlib = NULL;
 
     if (!czl_shell_analysis(gp, new_code))
         old_code = NULL;
@@ -3707,32 +3699,43 @@ char* czl_permission_dec(czl_gp *gp, char *code, int index)
     return code+1;
 }
 
+//给类、函数起别名
+char* czl_as_build(czl_gp *gp, char *code, char *old_name)
+{
+    char new_name[CZL_NAME_MAX_SIZE];
+
+    if (gp->tmp->analysis_field != CZL_IN_GLOBAL)
+        return NULL;
+
+    if (!(code=czl_name_match(gp, code, new_name)))
+        return NULL;
+
+    if (czl_sys_hash_find(CZL_STRING, CZL_NIL, new_name, &gp->tmp->cur_usrlib->as_hash))
+    {
+        sprintf(gp->log_buf, "redefined as %s, ", new_name);
+        return NULL;
+    }
+
+    return czl_as_save(gp, new_name, old_name) ? code : NULL;
+}
+
 char* czl_is_fun_obj_def(czl_gp *gp, char *code, char ot, char *error)
 {
-    char name[CZL_NAME_MAX_SIZE*2];
+    char name[CZL_NAME_MAX_SIZE];
+    char obj_name[CZL_NAME_MAX_SIZE*2];
     int error_line_backup;
     char *tmp;
+    char flag;
     czl_class *pclass = NULL;
 
 	if (CZL_IN_GLOBAL_FUN == gp->tmp->analysis_field ||
         CZL_IN_CLASS_FUN == gp->tmp->analysis_field)
         return NULL;
 
-    if (ot == CZL_INSTANCE)
+    if (CZL_INSTANCE == ot && !(code=czl_class_name_match(gp, code, obj_name, &flag)))
     {
-        char flag;
-        if (!(code=czl_class_name_match(gp, code, name, &flag)))
-        {
-            *error = 1;
-            return code;
-        }
-        if (!(pclass=czl_class_find(gp, name, flag)))
-        {
-            sprintf(gp->log_buf, "undefined class %s, ", name);
-            *error = 1;
-            return code;
-        }
-        ot = pclass->ot_num;
+        *error = 1;
+        return code;
     }
 
     error_line_backup = gp->error_line;
@@ -3740,6 +3743,25 @@ char* czl_is_fun_obj_def(czl_gp *gp, char *code, char ot, char *error)
 
     if ((code=czl_name_match(gp, code, name)))
     {
+        if (strcmp("as", name) == 0)
+        {
+            if (!(code=czl_as_build(gp, code, obj_name)))
+            {
+                *error = 1;
+                return tmp;
+            }
+            return code;
+        }
+        if (CZL_INSTANCE == ot)
+        {
+            if (!(pclass=czl_class_find(gp, obj_name, flag)))
+            {
+                sprintf(gp->log_buf, "undefined class %s, ", obj_name);
+                *error = 1;
+                return code;
+            }
+            ot = pclass->ot_num;
+        }
         code = czl_ignore_sign_filt(gp, code);
         if ('(' == *code || '{' == *code || ':' == *code)
         {
@@ -3768,7 +3790,7 @@ char* czl_is_fun_obj_def(czl_gp *gp, char *code, char ot, char *error)
             return code;
         }
     }
-    else if (pclass)
+    else if (CZL_INSTANCE == ot)
     {
         *error = 1;
         return code;
@@ -4068,7 +4090,7 @@ char czl_shell_analysis(czl_gp *gp, char *code)
             {
                 ++code;
                 libFlag = 0;
-                gp->tmp->cur_usrlib = NULL;
+                gp->tmp->cur_usrlib = gp->tmp->glo_lib;
             }
             else
                 code = czl_is_fun_or_obj_def(gp, code, index);
@@ -4192,7 +4214,7 @@ char czl_global_paras_init(czl_gp *gp)
         return 0;
 
     //全局域创建
-    if (!(gp->tmp->glo_lib=czl_usrlib_create(gp, "g")))
+    if (!(gp->tmp->glo_lib = gp->tmp->cur_usrlib = czl_usrlib_create(gp, "g")))
         return 0;
 
     return 1;

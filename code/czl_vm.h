@@ -36,8 +36,6 @@
 
 //主函数名
 #define CZL_MAIN_FUN_NAME	"main"
-//系统库名
-#define CZL_SYS_LIB_NAME "os"
 ///////////////////////////////////////////////////////////////
 //变量是否存在&引用: var exist ref
 #define CZL_VAR_EXIST_REF(var) \
@@ -118,6 +116,17 @@ do { objs[i]->quality = quality[i]; } while (++i < j);
 ///////////////////////////////////////////////////////////////
 #define CZL_INT_SWAP(a, b) { a=a^b; b=b^a; a=a^b; }
 #define CZL_VAL_SWAP(a, b, t) { t=a; a=b; b=t; }
+///////////////////////////////////////////////////////////////
+#ifdef CZL_SYSTEM_LINUX
+    #define CZL_CLOCK (clock()/1000)
+    #define CZL_SLEEP(t) usleep(t*1000)
+#elif defined CZL_SYSTEM_WINDOWS
+    #define CZL_CLOCK clock()
+    #define CZL_SLEEP(t) Sleep(t)
+#else
+    #define CZL_CLOCK (0)
+    #define CZL_SLEEP(t) (t)
+#endif
 ///////////////////////////////////////////////////////////////
 //运算符
 //添加或删除元素后注意修改宏: CZL_UNARY_OPT_NUMBER 和 CZL_BINARY_OPT_NUMBER
@@ -449,20 +458,19 @@ typedef struct czl_ref
     long inx;
 } czl_ref;
 
-typedef struct czl_foreach_msg
+typedef struct czl_ext
 {
-    void *obj;
-    unsigned long inx;
-} czl_foreach_msg;
-
-//文件对象结构
-typedef struct czl_file
-{
-    unsigned long rc;   //引用计数
-    FILE *fp;           //文件指针
-    unsigned char mode; //模式, 1:结构化; 2:行
-    unsigned char sign; //行写间隔符号
-} czl_file;
+    union czl_ext_v1
+    {
+        void *ptr;
+        int i32;
+    } v1;
+    union czl_ext_v2
+    {
+        unsigned long u32;
+        int i32;
+    } v2;
+} czl_ext;
 
 //操作数值结构
 typedef union czl_value
@@ -471,7 +479,7 @@ typedef union czl_value
     czl_float fnum;     //浮点型数值
     czl_str str;        //字符串
     czl_ref ref;        //引用
-    czl_foreach_msg msg;//foreach专用
+    czl_ext ext;        //扩展两个4字节变量使用
     struct czl_fun *fun;//函数指针
     void **Obj;         //对象
 } czl_value;
@@ -913,6 +921,16 @@ typedef struct czl_fun
     unsigned long opcode_cnt;               //字节码大小
 } czl_fun, *czl_fun_list;
 
+//文件对象结构
+typedef struct czl_file
+{
+    unsigned long rc;   //引用计数
+    FILE *fp;           //文件指针
+    unsigned char mode; //1:结构化 2:行 3:字节流
+    unsigned char sign; //行写间隔符号
+    long addr;          //文件偏移地址
+} czl_file;
+
 //哈希表桶链节点
 typedef struct czl_bucket
 {
@@ -1179,6 +1197,14 @@ typedef struct czl_name
     struct czl_name *next;
 } czl_name;
 
+//别名链表节点结构
+typedef struct czl_as
+{
+    char *new_name;
+    char *old_name;
+    struct czl_as *next;
+} czl_as;
+
 //系统关键字索引结构
 typedef struct czl_keyword
 {
@@ -1248,6 +1274,8 @@ typedef struct czl_usrlib
     czl_nsef *nsef_tail;
     czl_sys_hash vars_hash;
     czl_sys_hash funs_hash;
+    czl_sys_hash as_hash;       //别名哈希索引
+    czl_as *as_head;            //别名链表头
 } czl_usrlib;
 
 //协程节点结构
@@ -1507,6 +1535,7 @@ extern const unsigned long czl_unary_opt_table_num;
 extern const czl_binary_operator czl_binary_opt_table[];
 extern const unsigned long czl_binary_opt_table_num;
 ///////////////////////////////////////////////////////////////
+char czl_as_save(czl_gp*, char*, char*);
 char czl_shell_name_save(czl_gp*, char*, char);
 czl_name* czl_shell_name_find(czl_gp*, char*);
 char czl_fun_paras_check(czl_gp*, czl_exp_fun*, const czl_fun*);

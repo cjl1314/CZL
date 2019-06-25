@@ -14,6 +14,8 @@ char czl_sys_open(czl_gp*, czl_fun*);
 char czl_sys_close(czl_gp*, czl_fun*);
 char czl_sys_write(czl_gp*, czl_fun*);
 char czl_sys_read(czl_gp*, czl_fun*);
+char czl_sys_seek(czl_gp*, czl_fun*);
+char czl_sys_tell(czl_gp*, czl_fun*);
 char czl_sys_printf(czl_gp*, czl_fun*);
 char czl_sys_cleanFile(czl_gp*, czl_fun*);
 //
@@ -102,6 +104,10 @@ char czl_sys_corsta(czl_gp*, czl_fun*);
 char czl_sys_resume(czl_gp*, czl_fun*);
 char czl_sys_kill(czl_gp*, czl_fun*);
 //
+#if (defined CZL_LIB_TCP || defined CZL_LIB_TCP)
+char czl_sys_ips(czl_gp*, czl_fun*);
+#endif //#if (defined CZL_LIB_TCP || defined CZL_LIB_TCP)
+//
 #ifdef CZL_MULT_THREAD
 char czl_sys_thread(czl_gp*, czl_fun*);
 char czl_sys_wait(czl_gp*, czl_fun*);
@@ -135,9 +141,11 @@ const czl_sys_fun czl_lib_os[] =
 #endif //CZL_CONSOLE
     //文件操作函数
     {"open",      czl_sys_open,       4,  "str_v1,str_v2=\"wb+\",int_v3=1,int_v4=32"},
-    {"close",     czl_sys_close,      1,  "&v1"},
+    {"close",     czl_sys_close,      1,  "&file_v1"},
     {"write",     czl_sys_write,      -2, NULL},
-    {"read",      czl_sys_read,       2,  "&v2"},
+    {"read",      czl_sys_read,       3,  "file_v1,&v2,int_v3=1"},
+    {"seek",      czl_sys_seek,       2,  "&file_v1,int_v2"},
+    {"tell",      czl_sys_tell,       1,  "file_v1"},
     {"printf",    czl_sys_printf,     -2, NULL},
     {"cleanFile", czl_sys_cleanFile,  1, "str_v1"},
     //随机数函数
@@ -226,6 +234,10 @@ const czl_sys_fun czl_lib_os[] =
     //线程和协程共用kill函数
     {"resume",    czl_sys_resume,     -1, NULL},
     {"kill",      czl_sys_kill,       1,  "int_v1"},
+#if (defined CZL_LIB_TCP || defined CZL_LIB_TCP)
+    //域名解析函数
+    {"ips",       czl_sys_ips,        1,  "str_v1"},
+#endif //#if (defined CZL_LIB_TCP || defined CZL_LIB_TCP)
 #ifdef CZL_MULT_THREAD
     //多线程框架接口函数
     #ifdef CZL_CONSOLE
@@ -255,16 +267,39 @@ const czl_sys_fun czl_lib_os[] =
 #endif //#ifndef CZL_CONSOLE
 };
 ///////////////////////////////////////////////////////////////
-#include "czl_com.h" //串口通信库头文件
+#ifdef CZL_LIB_COM
+#include "czl_com.h" //串口通信库
+#endif //CZL_LIB_COM
+
+#ifdef CZL_LIB_TCP
+#include "czl_tcp.h" //TCP通信库
+#endif //CZL_LIB_TCP
+
+#ifdef CZL_LIB_UDP
+#include "czl_udp.h" //UDP通信库
+#endif //CZL_LIB_UDP
+
 const czl_sys_lib czl_syslibs[] =
 {
-    //库名,             库指针,       库函数个数
-    {CZL_SYS_LIB_NAME, czl_lib_os,  sizeof(czl_lib_os)/sizeof(czl_sys_fun)},
+    //库名,             库指针,           库函数个数
+    {"os",             czl_lib_os,      sizeof(czl_lib_os)/sizeof(czl_sys_fun)},
+
 #ifdef CZL_LIB_COM
-    {"com",            czl_lib_com, 5}, //串口通信库
+    {"com",            czl_lib_com,     5}, //串口通信库
 #endif //CZL_LIB_COM
+
+#ifdef CZL_LIB_TCP
+    {"tcp",            czl_lib_tcp,     7}, //TCP通信库
+#endif //CZL_LIB_TCP
+
+#ifdef CZL_LIB_UDP
+    {"udp",            czl_lib_udp,     6}, //UDP通信库
+#endif //CZL_LIB_UDP
 };
 const unsigned long czl_syslibs_num = sizeof(czl_syslibs)/sizeof(czl_sys_lib);
+///////////////////////////////////////////////////////////////
+#define CZL_FILE_MAX_SZIE   CZL_MM_4GB
+#define CZL_FILE_CHECK_SUM  0xF1E2C3B4
 ///////////////////////////////////////////////////////////////
 char czl_print_obj(czl_gp *gp, const czl_var*, FILE*);
 char czl_sizeof_obj(czl_gp*, char, const czl_var*, unsigned long*);
@@ -1042,7 +1077,7 @@ char czl_sys_open(czl_gp *gp, czl_fun *fun)
     czl_var *mode2 = fun->vars+2;
     czl_var *sign = fun->vars+3;
 
-    if (mode2->val.inum != 1 && mode2->val.inum != 2)
+    if (mode2->val.inum != 1 && mode2->val.inum != 2 && mode2->val.inum != 3)
         goto CZL_END;
 
     //wb+ 覆盖， rb+ 追加
@@ -1062,6 +1097,7 @@ char czl_sys_open(czl_gp *gp, czl_fun *fun)
     file->rc = 1;
     file->mode = mode2->val.inum;
     file->sign = sign->val.inum;
+    file->addr = 0;
 
     fun->ret.type = CZL_FILE;
     fun->ret.val.Obj = obj;
@@ -1078,15 +1114,11 @@ char czl_sys_close(czl_gp *gp, czl_fun *fun)
 {
     czl_var *var = CZL_GRV(fun->vars);
 
-    if (var->type != CZL_FILE)
-        fun->ret.val.inum = 0;
-    else
-    {
-        if (0 == CZL_ORCD1(var->val.Obj))
-            czl_file_delete(gp, var->val.Obj);
-        var->type = CZL_INT;
-        fun->ret.val.inum = 1;
-    }
+    if (0 == CZL_ORCD1(var->val.Obj))
+        czl_file_delete(gp, var->val.Obj);
+
+    var->type = CZL_INT;
+
     return 1;
 }
 
@@ -1403,16 +1435,16 @@ CZL_END:
 
 char czl_line_write(czl_gp *gp, FILE *fp, char sign, czl_para *p)
 {
-    char flag[2];
-    char tmp[32];
-    char *item;
-    czl_var *ret;
-
-    flag[1] = '\0';
+    if (fseek(fp, 0, SEEK_END))
+        return 0;
 
     for (; p; p = p->next)
     {
-        if (!(ret=czl_exp_cac(gp, p->para)))
+        char *item;
+        char tmp[32];
+        char flag;
+        czl_var *ret = czl_exp_cac(gp, p->para);
+        if (!ret)
             return 0;
         switch (ret->type)
         {
@@ -1432,9 +1464,43 @@ char czl_line_write(czl_gp *gp, FILE *fp, char sign, czl_para *p)
         }
         if (EOF == fputs(item, fp))
             return 0;
-        flag[0] = p->next ? sign : '\n';
-        if (EOF == fputs(flag, fp))
+        flag = (p->next ? sign : '\n');
+        if (flag && EOF == fputc(flag, fp))
             return 0;
+    }
+
+    return 1;
+}
+
+char czl_byte_write(czl_gp *gp, FILE *fp, czl_para *p)
+{
+    for (; p; p = p->next)
+    {
+        char *item;
+        char tmp[32];
+        unsigned long i = 0, len;
+        czl_var *ret = czl_exp_cac(gp, p->para);
+        if (!ret)
+            return 0;
+        switch (ret->type)
+        {
+        case CZL_STRING:
+            item = CZL_STR(ret->val.str.Obj)->str;
+            len = CZL_STR(ret->val.str.Obj)->len;
+            break;
+        case CZL_INT:
+            item = tmp;
+            len = czl_itoa(ret->val.inum, tmp);
+            break;
+        case CZL_FLOAT:
+            item = tmp;
+            len = czl_ftoa(ret->val.fnum, tmp, 6);
+            break;
+        default:
+            continue;
+        }
+        while (i < len && fputc(*item++, fp) != EOF)
+            ++i;
     }
 
     return 1;
@@ -1456,12 +1522,21 @@ char czl_sys_write(czl_gp *gp, czl_fun *fun)
     }
 
     f = CZL_FIL(file->val.Obj);
-    if (fseek(f->fp, 0, SEEK_END))
-        fun->ret.val.inum = 0;
-    else if (1 == f->mode)
-        fun->ret.val.inum = czl_struct_write(gp, f->fp, paras->next);
-    else
-        fun->ret.val.inum = czl_line_write(gp, f->fp, f->sign, paras->next);
+
+    switch (f->mode)
+    {
+    case 1: case 2:
+        if (fseek(f->fp, 0, SEEK_END))
+            fun->ret.val.inum = 0;
+        else
+            fun->ret.val.inum = (1 == f->mode ?
+                                 czl_struct_write(gp, f->fp, paras->next) :
+                                 czl_line_write(gp, f->fp, f->sign, paras->next));
+        break;
+    default: //3
+        fun->ret.val.inum = czl_byte_write(gp, f->fp, paras->next);
+        break;
+    }
 
     return 1;
 }
@@ -1693,37 +1768,6 @@ void** czl_analysis_obj_buf(czl_gp *gp, char *buf, unsigned long obj_cnt)
     return obj;
 }
 
-char czl_struct_read(czl_gp *gp, FILE *fp, czl_var *ret)
-{
-    char *buf;
-    unsigned long file_size;
-    unsigned long obj_cnt;
-    unsigned char header[16];
-
-    rewind(fp);
-    if (!fread(header, 12, 1, fp))
-        return 0;
-    if (*((unsigned long*)header) != CZL_FILE_CHECK_SUM)
-        return 0;
-    file_size = *((unsigned long*)(header+4));
-    obj_cnt = *((unsigned long*)(header+8));
-
-    if (!(buf=(char*)CZL_TMP_MALLOC(gp, file_size+1)))
-        return 0;
-    buf[file_size] = (char)0xFF; //注意不能等于 czl_opr_type_enum 中任何一个
-
-    if (!fread(buf, file_size, 1, fp) ||
-        !(ret->val.Obj=czl_analysis_obj_buf(gp, buf, obj_cnt)))
-    {
-        CZL_TMP_FREE(gp, buf, file_size+1);
-        return 0;
-    }
-
-    CZL_TMP_FREE(gp, buf, file_size+1);
-    ret->type = CZL_ARRAY;
-    return 1;
-}
-
 char czl_obj_read(czl_gp *gp, FILE *fp, czl_var *ret)
 {
     char *buf;
@@ -1732,9 +1776,7 @@ char czl_obj_read(czl_gp *gp, FILE *fp, czl_var *ret)
 
     if (!ftell(fp))
     {
-        if (!fread(header, 12, 1, fp))
-            return 0;
-        if (*((unsigned long*)header) != CZL_FILE_CHECK_SUM)
+        if (!fread(header, 12, 1, fp) || *((unsigned long*)header) != CZL_FILE_CHECK_SUM)
             return 0;
     }
 
@@ -1755,22 +1797,100 @@ char czl_obj_read(czl_gp *gp, FILE *fp, czl_var *ret)
     return 1;
 }
 
-char czl_line_read(czl_gp *gp, FILE *fp, czl_var *ret)
+unsigned long czl_objs_read(czl_gp *gp, FILE *fp, czl_var *ret, long sum)
 {
-    void **obj;
-    czl_str str;
-    czl_string *s;
-    char flag = 1;
-    unsigned long len;
-    char tmp[1024];
+    unsigned char header[16];
+    czl_array *arr;
 
-    if (!czl_str_create(gp, &str, 1, 0, NULL))
+    if (!ftell(fp))
+    {
+        if (!fread(header, 12, 1, fp) || *((unsigned long*)header) != CZL_FILE_CHECK_SUM)
+            return 0;
+    }
+
+    if (!(ret->val.Obj=czl_array_create(gp, 2, 0)))
         return 0;
 
+    arr = CZL_ARR(ret->val.Obj);
+
     do {
+        char *buf;
+        unsigned long size;
+        if (!fread(header, 4, 1, fp))
+        {
+            if (arr->cnt)
+                break;
+            goto CZL_END;
+        }
+        if (arr->cnt >= arr->sum &&
+            !czl_array_resize(gp, arr, arr->cnt))
+            goto CZL_END;
+        size = *((unsigned long*)header);
+        if (!(buf=(char*)CZL_TMP_MALLOC(gp, size)))
+            goto CZL_END;
+        if (!fread(buf, size, 1, fp) ||
+            !czl_analysis_ele_buf(gp, buf, arr->vars+arr->cnt))
+        {
+            CZL_TMP_FREE(gp, buf, size);
+            goto CZL_END;
+        }
+        CZL_TMP_FREE(gp, buf, size);
+    } while (++arr->cnt < sum || sum <= 0);
+
+    ret->type = CZL_ARRAY;
+    return arr->cnt;
+
+CZL_END:
+    czl_array_delete(gp, ret->val.Obj);
+    return 0;
+}
+
+unsigned long czl_struct_read(czl_gp *gp, FILE *fp, czl_var *ret, long sum)
+{
+    char *buf;
+    unsigned long file_size;
+    unsigned long obj_cnt;
+    unsigned char header[16];
+
+    if (1 == sum )
+        return czl_obj_read(gp, fp, ret);
+    else if (sum > 0 || ftell(fp))
+        return czl_objs_read(gp, fp, ret, sum);
+
+    if (!fread(header, 12, 1, fp) || *((unsigned long*)header) != CZL_FILE_CHECK_SUM)
+        return 0;
+
+    file_size = *((unsigned long*)(header+4));
+    obj_cnt = *((unsigned long*)(header+8));
+
+    if (!(buf=(char*)CZL_TMP_MALLOC(gp, file_size+1)))
+        return 0;
+    buf[file_size] = (char)0xFF; //注意不能等于 czl_opr_type_enum 中任何一个
+
+    if (!fread(buf, file_size, 1, fp) ||
+        !(ret->val.Obj=czl_analysis_obj_buf(gp, buf, obj_cnt)))
+    {
+        CZL_TMP_FREE(gp, buf, file_size+1);
+        return 0;
+    }
+
+    CZL_TMP_FREE(gp, buf, file_size+1);
+    ret->type = CZL_ARRAY;
+    return CZL_ARR(ret->val.Obj)->cnt;
+}
+
+char czl_line_read(czl_gp *gp, FILE *fp, czl_var *ret)
+{
+    czl_str str = {NULL, 0};
+    unsigned char flag = 1;
+
+    do {
+        char tmp[1024];
+        unsigned long len;
         if (!fgets(tmp, 1024, fp))
         {
-            CZL_SF(gp, str);
+            if (str.Obj)
+                CZL_SF(gp, str);
             return 0;
         }
         len = strlen(tmp);
@@ -1779,16 +1899,23 @@ char czl_line_read(czl_gp *gp, FILE *fp, czl_var *ret)
             flag = 0;
             tmp[--len] = '\0';
         }
-        if (!(obj=CZL_SR(gp, str, len+str.size)))
+        if (str.Obj)
         {
-            CZL_SF(gp, str);
-            return 0;
+            czl_string *s;
+            void **obj = CZL_SR(gp, str, len+str.size);
+            if (!obj)
+            {
+                CZL_SF(gp, str);
+                return 0;
+            }
+            str.Obj = obj;
+            s = CZL_STR(obj);
+            memcpy(s->str + s->len, tmp, len);
+            s->len += len;
+            str.size += len;
         }
-        s = CZL_STR(obj);
-        strcpy(s->str + s->len, tmp);
-        s->len += len;
-        str.size += len;
-        str.Obj = obj;
+        else if (!czl_str_create(gp, &str, len+1, len, tmp))
+            return 0;
     } while (flag);
 
     ret->type = CZL_STRING;
@@ -1796,27 +1923,142 @@ char czl_line_read(czl_gp *gp, FILE *fp, czl_var *ret)
     return 1;
 }
 
-char czl_sys_read(czl_gp *gp, czl_fun *fun)
+unsigned long czl_lines_read(czl_gp *gp, FILE *fp, czl_var *ret, long sum)
 {
-    czl_file *f;
-    czl_var *ret;
-    czl_var *file = fun->vars;
+    czl_array *arr;
 
-    if (file->type != CZL_FILE)
+    if (1 == sum)
+        return czl_line_read(gp, fp, ret);
+
+    if (!(ret->val.Obj=czl_array_create(gp, 2, 0)))
+        return 0;
+
+    arr = CZL_ARR(ret->val.Obj);
+
+    do {
+        if (arr->cnt >= arr->sum &&
+            !czl_array_resize(gp, arr, arr->cnt))
+            goto CZL_END;
+        if (!czl_line_read(gp, fp, arr->vars+arr->cnt))
+        {
+            if (arr->cnt > 0)
+                break;
+            goto CZL_END;
+        }
+    } while (++arr->cnt < sum || sum <= 0);
+
+    ret->type = CZL_ARRAY;
+    return arr->cnt;
+
+CZL_END:
+    czl_array_delete(gp, ret->val.Obj);
+    return 0;
+}
+
+unsigned long czl_bytes_read(czl_gp *gp, FILE *fp, czl_var *ret, long sum)
+{
+    czl_str str;
+    czl_string *s;
+    unsigned long i = 0;
+
+    if (1 == sum)
+        return (EOF == (ret->val.inum=fgetc(fp)) ? 0 : 1);
+
+    if (sum <= 0)
     {
-        fun->ret.val.inum = 0;
-        return 1;
+        long cur = ftell(fp);
+        if (EOF == cur)
+            return 0;
+        fseek(fp, 0, SEEK_END);
+        sum = ftell(fp) - cur;
+        fseek(fp, cur, SEEK_SET);
+        if (!sum)
+            return 0;
     }
 
-    ret = CZL_GRV(fun->vars+1);
+    if (!czl_str_create(gp, &str, sum+1, 0, NULL))
+        return 0;
+
+    s = CZL_STR(str.Obj);
+
+    while (i < sum)
+        s->str[i++] = fgetc(fp);
+
+    s->len = i;
+    s->str[i] = '\0';
+
+    ret->type = CZL_STRING;
+    ret->val.str = str;
+    return s->len;
+}
+
+char czl_sys_read(czl_gp *gp, czl_fun *fun)
+{
+    czl_file *f = CZL_FIL(fun->vars->val.Obj);
+    czl_var *ret = CZL_GRV(fun->vars+1);
+    long cnt = fun->vars[2].val.inum;
+
     if (!czl_ret_clean(gp, ret))
         return 0;
 
-    f = CZL_FIL(file->val.Obj);
-    fun->ret.val.inum = (1 == f->mode ?
-                         czl_struct_read(gp, f->fp, ret) :
-                         czl_line_read(gp, f->fp, ret));
+    switch (f->mode)
+    {
+    case 1: case 2:
+        if (fseek(f->fp, f->addr, SEEK_SET))
+            fun->ret.val.inum = 0;
+        else
+        {
+            fun->ret.val.inum = (1 == f->mode ?
+                                 czl_struct_read(gp, f->fp, ret, cnt) :
+                                 czl_lines_read(gp, f->fp, ret, cnt));
+            f->addr = ftell(f->fp);
+        }
+        break;
+    default: //3
+        fun->ret.val.inum = czl_bytes_read(gp, f->fp, ret, cnt);
+        break;
+    }
 
+    return 1;
+}
+
+char czl_sys_seek(czl_gp *gp, czl_fun *fun)
+{
+    czl_file *f;
+    czl_var *file = CZL_GCRV(fun->vars);
+    long end, addr = fun->vars[1].val.inum;
+
+    if (!file)
+        return 0;
+
+    f = CZL_FIL(file->val.Obj);
+    if (f->rc > 1)
+    {
+        void **obj = (void**)CZL_FILE_MALLOC(gp);
+        if (!obj)
+            return 0;
+        *CZL_FIL(obj) = *f;
+        file->val.Obj = obj;
+        f = CZL_FIL(obj);
+    }
+
+    if (3 == f->mode)
+        fun->ret.val.inum = !fseek(f->fp, addr, SEEK_SET);
+    else
+    {
+        fseek(f->fp, 0, SEEK_END);
+        end = ftell(f->fp);
+        f->addr = (addr > end || addr < 0 ? end : addr);
+        fun->ret.val.inum = 1;
+    }
+
+    return 1;
+}
+
+char czl_sys_tell(czl_gp *gp, czl_fun *fun)
+{
+    czl_file *f = CZL_FIL(fun->vars->val.Obj);
+    fun->ret.val.inum = (3 == f->mode ? ftell(f->fp) : f->addr);
     return 1;
 }
 
@@ -3842,12 +4084,12 @@ char czl_sys_kill(czl_gp *gp, czl_fun *fun)
             fun->ret.val.inum = 0;
         else
         {
+            extern void czl_thread_delete(czl_gp*, czl_thread*);
             fun->ret.val.inum = 1;
             t->pipe->alive = 0;
             t->pipe->kill = 1;
             czl_event_send(&t->pipe->notify_event);
             t->pipe = NULL;
-            extern void czl_thread_delete(czl_gp*, czl_thread*);
             czl_thread_delete(gp, t);
         }
     #else
@@ -3857,6 +4099,59 @@ char czl_sys_kill(czl_gp *gp, czl_fun *fun)
 
     return 1;
 }
+///////////////////////////////////////////////////////////////
+#if (defined CZL_LIB_TCP || defined CZL_LIB_TCP)
+char czl_sys_ips(czl_gp *gp, czl_fun *fun)
+{
+    char *domain = CZL_STR(fun->vars[0].val.str.Obj)->str;
+    struct hostent *host;
+    char **list;
+    void **obj;
+    czl_var *vars;
+    unsigned long cnt = 0;
+
+#ifdef CZL_SYSTEM_WINDOWS
+    WSADATA wsaData;
+#endif //#ifdef CZL_SYSTEM_WINDOWS
+
+#ifdef CZL_SYSTEM_WINDOWS
+    if (SOCKET_ERROR == WSAStartup(MAKEWORD(2, 2), &wsaData))
+    {
+        fun->ret.val.inum = 0;
+        return 1;
+    }
+#endif //#ifdef CZL_SYSTEM_WINDOWS
+
+    if (!(host=gethostbyname(domain)))
+    {
+        fun->ret.val.inum = 0;
+        return 1;
+    }
+
+    list = host->h_addr_list;
+    while (*list++) ++cnt;
+
+    if (!(obj=czl_array_create(gp, cnt, cnt)))
+        return 0;
+
+    vars = CZL_ARR(obj)->vars;
+    for (list = host->h_addr_list; *list; ++list)
+    {
+        char *ip = inet_ntoa(*(struct in_addr*)list[0]);
+        unsigned long len = strlen(ip);
+        if (!czl_str_create(gp, &vars->val.str, len+1, len, ip))
+        {
+            czl_array_delete(gp, obj);
+            return 0;
+        }
+        (vars++)->type = CZL_STRING;
+    }
+
+    fun->ret.type = CZL_ARRAY;
+    fun->ret.val.Obj = obj;
+    return 1;
+}
+#endif //#if (defined CZL_LIB_TCP || defined CZL_LIB_TCP)
 ///////////////////////////////////////////////////////////////
 #ifdef CZL_MULT_THREAD
 void czl_thread_lock
@@ -4362,7 +4657,6 @@ CZL_END:
 #ifndef CZL_CONSOLE
     free(log_path);
 #endif
-    free(gp);
     czl_thread_delete(gp, p);
     return 1;
 }

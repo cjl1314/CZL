@@ -263,15 +263,9 @@ long czl_get_file_size(FILE *fp)
     long cur = ftell(fp);
     if (EOF == cur)
         return EOF;
-    if (fseek(fp, 0, SEEK_END))
-        return EOF;
-
+    fseek(fp, 0, SEEK_END);
     size = ftell(fp);
-    if (EOF == size)
-        return EOF;
-    if (fseek(fp, cur, SEEK_SET))
-        return EOF;
-
+    fseek(fp, cur, SEEK_SET);
     return size;
 }
 

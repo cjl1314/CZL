@@ -78,11 +78,6 @@
  node->type != CZL_INS_VAR && \
  !czl_is_member_var(node->type, (czl_obj_member*)node->op.obj))
 ///////////////////////////////////////////////////////////////
-//获取引用变量: get ref var
-#define CZL_GRV(p) \
-((p)->val.ref.inx < 0 ? (p)->val.ref.var : \
- (czl_var*)(((czl_array*)(p)->val.ref.var)->vars + (p)->val.ref.inx))
-///////////////////////////////////////////////////////////////
 //表达式是否是操作数: exp is opr
 #define CZL_EIO(exp) (CZL_OPERAND == exp->flag && CZL_OPERAND == exp->lt)
 
