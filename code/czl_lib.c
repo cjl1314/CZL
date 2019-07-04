@@ -1118,6 +1118,7 @@ char czl_sys_close(czl_gp *gp, czl_fun *fun)
         czl_file_delete(gp, var->val.Obj);
 
     var->type = CZL_INT;
+    var->val.inum = 0;
 
     return 1;
 }
@@ -1605,21 +1606,14 @@ char* czl_analysis_tab_buf(czl_gp *gp, char *buf, czl_var *obj)
     attack_cnt = *((unsigned long*)buf);
     buf += 4;
 
-    if (!(obj->val.Obj=czl_table_create(gp, key, attack_cnt)))
+    if (!(obj->val.Obj=czl_table_create(gp, len, key, attack_cnt)))
     {
         obj->type = CZL_INT;
-        return NULL;
-    }
-
-    tab = CZL_TAB(obj->val.Obj);
-    if (!czl_hash_init(gp, tab, len))
-    {
-        obj->type = CZL_INT;
-        czl_table_delete(gp, obj->val.Obj);
         return NULL;
     }
 
     obj->type = CZL_TABLE;
+    tab = CZL_TAB(obj->val.Obj);
 
     while ((kt=*buf++) != CZL_NIL)
     {
@@ -3088,6 +3082,15 @@ char czl_sys_setFun(czl_gp *gp, czl_fun *fun)
     return 1;
 }
 
+#ifdef CZL_SYSTEM_LINUX
+long czl_linux_clock(void)
+{
+    struct timeval time;
+    gettimeofday(&time, NULL);
+    return time.tv_sec*1000 + time.tv_usec/1000;
+}
+#endif //#ifdef CZL_SYSTEM_LINUX
+
 #if (defined CZL_SYSTEM_LINUX || defined CZL_SYSTEM_WINDOWS)
 char czl_sys_sleep(czl_gp *gp, czl_fun* fun)
 {
@@ -3899,12 +3902,9 @@ char czl_sys_ins(czl_gp *gp, czl_fun *fun)
         tab = CZL_TAB(ref->val.Obj);
     }
 
-    if (!(p=czl_find_tabkv(tab, fun->vars+1)) ||
-        !(q=czl_create_tabkv(gp, tab, fun->vars+2, p)))
-    {
-        fun->ret.val.inum = 0;
-        return 1;
-    }
+    p = czl_find_tabkv(tab, fun->vars+1);
+    if (!(q=czl_create_tabkv(gp, tab, fun->vars+2, p, 0)))
+        return 0;
 
     czl_val_del(gp, (czl_var*)q);
     q->type = fun->vars[3].type;

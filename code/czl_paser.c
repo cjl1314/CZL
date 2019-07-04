@@ -2753,7 +2753,10 @@ char* czl_foreach_paras_match(czl_gp *gp, char *code)
         code = czl_ignore_sign_filt(gp, code);
         if ('&' == *code)
         {
-            if (CZL_MEMBER == ((czl_exp_ele*)gp->tmp->for_paras_start)->kind)
+            if ((gp->tmp->for_condition &&
+                 CZL_MEMBER == ((czl_exp_ele*)gp->tmp->for_condition)->kind) ||
+                (!gp->tmp->for_condition &&
+                 CZL_MEMBER == ((czl_exp_ele*)gp->tmp->for_paras_start)->kind))
             {
                 sprintf(gp->log_buf, "member of object should not be &, ");
                 return NULL;
@@ -4257,6 +4260,7 @@ char czl_sys_init(czl_gp *gp)
     //字符串元素缓冲区链表头初始化
     if (!(gp->ch_head=(czl_char_var*)CZL_STACK_MALLOC(gp, sizeof(czl_char_var))))
         return 0;
+    gp->ch_head->type = gp->ch_head->ot = CZL_INT;
     gp->ch_head->quality = CZL_DYNAMIC_VAR;
     gp->ch_head->next = NULL;
 

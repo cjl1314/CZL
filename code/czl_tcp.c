@@ -2,6 +2,8 @@
 
 #ifdef CZL_LIB_TCP
 
+#define CZL_TCP_BUF_SIZE 50*1024
+
 //库函数声明，其中gp是CZL运行时用到的全局参数，fun是函数。
 char czl_tcp_server(czl_gp *gp, czl_fun *fun);  //创建服务器socket
 char czl_tcp_listen(czl_gp *gp, czl_fun *fun);  //服务器侦听新客户端并获取socket
@@ -15,12 +17,12 @@ char czl_tcp_ip(czl_gp *gp, czl_fun *fun);      //获取socket的ip地址
 const czl_sys_fun czl_lib_tcp[] =
 {
     //函数名,     函数指针,          参数个数,  参数声明
-    {"server",   czl_tcp_server,   2,        "str_v1,int_v2"},
+    {"server",   czl_tcp_server,   3,        "str_v1,int_v2,int_v3=0"},
     {"listen",   czl_tcp_listen,   2,        "int_v1,int_v2=-1"},
     {"connect",  czl_tcp_connect,  2,        "str_v1,int_v2"},
-    {"close",    czl_tcp_close,    1,        "int_v1"},
-    {"recv",     czl_tcp_recv,     2,        "int_v1,int_v2=-1"},
-    {"send",     czl_tcp_send,     2,        "int_v1,str_v2"},
+    {"close",    czl_tcp_close,    2,        "&v1,int_v2=0"},
+    {"recv",     czl_tcp_recv,     2,        "&v1,int_v2=-1"},
+    {"send",     czl_tcp_send,     3,        "int_v1,str_v2,int_v3=-1"},
     {"ip",       czl_tcp_ip,       1,        "int_v1"},
 };
 
@@ -30,6 +32,7 @@ char czl_tcp_server(czl_gp *gp, czl_fun *fun)
     struct sockaddr_in service;
     SOCKET sock;
     unsigned long type = 1; //非阻塞模式
+    long maxFd = fun->vars[2].val.inum;
 
 #ifdef CZL_SYSTEM_WINDOWS
     WSADATA wsaData;
@@ -46,7 +49,7 @@ char czl_tcp_server(czl_gp *gp, czl_fun *fun)
         return 1;
 #endif //#ifdef CZL_SYSTEM_WINDOWS
 
-    if (INVALID_SOCKET == (sock=socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)))
+    if ((sock=socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) <= 0)
         return 1;
 
     if (
@@ -66,7 +69,47 @@ char czl_tcp_server(czl_gp *gp, czl_fun *fun)
         return 1;
     }
 
-    fun->ret.val.inum = sock;
+    if (maxFd)
+    {
+        void **obj;
+        czl_tabkv *ele;
+        if (!(obj=czl_table_create(gp, 1, 0, 0)) ||
+            !(ele=czl_create_num_tabkv(gp, CZL_TAB(obj), sock)))
+        {
+        #ifdef CZL_SYSTEM_WINDOWS
+            closesocket(sock);
+        #else //CZL_SYSTEM_LINUX
+            close(sock);
+        #endif
+            CZL_TAB_FREE(gp, obj);
+            return 0;
+        }
+        if (maxFd < 0)
+            maxFd = 100000000;
+    #ifdef CZL_SYSTEM_WINDOWS
+        ele->val.ext.v1.ptr = NULL;
+    #else //CZL_SYSTEM_LINUX
+        int kdpfd = -1;
+        struct epoll_event ev;
+        ev.events = EPOLLIN | EPOLLET;
+        ev.data.fd = sock;
+        if ((kdpfd=epoll_create(maxFd)) < 0 ||
+            epoll_ctl(kdpfd, EPOLL_CTL_ADD, sock, &ev) < 0)
+        {
+            close(sock);
+            close(kdpfd);
+            czl_table_delete(gp, obj);
+            return 1;
+        }
+        ele->val.ext.v1.i32 = kdpfd;
+    #endif
+        ele->val.ext.v2.u32 = maxFd;
+        fun->ret.type = CZL_TABLE;
+        fun->ret.val.Obj = obj;
+    }
+    else
+        fun->ret.val.inum = sock;
+
     return 1;
 }
 
@@ -74,29 +117,32 @@ char czl_tcp_listen(czl_gp *gp, czl_fun *fun)
 {
     SOCKET sock = fun->vars[0].val.inum;
     long time = fun->vars[1].val.inum;
+
+#ifdef CZL_SYSTEM_WINDOWS
     fd_set fdRead;
-    int ret;
-
-    FD_ZERO(&fdRead);
-    FD_SET(sock, &fdRead);
-
-    if (time < 0)
-        ret = select(sock+1, &fdRead, NULL, NULL, NULL);
-    else
-    {
-        struct timeval timeout;
-        timeout.tv_sec = 0;
-        timeout.tv_usec = time*1000;
-        ret = select(sock+1, &fdRead, NULL, NULL, &timeout);
-    }
-
-    fun->ret.val.inum = 0;
-
-    if (SOCKET_ERROR == ret)
-        return 1;
-
-    if (FD_ISSET(sock, &fdRead))
+    struct timeval timeout, *pTime = NULL;
+    if (time >= 0) { timeout.tv_sec = 0; timeout.tv_usec = time*1000; pTime = &timeout; }
+    FD_ZERO(&fdRead); FD_SET(sock, &fdRead);
+    if (select(sock+1, &fdRead, NULL, NULL, pTime) <= 0)
+        fun->ret.val.inum = 0;
+    else if (FD_ISSET(sock, &fdRead))
         fun->ret.val.inum = accept(sock, NULL,NULL);
+#else //CZL_SYSTEM_LINUX
+    int kdpfd = -1;
+    struct epoll_event ev, events[1];
+    ev.events = EPOLLIN;
+    ev.data.fd = sock;
+    if ((kdpfd=epoll_create(1)) < 0 ||
+        epoll_ctl(kdpfd, EPOLL_CTL_ADD, sock, &ev) < 0 ||
+        epoll_wait(kdpfd, events, 1, time) <= 0)
+    {
+        fun->ret.val.inum = 0;
+        close(kdpfd);
+        return 1;
+    }
+    close(kdpfd);
+    fun->ret.val.inum = accept(sock, NULL, NULL);
+#endif
 
     return 1;
 }
@@ -121,7 +167,7 @@ char czl_tcp_connect(czl_gp *gp, czl_fun *fun)
         return 1;
 #endif //#ifdef CZL_SYSTEM_WINDOWS
 
-    if (INVALID_SOCKET == (sock=socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)))
+    if ((sock=socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) <= 0)
         return 1;
 
     if (SOCKET_ERROR == connect(sock, (struct sockaddr*)&service, sizeof(service)))
@@ -140,56 +186,115 @@ char czl_tcp_connect(czl_gp *gp, czl_fun *fun)
 
 char czl_tcp_close(czl_gp *gp, czl_fun *fun)
 {
-    fun->ret.val.inum = 1;
+    czl_var *h = CZL_GRV(fun->vars);
 
-#ifdef CZL_SYSTEM_WINDOWS
-    if (SOCKET_ERROR == closesocket(fun->vars[0].val.inum))
+    if (CZL_INT == h->type)
+    {
+    #ifdef CZL_SYSTEM_WINDOWS
+        fun->ret.val.inum = (SOCKET_ERROR == closesocket(h->val.inum) ? 0 : 1);
+    #else //CZL_SYSTEM_LINUX
+        fun->ret.val.inum = (SOCKET_ERROR == close(h->val.inum) ? 0 : 1);
+    #endif
+    }
+    else if (CZL_TABLE == h->type)
+    {
+        if (fun->vars[1].val.inum > 0)
+        {
+            int sock = fun->vars[1].val.inum;
+            czl_table *tab = CZL_TAB(h->val.Obj);
+            if (tab->count > 1 && czl_delete_num_tabkv(gp, &h->val, sock))
+            {
+            #ifdef CZL_SYSTEM_WINDOWS
+                fun->ret.val.inum = (SOCKET_ERROR == closesocket(sock) ? 0 : 1);
+            #else //CZL_SYSTEM_LINUX
+                fun->ret.val.inum = (SOCKET_ERROR == close(sock) ? 0 : 1);
+                epoll_ctl(tab->eles_tail->val.ext.v1.i32, EPOLL_CTL_DEL, sock, NULL);
+            #endif
+            }
+            else
+                fun->ret.val.inum = 0;
+        }
+        else
+        {
+            char flag = 1;
+            czl_tabkv *p = CZL_TAB(h->val.Obj)->eles_head;
+            while (p)
+            {
+            #ifdef CZL_SYSTEM_WINDOWS
+                if (SOCKET_ERROR == closesocket(p->key.inum))
+                    flag = 0;
+            #else //CZL_SYSTEM_LINUX
+                if (SOCKET_ERROR == close(p->key.inum))
+                    flag = 0;
+                if (!p->next && SOCKET_ERROR == close(p->val.ext.v1.i32))
+                    flag = 0;
+            #endif
+                p = p->next;
+            }
+            if (0 == CZL_ORCD1(h->val.Obj))
+                czl_table_delete(gp, h->val.Obj);
+            h->type = CZL_INT;
+            h->val.inum = 0;
+            fun->ret.val.inum = flag;
+        }
+    }
+    else
         fun->ret.val.inum = 0;
-#else //CZL_SYSTEM_LINUX
-    if (SOCKET_ERROR == close(fun->vars[0].val.inum))
-        fun->ret.val.inum = 0;
-#endif
 
     return 1;
 }
 
-char czl_tcp_recv(czl_gp *gp, czl_fun *fun)
+char czl_tcp_recv_0(czl_gp *gp, czl_fun *fun, SOCKET sock)
 {
-    SOCKET sock = fun->vars[0].val.inum;
     long time = fun->vars[1].val.inum;
-    struct timeval timeout;
-    fd_set fdRead;
-    char buf[65536];
+    char buf[CZL_TCP_BUF_SIZE];
     long len;
 
-    if (time < 0)
-    {
-        timeout.tv_sec = 2000000000;
-        timeout.tv_usec = 0;
-    }
-    else
-    {
-        timeout.tv_sec = 0;
-        timeout.tv_usec = time*1000;
-    }
-
-    FD_ZERO(&fdRead);
-    FD_SET(sock, &fdRead);
-    if (SOCKET_ERROR == select(sock+1, &fdRead, NULL, NULL, &timeout) ||
-        !FD_ISSET(sock, &fdRead))
+#ifdef CZL_SYSTEM_WINDOWS
+    fd_set fdRead;
+    struct timeval timeout, *pTime = NULL;
+    if (time >= 0) { timeout.tv_sec = 0; timeout.tv_usec = time*1000; pTime = &timeout; }
+    FD_ZERO(&fdRead); FD_SET(sock, &fdRead);
+    if (select(sock+1, &fdRead, NULL, NULL, pTime) <= 0 || !FD_ISSET(sock, &fdRead))
     {
         fun->ret.val.inum = 0;
         return 1;
     }
-
-    if ((len=recv(sock, buf, 65536, 0)) < 0)
+#else //CZL_SYSTEM_LINUX
+    int kdpfd = -1;
+    struct epoll_event ev, events[1];
+    ev.events = EPOLLIN;
+    ev.data.fd = sock;
+    if ((kdpfd=epoll_create(1)) < 0 ||
+        epoll_ctl(kdpfd, EPOLL_CTL_ADD, sock, &ev) < 0 ||
+        epoll_wait(kdpfd, events, 1, time) <= 0)
     {
-        fun->ret.val.inum = -1;
+        fun->ret.val.inum = 0;
+        close(kdpfd);
+        return 1;
+    }
+    close(kdpfd);
+#endif
+
+    if ((len=recv(sock, buf, CZL_TCP_BUF_SIZE, 0)) <= 0)
+    {
     #ifdef CZL_SYSTEM_WINDOWS
+        if (len < 0 && WSAGetLastError() == WSAEWOULDBLOCK)
+        {
+            fun->ret.val.inum = 0;
+            return 1;
+        }
         closesocket(sock);
     #else //CZL_SYSTEM_LINUX
+        extern int errno;
+        if (len < 0 && EWOULDBLOCK == errno)
+        {
+            fun->ret.val.inum = 0;
+            return 1;
+        }
         close(sock);
     #endif
+        fun->ret.val.inum = -1;
         return 1;
     }
 
@@ -200,22 +305,322 @@ char czl_tcp_recv(czl_gp *gp, czl_fun *fun)
     return 1;
 }
 
+char czl_tcp_get_data(czl_gp *gp, czl_table *tab, czl_tabkv *q)
+{
+    long len;
+    char buf[CZL_TCP_BUF_SIZE];
+    char flag = 0;
+
+    do {
+        len = recv(q->key.inum, buf, CZL_TCP_BUF_SIZE, 0);
+        if (len <= 0)
+        {
+            if (flag)
+                break;
+        #ifdef CZL_SYSTEM_WINDOWS
+            if (len < 0 && WSAGetLastError() == WSAEWOULDBLOCK)
+                return -1;
+            closesocket(q->key.inum);
+        #else //CZL_SYSTEM_LINUX
+            extern int errno;
+            if (len < 0 && EWOULDBLOCK == errno)
+                return -1;
+            close(q->key.inum);
+        #endif
+            if (!czl_val_del(gp, (czl_var*)q))
+                return 0;
+            q->type = CZL_INT;
+            q->val.inum = -1;
+            break;
+        }
+        else if (CZL_STRING == q->type)
+        {
+            czl_string *s = CZL_STR(q->val.str.Obj);
+            if (s->rc > 1)
+            {
+                czl_str str;
+                if (!czl_str_create(gp, &str, s->len+len+1, s->len, s->str))
+                    return 0;
+                --s->rc;
+                q->val.str = str;
+                s = CZL_STR(str.Obj);
+            }
+            else if (s->len+len >= q->val.str.size)
+            {
+                unsigned long size = s->len*2+len+1;
+                void **obj = CZL_SR(gp, q->val.str, size);
+                if (!obj)
+                    return 0;
+                q->val.str.Obj = obj;
+                q->val.str.size = size;
+                s = CZL_STR(obj);
+            }
+            memcpy(s->str+s->len, buf, len);
+            s->str[s->len+len] = '\0';
+            s->len += len;
+        }
+        else
+        {
+            if (q->type != CZL_INT && !czl_val_del(gp, (czl_var*)q))
+                return 0;
+            if (!czl_str_create(gp, &q->val.str, len+1, len, buf))
+                return 0;
+            q->type = CZL_STRING;
+        }
+        flag = 1;
+    } while (CZL_TCP_BUF_SIZE == len);
+
+    if (q->last)
+    {
+        q->last->next = q->next;
+        if (q->next)
+            q->next->last = q->last;
+        else
+            tab->eles_tail = q->last;
+        q->last = NULL;
+        q->next = tab->eles_head;
+        tab->eles_head = tab->eles_head->last = q;
+    }
+
+    return 1;
+}
+
+#ifdef CZL_SYSTEM_WINDOWS
+char czl_tcp_recv_1(czl_gp *gp, czl_fun *fun, czl_var *h)
+{
+    long time = fun->vars[1].val.inum;
+    czl_table *tab = CZL_TAB(h->val.Obj);
+    czl_tabkv *p = NULL;
+    unsigned long resCnt = 0;
+    unsigned long i;
+    unsigned long cnt = 0;
+    unsigned long tmp = tab->count / FD_SETSIZE;
+    unsigned long maxCnt = time / (tmp ? tmp : 1);
+    struct timeval timeout = {0, (0 == time ? 0 : 1)};
+
+    if (0 == tab->count || tab->eles_tail->type != CZL_INT)
+    {
+        fun->ret.val.inum = 0;
+        return 1;
+    }
+
+    if (tab->rc > 1)
+    {
+        if (!czl_table_fork(gp, tab, &h->val, 1))
+            return 0;
+        tab = CZL_TAB(h->val.Obj);
+    }
+
+    do {
+        if (p)
+            p = tab->eles_head;
+        else if (tab->eles_tail->val.ext.v1.ptr)
+            p = (czl_tabkv*)tab->eles_tail->val.ext.v1.ptr;
+        else
+            p = tab->eles_head;
+        for (i = 0; i < tab->count && p; i += FD_SETSIZE)
+        {
+            czl_tabkv *q = p;
+            fd_set fdRead;
+            unsigned long j;
+            FD_ZERO(&fdRead);
+            for (j = 0; j < FD_SETSIZE && p; ++j, p = p->next)
+            {
+                if (p->next || tab->count <= p->val.ext.v2.u32)
+                    FD_SET(p->key.inum, &fdRead);
+            }
+            if (select(0, &fdRead, NULL, NULL, &timeout) <= 0)
+                continue;
+            for (j = 0; j < FD_SETSIZE && q; ++j, q = q->next)
+            {
+                SOCKET sock;
+                if (!FD_ISSET(q->key.inum, &fdRead))
+                    continue;
+                if (q->next)
+                {
+                    char ret = czl_tcp_get_data(gp, tab, q);
+                    if (0 == ret)
+                        return 0;
+                    else if (1 == ret)
+                        ++resCnt;
+                }
+                else if ((sock=accept(q->key.inum, NULL, NULL)) > 0)
+                {
+                    czl_tabkv *ele = czl_create_key_num_tabkv(gp, tab, sock, NULL, 0);
+                    if (!ele || !czl_val_del(gp, (czl_var*)ele))
+                    {
+                        closesocket(sock);
+                        return 0;
+                    }
+                    ele->val.inum = 0;
+                    ++resCnt;
+                }
+            }
+            if (resCnt)
+            {
+                tab->eles_tail->val.ext.v1.ptr = q;
+                goto CZL_END;
+            }
+        }
+    } while (time < 0 || ++cnt < maxCnt);
+
+CZL_END:
+    fun->ret.val.inum = resCnt;
+    return 1;
+}
+#else //CZL_SYSTEM_LINUX
+char czl_tcp_recv_1(czl_gp *gp, czl_fun *fun, czl_var *h)
+{
+    long time = fun->vars[1].val.inum;
+    czl_table *tab = CZL_TAB(h->val.Obj);
+    struct epoll_event *events;
+    int i, cnt, resCnt = 0;
+    int kdpfd, lisfd;
+    unsigned long maxFd;
+    unsigned long size = tab->count*sizeof(struct epoll_event);
+
+    if (0 == size)
+    {
+        fun->ret.val.inum = 0;
+        return 1;
+    }
+
+    if (tab->rc > 1)
+    {
+        if (!czl_table_fork(gp, tab, &h->val, 1))
+            return 0;
+        tab = CZL_TAB(h->val.Obj);
+    }
+
+    if (!(events=(struct epoll_event*)CZL_TMP_MALLOC(gp, size)))
+        return 0;
+
+    lisfd = tab->eles_tail->key.inum;
+    kdpfd = tab->eles_tail->val.ext.v1.i32;
+    maxFd = tab->eles_tail->val.ext.v2.u32;
+
+    if ((cnt=epoll_wait(kdpfd, events, tab->count, time)) <= 0)
+    {
+        fun->ret.val.inum = 0;
+        CZL_TMP_FREE(gp, events, size);
+        return 1;
+    }
+
+    for (i = 0; i < cnt; ++i)
+    {
+        int sock = events[i].data.fd;
+        if (lisfd == sock)
+        {
+            czl_tabkv *ele;
+            struct epoll_event ev;
+            if (tab->count > maxFd || (sock=accept(lisfd, NULL, NULL)) <= 0)
+                continue;
+            if (!(ele=czl_create_key_num_tabkv(gp, tab, sock, NULL, 0)) ||
+                !czl_val_del(gp, (czl_var*)ele))
+            {
+                close(sock);
+                CZL_TMP_FREE(gp, events, size);
+                return 0;
+            }
+            ele->val.inum = 0;
+            ev.events = EPOLLIN | EPOLLET;
+            ev.data.fd = sock;
+            if (epoll_ctl(kdpfd, EPOLL_CTL_ADD, sock, &ev) < 0)
+            {
+                close(sock);
+                czl_delete_num_tabkv(gp, &h->val, sock);
+            }
+            else
+                ++resCnt;
+        }
+        else
+        {
+            char ret;
+            czl_tabkv *q = czl_find_num_tabkv(tab, sock);
+            if (!q)
+                continue;
+            ret = czl_tcp_get_data(gp, tab, q);
+            if (0 == ret)
+            {
+                CZL_TMP_FREE(gp, events, size);
+                return 0;
+            }
+            else if (1 == ret)
+            {
+                ++resCnt;
+                if (CZL_INT == q->type)
+                    epoll_ctl(kdpfd, EPOLL_CTL_DEL, sock, NULL);
+            }
+        }
+    }
+
+    fun->ret.val.inum = resCnt;
+    CZL_TMP_FREE(gp, events, size);
+    return 1;
+}
+#endif
+
+char czl_tcp_recv(czl_gp *gp, czl_fun *fun)
+{
+    czl_var *h = CZL_GRV(fun->vars);
+
+    switch (h->type)
+    {
+    case CZL_INT:
+        return czl_tcp_recv_0(gp, fun, h->val.inum);
+    case CZL_TABLE:
+        return czl_tcp_recv_1(gp, fun, h);
+    default:
+        fun->ret.val.inum = 0;
+        return 1;
+    }
+}
+
 char czl_tcp_send(czl_gp *gp, czl_fun *fun)
 {
     SOCKET sock = fun->vars[0].val.inum;
     czl_string *buf = CZL_STR(fun->vars[1].val.str.Obj);
-    fd_set fdWrite;
+    long time = fun->vars[2].val.inum;
 
-    FD_ZERO(&fdWrite);
-    FD_SET(sock, &fdWrite);
-    if (SOCKET_ERROR == select(sock+1, NULL, &fdWrite, NULL, NULL))
-        fun->ret.val.inum = -1;
-    else if (SOCKET_ERROR == (fun->ret.val.inum=send(sock, buf->str, buf->len, 0)))
+#ifdef CZL_SYSTEM_WINDOWS
+    fd_set fdWrite;
+    struct timeval timeout, *pTime = NULL;
+    if (time >= 0) { timeout.tv_sec = 0; timeout.tv_usec = time*1000; pTime = &timeout; }
+    FD_ZERO(&fdWrite); FD_SET(sock, &fdWrite);
+    if (select(sock+1, NULL, &fdWrite, NULL, pTime) <= 0)
+    {
+        fun->ret.val.inum = 0;
+        return 1;
+    }
+#else //CZL_SYSTEM_LINUX
+    int kdpfd = -1;
+    struct epoll_event ev, events[1];
+    ev.events = EPOLLOUT;
+    ev.data.fd = sock;
+    if ((kdpfd=epoll_create(1)) < 0 ||
+        epoll_ctl(kdpfd, EPOLL_CTL_ADD, sock, &ev) < 0 ||
+        epoll_wait(kdpfd, events, 1, time) <= 0)
+    {
+        fun->ret.val.inum = 0;
+        close(kdpfd);
+        return 1;
+    }
+    close(kdpfd);
+#endif
+
+    if (SOCKET_ERROR == (fun->ret.val.inum=send(sock, buf->str, buf->len, 0)))
     {
     #ifdef CZL_SYSTEM_WINDOWS
-        closesocket(sock);
+        if (WSAGetLastError() == WSAEWOULDBLOCK)
+            fun->ret.val.inum = 0;
+        else
+            closesocket(sock);
     #else //CZL_SYSTEM_LINUX
-        close(sock);
+        extern int errno;
+        if (EWOULDBLOCK == errno || EAGAIN == errno)
+            fun->ret.val.inum = 0;
+        else
+            close(sock);
     #endif
     }
 

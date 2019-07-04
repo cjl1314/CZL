@@ -419,7 +419,7 @@ char czl_nil_obj(czl_gp *gp, czl_var *var)
             goto CZL_END;
         break;
     case CZL_TABLE:
-        if (!(var->val.Obj=czl_empty_table_create(gp)))
+        if (!(var->val.Obj=czl_table_create(gp, 0, 0, 0)))
             goto CZL_END;
         break;
     case CZL_ARRAY:

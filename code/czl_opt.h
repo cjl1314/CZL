@@ -4,108 +4,6 @@
 #include "czl_vm.h"
 
 ///////////////////////////////////////////////////////////////
-//释放字符串: string free
-#define CZL_SF(gp, str) CZL_STR_FREE(gp, str.Obj, CZL_SL(str.size))
-
-//重新调整字符串长度: string resize
-#define CZL_SR(gp, str, len) \
-(void**)CZL_STR_REALLOC(gp, str.Obj, CZL_SL(len), CZL_SL(str.size))
-///////////////////////////////////////////////////////////////
-//字符串引用计数加一: str ref_cnt add 1
-#define CZL_SRCA1(str) ++CZL_STR(str.Obj)->rc
-
-//字符串引用计数减一: string ref_cnt dec 1
-#define CZL_SRCD1(gp, str) \
-{ if (0 == --CZL_STR(str.Obj)->rc) CZL_SF(gp, str); }
-
-//哈希表键字符串引用计数减一: key string ref_cnt dec 1
-#define CZL_KEY_SRCD1(gp, s) \
-{ if (0 == --CZL_STR(s)->rc) CZL_STR_FREE(gp, s, CZL_SL(CZL_STR(s)->len)); }
-///////////////////////////////////////////////////////////////
-//对象引用计数加一: obj ref_cnt add 1
-#define CZL_ORCA1(obj) ++CZL_INS(obj)->rc
-
-//对象引用计数减一: obj ref_cnt dec 1
-#define CZL_ORCD1(obj) --CZL_INS(obj)->rc
-///////////////////////////////////////////////////////////////
-//对象引用标记加一: obj ref_flag add 1
-#define CZL_ORFA1(ref) { \
-    unsigned long i = 0; \
-    while (i < ref->cnt) ++CZL_INS(ref->objs[i++])->rf; \
-}
-
-//对象引用标记减一: obj ref_flag def 1
-#define CZL_ORFD1(ref) { \
-    unsigned long i = 0; \
-    while (i < ref->cnt) --CZL_INS(ref->objs[i++])->rf; \
-}
-///////////////////////////////////////////////////////////////
-//释放实例: instance free
-#ifdef CZL_MM_MODULE
-    #define CZL_IF(gp, obj, ins) \
-            czl_free(gp, obj, \
-                     CZL_IL(ins->pclass->parents_count, \
-                            ins->pclass->vars_count), \
-                     &ins->pclass->pool)
-#else
-    #define CZL_IF(gp, obj, ins) \
-            czl_free(gp, ins, \
-                     CZL_IL(ins->pclass->parents_count, \
-                            ins->pclass->vars_count))
-#endif //#ifdef CZL_MM_MODULE
-///////////////////////////////////////////////////////////////
-//获取函数节点大小 get fun node size
-#define CZL_GFNS(type) (CZL_SYS_FUN == type ? 64 : sizeof(czl_fun))
-///////////////////////////////////////////////////////////////
-//哈希索引计算宏: index必须为有符号型long，不能为无符号
-#define CZL_INDEX_CAC(index, hash, mask) \
-(index=((index=hash|mask) < 0 ? -index-1 : index-1))
-///////////////////////////////////////////////////////////////
-//检查AST节点是否是常量:
-#define CZL_IS_CONST(node) \
-(CZL_OPERAND == node->flag && \
- (CZL_ENUM == node->type || \
- (CZL_ARRAY_LIST == node->type && \
-  CZL_CONST_VAR == CZL_ARR_LIST(((czl_var*)node->op.obj)->val.Obj)->quality) || \
- (CZL_TABLE_LIST == node->type && \
-  CZL_CONST_VAR == CZL_TAB_LIST(((czl_var*)node->op.obj)->val.Obj)->quality) || \
-  CZL_FUN_REF == node->type || \
-  CZL_NEW == node->type))
-
-//检查AST节点是否是变量:
-#define CZL_IS_NOT_VAR(node) \
-(node->type != CZL_LG_VAR && \
- node->type != CZL_INS_VAR && \
- !czl_is_member_var(node->type, (czl_obj_member*)node->op.obj))
-///////////////////////////////////////////////////////////////
-//表达式是否是操作数: exp is opr
-#define CZL_EIO(exp) (CZL_OPERAND == exp->flag && CZL_OPERAND == exp->lt)
-
-//结果是否为真: res is true
-#define CZL_EIT(res) (res)->val.inum
-///////////////////////////////////////////////////////////////
-//表达式长度: exp length
-#define CZL_EL(exp) (exp ? exp->pl.msg.cnt : 0)
-
-//编译表达式: compile exp
-#define CZL_CE(exp, buf)  \
-if (exp) { \
-    memcpy(buf, exp, CZL_EL(exp)*sizeof(czl_exp_ele)); \
-    czl_set_order_next(buf, CZL_EL(exp)); \
-    buf += CZL_EL(exp); \
-}
-
-//设置字节码next: set opcode next
-#define CZL_SOCN(last, opcode) { \
-    if (last) { \
-        if (last->flag != 0XFF) last->next = opcode; \
-        else last->pl.pc = opcode; \
-    } \
-}
-
-//是否为可被结构语句next指针优化的跳转指令: is optimizable jmp
-#define CZL_IS_OJ(order) (CZL_LOGIC_JUMP == (order)->flag && !(order)->rt)
-///////////////////////////////////////////////////////////////
 //检查释放数组连接缓存、函数返回值: tmp buf check free
 #define CZL_TB_CF(gp, res) \
 if (CZL_ARRBUF_VAR == res->quality || CZL_FUNRET_VAR == res->quality) { \
@@ -116,7 +14,7 @@ if (CZL_ARRBUF_VAR == res->quality || CZL_FUNRET_VAR == res->quality) { \
 //临时缓存扩容大小
 #define CZL_TB_SZIE(pc, left, al, bl) \
 ((left->quality != CZL_ARRLINK_VAR && left->quality != CZL_ARRBUF_VAR) || \
- (left == pc->lo && CZL_BINARY2_OPT == pc->flag && CZL_ADD_A == pc->kind) ? \
+ (pc && left == pc->lo && CZL_BINARY2_OPT == pc->flag && CZL_ADD_A == pc->kind) ? \
  (al)*2+bl+1 : al+bl+1)
 ///////////////////////////////////////////////////////////////
 #ifdef CZL_MULT_THREAD

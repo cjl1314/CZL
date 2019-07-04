@@ -3151,7 +3151,8 @@ static void czl_hash_tabkv_insert
     czl_table *tab,
     czl_tabkv *kv,
     long index,
-    czl_tabkv *ins
+    czl_tabkv *ins,
+    unsigned char flag
 )
 {
     czl_tabkv **buckets = tab->buckets;
@@ -3172,7 +3173,7 @@ static void czl_hash_tabkv_insert
         else
             tab->eles_tail = kv;
     }
-    else
+    else if (flag)
     {
         if (NULL == tab->eles_head)
         {
@@ -3186,6 +3187,16 @@ static void czl_hash_tabkv_insert
         }
         kv->next = NULL;
         tab->eles_tail = kv;
+    }
+    else
+    {
+        kv->last = NULL;
+        kv->next = tab->eles_head;
+        if (tab->eles_head)
+            tab->eles_head->last = kv;
+        else
+            tab->eles_tail = kv;
+        tab->eles_head = kv;
     }
 
     tab->count++;
@@ -3232,7 +3243,7 @@ czl_tabkv* czl_create_str_tabkv
     kv->key.str.size = hash;
     kv->type = CZL_INT;
 
-    czl_hash_tabkv_insert(tab, kv, CZL_INDEX_CAC(index, hash, tab->mask), NULL);
+    czl_hash_tabkv_insert(tab, kv, CZL_INDEX_CAC(index, hash, tab->mask), NULL, 1);
 
     return kv;
 }
@@ -3256,7 +3267,7 @@ czl_tabkv* czl_create_num_tabkv(czl_gp *gp, czl_table *tab, czl_long num)
     kv->key.inum = num;
     kv->type = CZL_INT;
 
-    czl_hash_tabkv_insert(tab, kv, CZL_INDEX_CAC(index, hash, tab->mask), NULL);
+    czl_hash_tabkv_insert(tab, kv, CZL_INDEX_CAC(index, hash, tab->mask), NULL, 1);
 
     return kv;
 }
@@ -3286,7 +3297,8 @@ czl_tabkv* czl_create_key_str_tabkv
     czl_gp *gp,
     czl_table *tab,
     czl_var *res,
-    czl_tabkv *ins
+    czl_tabkv *ins,
+    unsigned char flag
 )
 {
     char *str = CZL_STR(res->val.str.Obj)->str;
@@ -3295,6 +3307,10 @@ czl_tabkv* czl_create_key_str_tabkv
     unsigned long hash = czl_str_hash(str, len, tab->key, tab->attack_cnt);
 	czl_tabkv *p;
     long index; //必须为有符号Long型
+
+    if (tab->count+1 > tab->size && !czl_hash_size_update(gp, tab->size<<1, tab))
+        return NULL;
+
     CZL_INDEX_CAC(index, hash, tab->mask);
     p = tab->buckets[index];
 
@@ -3307,7 +3323,7 @@ czl_tabkv* czl_create_key_str_tabkv
     }
     if (p)
     {
-        if (ins && p != ins->next)
+        if (ins && ins != (czl_tabkv*)tab && p != ins->next)
             czl_swap_tabkv(tab, ins, p);
         return p;
     }
@@ -3350,7 +3366,7 @@ czl_tabkv* czl_create_key_str_tabkv
     p->key.str.size = hash;
     p->type = CZL_INT;
 
-    czl_hash_tabkv_insert(tab, p, index, ins);
+    czl_hash_tabkv_insert(tab, p, index, ins, flag);
     return p;
 }
 
@@ -3359,12 +3375,17 @@ czl_tabkv* czl_create_key_num_tabkv
     czl_gp *gp,
     czl_table *tab,
     czl_long num,
-    czl_tabkv *ins
+    czl_tabkv *ins,
+    unsigned char flag
 )
 {
     unsigned long collision_cnt = 0;
 	czl_tabkv *p;
     long index; //必须为有符号Long型
+
+    if (tab->count+1 > tab->size && !czl_hash_size_update(gp, tab->size<<1, tab))
+        return NULL;
+
     CZL_INDEX_CAC(index,
                   czl_num_hash(num, tab->key, tab->attack_cnt),
                   tab->mask);
@@ -3377,7 +3398,7 @@ czl_tabkv* czl_create_key_num_tabkv
     }
     if (p)
     {
-        if (ins && p != ins->next)
+        if (ins && ins != (czl_tabkv*)tab && p != ins->next)
             czl_swap_tabkv(tab, ins, p);
         return p;
     }
@@ -3401,7 +3422,7 @@ czl_tabkv* czl_create_key_num_tabkv
     p->key.inum = num;
     p->type = CZL_INT;
 
-    czl_hash_tabkv_insert(tab, p, index, ins);
+    czl_hash_tabkv_insert(tab, p, index, ins, flag);
 
     return p;
 }
@@ -3411,21 +3432,18 @@ czl_tabkv* czl_create_tabkv
     czl_gp *gp,
     czl_table *tab,
     czl_var *key,
-    czl_tabkv *ins
+    czl_tabkv *ins,
+    unsigned char flag
 )
 {
-    if (tab->count+1 > tab->size &&
-        !czl_hash_size_update(gp, tab->size<<1, tab))
-        return NULL;
-
     switch (key->type)
     {
     case CZL_STRING:
-        return czl_create_key_str_tabkv(gp, tab, key, ins);
+        return czl_create_key_str_tabkv(gp, tab, key, ins, flag);
     case CZL_INT:
-        return czl_create_key_num_tabkv(gp, tab, key->val.inum, ins);
+        return czl_create_key_num_tabkv(gp, tab, key->val.inum, ins, flag);
     case CZL_FLOAT:
-        return czl_create_key_num_tabkv(gp, tab, key->val.fnum, ins);
+        return czl_create_key_num_tabkv(gp, tab, key->val.fnum, ins, flag);
     default:
         return NULL;
     }
@@ -5140,24 +5158,10 @@ void czl_table_list_delete(czl_gp *gp, czl_table_list *list)
     CZL_RT_FREE(gp, list, sizeof(czl_table_list));
 }
 
-char czl_hash_init(czl_gp *gp, czl_table *table, unsigned long size)
-{
-    if (0 == size)
-        size = 1;
-
-    table->buckets = (czl_tabkv**)CZL_TMP_CALLOC(gp, size, sizeof(czl_tabkv*));
-    if (!table->buckets)
-        return 0;
-
-    table->size = size;
-    table->mask = -size;
-
-    return 1;
-}
-
 void** czl_table_create
 (
     czl_gp *gp,
+    unsigned long size,
     unsigned long key,
     unsigned long attack_cnt
 )
@@ -5169,6 +5173,15 @@ void** czl_table_create
 
     tab = CZL_TAB(obj);
 
+    if (0 == size)
+        size = 1;
+
+    if (!(tab->buckets=(czl_tabkv**)CZL_TMP_CALLOC(gp, size, sizeof(czl_tabkv*))))
+    {
+        CZL_TAB_FREE(gp, obj);
+        return 0;
+    }
+
 #ifdef CZL_MM_MODULE
     czl_mm_pool_init(&tab->pool, sizeof(czl_tabkv), CZL_MM_VAR_SP);
     tab->pool.obj = obj;
@@ -5177,27 +5190,12 @@ void** czl_table_create
     tab->rc = 1;
     tab->rf = 0;
     //
-    tab->buckets = NULL;
-    tab->size = 0;
+    tab->mask = -size;
+    tab->size = size;
     tab->count = 0;
     tab->key = key;
     tab->attack_cnt = attack_cnt;
     tab->eles_head = NULL;
-
-    return obj;
-}
-
-void** czl_empty_table_create(czl_gp *gp)
-{
-    void **obj = czl_table_create(gp, 0, 0);
-    if (!obj)
-        return NULL;
-
-    if (!czl_hash_init(gp, CZL_TAB(obj), 0))
-    {
-        czl_table_delete(gp, obj);
-        return NULL;
-    }
 
     return obj;
 }
@@ -5274,7 +5272,7 @@ static char czl_table_eles_new_by_list
         czl_var *key = czl_exp_stack_cac(gp, p->key);
         if (!key)
             return 0;
-        if (!(ele=czl_create_tabkv(gp, tab, key, NULL)) ||
+        if (!(ele=czl_create_tabkv(gp, tab, key, NULL, 1)) ||
             !czl_val_copy(gp, (czl_var*)ele, czl_exp_stack_cac(gp, p->val)))
             return 0;
         p = p->next;
@@ -5291,12 +5289,11 @@ char czl_table_new
 )
 {
     unsigned long paras_count = (list ? list->paras_count : 0);
-    void **obj = czl_table_create(gp, 0, 0);
+    void **obj = czl_table_create(gp, paras_count, 0, 0);
     if (!obj)
         return 0;
 
-    if (!czl_hash_init(gp, CZL_TAB(obj), paras_count) ||
-        (list && !czl_table_eles_new_by_list(gp, CZL_TAB(obj), list->paras)))
+    if (list && !czl_table_eles_new_by_list(gp, CZL_TAB(obj), list->paras))
     {
         czl_table_delete(gp, obj);
         return 0;
@@ -5343,14 +5340,13 @@ static char czl_table_eles_new_by_table
 void** czl_table_new_by_table(czl_gp *gp, czl_table *tab)
 {
     czl_table *node;
-    void **obj = czl_table_create(gp, tab->key, tab->attack_cnt);
+    void **obj = czl_table_create(gp, tab->size, tab->key, tab->attack_cnt);
     if (!obj)
         return NULL;
 
     node = CZL_TAB(obj);
 
-    if (!czl_hash_init(gp, node, tab->size) ||
-        !czl_table_eles_new_by_table(gp, node, tab))
+    if (!czl_table_eles_new_by_table(gp, node, tab))
     {
         czl_table_delete(gp, obj);
         return NULL;
@@ -5381,7 +5377,7 @@ char czl_table_union_by_list(czl_gp *gp, czl_table *tab, czl_table_node *p)
         if (!czl_find_tabkv(tab, key))
         {
             czl_tabkv *ele;
-            if (!(ele=czl_create_tabkv(gp, tab, key, NULL)) ||
+            if (!(ele=czl_create_tabkv(gp, tab, key, NULL, 1)) ||
                 !czl_val_copy(gp, (czl_var*)ele, czl_exp_stack_cac(gp, p->val)))
                 return 0;
         }
@@ -6824,7 +6820,7 @@ static czl_var* czl_get_tab_member_res
     //防止czl_exp_stack_cac后obj的tab地址发生改变
     tab = CZL_TAB(obj->val.Obj);
 
-    if (!(ele=czl_create_tabkv(gp, tab, res, (CZL_ASS == flag ? NULL : (czl_tabkv*)tab))))
+    if (!(ele=czl_create_tabkv(gp, tab, res, (CZL_ASS == flag ? NULL : (czl_tabkv*)tab), 1)))
     {
         if (CZL_ASS == flag)
             return NULL;
@@ -8258,6 +8254,21 @@ static char czl_foreach_table
     else if (2 == loop->flag)
     {
 		czl_var tmp;
+        if (loop->k)
+        {
+            czl_var *k;
+            tmp.type = ele->kt;
+            tmp.val = ele->key;
+            if (CZL_REG_VAR == loop->a->kind && loop->a->res->type != CZL_OBJ_REF)
+                k = loop->a->res;
+            else if (!(k=czl_get_opr(gp, loop->a->kind, loop->a->res)))
+            {
+                czl_runtime_error_report(gp, loop->a);
+                return -1;
+            }
+            if (!czl_ass_cac(gp, k, &tmp))
+                return -1;
+        }
         if (!ele->name && !czl_ref_obj_create(gp, ro, (czl_var*)ele, &ro, 1))
             return -1;
         tmp.type = CZL_OBJ_REF;
@@ -8265,24 +8276,21 @@ static char czl_foreach_table
         tmp.val.ref.var = (czl_var*)ele;
         return czl_ass_cac(gp, lo, &tmp) ? 1 : -1;
     }
-    else if (loop->a1)
+    else if (loop->k)
     {
-		czl_var *lo1;
         czl_var tmp;
         tmp.type = ele->kt;
         tmp.val = ele->key;
         if (!czl_ass_cac(gp, lo, &tmp))
             return -1;
-
-        if (CZL_REG_VAR == loop->a1->kind &&
-            loop->a1->res->type != CZL_OBJ_REF)
-            lo1 = loop->a1->res;
-        else if (!(lo1=czl_get_opr(gp, loop->a1->kind, loop->a1->res)))
+        if (CZL_REG_VAR == loop->k->kind && loop->k->res->type != CZL_OBJ_REF)
+            lo = loop->k->res;
+        else if (!(lo=czl_get_opr(gp, loop->k->kind, loop->k->res)))
         {
-            czl_runtime_error_report(gp, loop->a1);
+            czl_runtime_error_report(gp, loop->k);
             return -1;
         }
-        return czl_ass_cac(gp, lo1, (czl_var*)ele) ? 1 : -1;
+        return czl_ass_cac(gp, lo, (czl_var*)ele) ? 1 : -1;
     }
     else
         return czl_ass_cac(gp, lo, (czl_var*)ele) ? 1 : -1;
@@ -8456,10 +8464,20 @@ static char czl_foreach_object
             ret = -1;
             goto CZL_END;
         }
-        if (CZL_INS_VAR == loop->a->kind)
-            lo = ((czl_ins_var*)loop->a->res)->var;
+        if (loop->k)
+        {
+            if (CZL_INS_VAR == loop->k->kind)
+                lo = ((czl_ins_var*)loop->k->res)->var;
+            else
+                lo = loop->k->res;
+        }
         else
-            lo = loop->a->res;
+        {
+            if (CZL_INS_VAR == loop->a->kind)
+                lo = ((czl_ins_var*)loop->a->res)->var;
+            else
+                lo = loop->a->res;
+        }
     }
     else
     {
@@ -9892,7 +9910,7 @@ czl_foreach* czl_build_foreach(czl_tmp_block *b, czl_loop *loop)
     {
         f = b->foreachs + b->l++;
         f->a = (czl_exp_ele*)loop->paras_start;
-        f->a1 = loop->condition;
+        f->k = loop->condition;
         f->b = (czl_exp_ele*)loop->paras_end;
         f->c = NULL;
         f->flag = loop->flag;
@@ -9901,7 +9919,7 @@ czl_foreach* czl_build_foreach(czl_tmp_block *b, czl_loop *loop)
     {
         f = b->foreachs + b->m++;
         f->a = (czl_exp_ele*)loop->paras_start;
-        f->a1 = loop->condition;
+        f->k = loop->condition;
         f->b = loop->paras_end->para;
         f->c = loop->paras_end->next->para;
         f->para.d = (loop->paras_end->next->next ?
@@ -10661,7 +10679,7 @@ czl_tabkv* czl_tabkv_create
         !czl_hash_size_update(gp, tab->size<<1, tab))
         return NULL;
 
-    return czl_create_key_num_tabkv(gp, tab, key, NULL);
+    return czl_create_key_num_tabkv(gp, tab, key, NULL, 1);
 }
 
 czl_tabkv* czl_tabkv_find
@@ -10881,14 +10899,14 @@ static void czl_foreach_paras_delete
     while (i < cnt)
     {
         CZL_RT_FREE(gp, f->a, sizeof(czl_exp_ele));
-        CZL_RT_FREE(gp, f->a1, sizeof(czl_exp_ele));
+        CZL_RT_FREE(gp, f->k, sizeof(czl_exp_ele));
         CZL_RT_FREE(gp, f->b, sizeof(czl_exp_ele));
         ++f; ++i;
     }
     while (i < sum)
     {
         CZL_RT_FREE(gp, f->a, sizeof(czl_exp_ele));
-        CZL_RT_FREE(gp, f->a1, sizeof(czl_exp_ele));
+        CZL_RT_FREE(gp, f->k, sizeof(czl_exp_ele));
         czl_exp_stack_delete(gp, f->b);
         czl_exp_stack_delete(gp, f->c);
         czl_exp_stack_delete(gp, f->para.d);

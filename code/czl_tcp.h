@@ -12,7 +12,7 @@
         #include <netinet/in.h>
         #include <arpa/inet.h>
         #include <netdb.h>
-        #define INVALID_SOCKET 0
+        #include <sys/epoll.h>
         #define SOCKET_ERROR -1
         typedef int SOCKET;
 	extern const czl_sys_fun czl_lib_tcp[]; //库函数表声明

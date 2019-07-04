@@ -10,7 +10,7 @@
 #define CZL_MM_MODULE       //内存管理模块宏
 #define CZL_CONSOLE         //控制台运行方式宏，关了就运行在扩展方式
 
-//#define CZL_DEBUG           //调试模式
+#define CZL_DEBUG           //调试模式
 
 ///////////////////////////////////////////////////////////////
 #ifdef CZL_SYSTEM_WINDOWS

@@ -12,7 +12,7 @@ char czl_com_list(czl_gp *gp, czl_fun *fun);    //打印串口列表
 const czl_sys_fun czl_lib_com[] =
 {
     //函数名,    函数指针,        参数个数,  参数声明
-    {"open",    czl_com_open,   3,       "str_v1,int_v2=9600,int_v3=0"},
+    {"open",    czl_com_open,   3,       "str_v1,int_v2=9600,int_v3=-1"},
     {"close",   czl_com_close,  1,       NULL},
     {"write",   czl_com_write,  2,       "&v1,str_v2"},
     {"read",    czl_com_read,   2,       "&v1,int_v2=1024"},
@@ -22,14 +22,14 @@ const czl_sys_fun czl_lib_com[] =
 char czl_com_open(czl_gp *gp, czl_fun *fun)
 {
 #ifdef CZL_SYSTEM_WINDOWS
-	void **obj;
+    void **obj;
     czl_array *arr;
     DCB sDcb;
     COMMTIMEOUTS timeOuts;
     char *portName = CZL_STR(fun->vars[0].val.str.Obj)->str;
     DWORD baudRate = (unsigned long)fun->vars[1].val.inum;
-    unsigned long timeOut = (unsigned long)fun->vars[2].val.inum;
-    DWORD type = (timeOut ? FILE_FLAG_OVERLAPPED : 0);
+    long timeOut = fun->vars[2].val.inum;
+    DWORD type = (timeOut < 0 ? 0 : FILE_FLAG_OVERLAPPED);
     HANDLE hCom = CreateFile(portName,
                              GENERIC_READ|GENERIC_WRITE,
                              0, NULL, OPEN_EXISTING, type, NULL);
@@ -75,7 +75,7 @@ char czl_com_open(czl_gp *gp, czl_fun *fun)
         fun->ret.val.inum = 0;
         return 1;
     }
-	arr = CZL_ARR(obj);
+    arr = CZL_ARR(obj);
 
     arr->vars[0].val.inum = (unsigned long)hCom;
 
@@ -92,10 +92,8 @@ char czl_com_open(czl_gp *gp, czl_fun *fun)
             fun->ret.val.inum = 0;
             return 1;
         }
-        if (!czl_str_create(gp, &str1, sizeof(OVERLAPPED),
-                            sizeof(OVERLAPPED), NULL) ||
-            !czl_str_create(gp, &str2, sizeof(OVERLAPPED),
-                            sizeof(OVERLAPPED), NULL))
+        if (!czl_str_create(gp, &str1, sizeof(OVERLAPPED)+1, sizeof(OVERLAPPED), NULL) ||
+            !czl_str_create(gp, &str2, sizeof(OVERLAPPED)+1, sizeof(OVERLAPPED), NULL))
         {
             CloseHandle(hCom);
             CloseHandle(event1);
@@ -267,24 +265,22 @@ char czl_com_write(czl_gp *gp, czl_fun *fun)
 #else //CZL_SYSTEM_LINUX
     czl_var *h = CZL_GRV(fun->vars);
     czl_string *buf = CZL_STR(fun->vars[1].val.str.Obj);
-    fd_set fdWrite;
-    int fd;
+    struct epoll_event ev, events[1];
+    int fd = h->val.ext.v1.i32, kdpfd = -1;
 
-    if (h->type != CZL_INT)
-    {
+    ev.events = EPOLLOUT | EPOLLET | EPOLLONESHOT;
+    ev.data.fd = fd;
+
+    if (h->type != CZL_INT ||
+        (kdpfd=epoll_create(1)) < 0 ||
+        epoll_ctl(kdpfd, EPOLL_CTL_ADD, fd, &ev) < 0 ||
+        epoll_wait(kdpfd, events, 1, -1) < 0 ||
+        events[0].data.fd != fd)
         fun->ret.val.inum = 0;
-        return 1;
-    }
-
-    fd = h->val.ext.v1.i32;
-
-    FD_ZERO(&fdWrite);
-    FD_SET(fd, &fdWrite);
-    if (select(fd+1, NULL, &fdWrite, NULL, NULL) < 0)
-        fun->ret.val.inum = -1;
     else
         fun->ret.val.inum = write(fd, buf->str, buf->len);
 
+    close(kdpfd);
     return 1;
 #endif
 }
@@ -344,40 +340,29 @@ char czl_com_read(czl_gp *gp, czl_fun *fun)
     return ret;
 #else //CZL_SYSTEM_LINUX
     czl_var *h = CZL_GRV(fun->vars);
-    struct timeval timeout;
-    fd_set fdRead;
-    int fd;
-    long time;
-    long ret;
+    struct epoll_event ev, events[1];
+    int fd = h->val.ext.v1.i32, kdpfd = -1;
+    long timeOut = h->val.ext.v2.i32;
     long len = fun->vars[1].val.inum;
+    long ret;
     char tmp[1024];
     char *buf = tmp;
 
-    fun->ret.val.inum = 0;
+    ev.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
+    ev.data.fd = fd;
 
-    if (h->type != CZL_INT || len <= 0)
-        return 1;
-
-    fd = h->val.ext.v1.i32;
-    time = h->val.ext.v2.i32;
-
-    if (time)
-    {
-        timeout.tv_sec = 0;
-        timeout.tv_usec = time*1000;
-    }
-    else
-    {
-        timeout.tv_sec = 2000000000;
-        timeout.tv_usec = 0;
-    }
-
-    FD_ZERO(&fdRead);
-    FD_SET(fd, &fdRead);
-    if (select(fd+1, &fdRead, NULL, NULL, &timeout) < 0 ||
-        !FD_ISSET(fd, &fdRead) ||
+    if (h->type != CZL_INT ||
+        (kdpfd=epoll_create(1)) < 0 ||
+        epoll_ctl(kdpfd, EPOLL_CTL_ADD, fd, &ev) < 0 ||
+        epoll_wait(kdpfd, events, 1, timeOut) <= 0 ||
+        events[0].data.fd != fd ||
         (len > 1024 && !(buf=(char*)CZL_TMP_MALLOC(gp, len))))
+    {
+        close(kdpfd);
+        fun->ret.val.inum = 0;
         return 1;
+    }
+    close(kdpfd);
 
     if ((ret=read(fd, buf, len)) > 0)
         ret = czl_str_create(gp, &fun->ret.val.str, ret+1, ret, buf);

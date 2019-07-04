@@ -269,7 +269,7 @@ static void czl_mm_cache_free(czl_gp *gp, char *heap)
             pool->tail = node->last;
         node->last = NULL;
         node->next = pool->head;
-        pool->head = node;
+        pool->head = pool->head->last = node;
     }
 }
 #endif //#ifdef CZL_MM_CACHE
@@ -1142,9 +1142,12 @@ static void czl_mm_free
     czl_mm_sp_pool *pool
 )
 {
+    if (!heap)
+        return;
+
     if (pool->min != pool->max)
     {
-        if (0 == size || !heap)
+        if (0 == size)
             return;
     #ifdef CZL_MM_CACHE
         if (gp->mm_cache_size && size > CZL_MM_SP_515B && size <= CZL_MM_1MB)
