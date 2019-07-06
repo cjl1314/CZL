@@ -270,7 +270,7 @@ else if (CZL_ARRBUF_VAR == (pc-1)->res->quality) \
     (pc-1)->res->quality = CZL_DYNAMIC_VAR; \
 else if (CZL_STRING == (pc-1)->res->type) { \
     CZL_SRCA1((pc-1)->res->val.str); \
-    pc->res->quality = CZL_ARRBUF_VAR; \
+    (pc-1)->res->quality = CZL_ARRBUF_VAR; \
 } \
 ++pc;
 
