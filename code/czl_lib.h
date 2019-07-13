@@ -5,6 +5,7 @@
 #define CZL_LIB_COM
 #define CZL_LIB_TCP
 #define CZL_LIB_UDP
+#define CZL_LIB_HTTP
 ///////////////////////////////////////////////////////////////
 #include "czl_vm.h"
 extern const czl_sys_lib czl_syslibs[];
@@ -24,8 +25,15 @@ unsigned long czl_ftoa(double, char*, int);
 char* czl_get_number_from_str(char*, czl_var*);
 char czl_obj_read(czl_gp*, FILE*, czl_var*);
 char czl_line_read(czl_gp*, FILE*, czl_var*);
-unsigned long czl_bytes_read(czl_gp*, FILE*, czl_var*, long);
+czl_long czl_get_file_size(FILE*);
 int czl_get_int_mode(char*);
+char czl_strcmp(const char*, const char*);
+char* czl_numstr_ignore_sign_filt(char*);
+#ifdef CZL_SYSTEM_WINDOWS
+char czl_bytes_read(czl_gp*, FILE*, unsigned char, czl_var*, long);
+#else
+char czl_bytes_read(czl_gp*, FILE*, czl_var*, long);
+#endif
 ///////////////////////////////////////////////////////////////
 #ifdef CZL_MULT_THREAD
 void czl_thread_lock

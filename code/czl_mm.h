@@ -14,11 +14,11 @@
 
 ///////////////////////////////////////////////////////////////
 #ifdef CZL_SYSTEM_WINDOWS
-    //#define CZL_VC6
     #include <windows.h>
+    #include <sys\stat.h>
     #ifdef CZL_SYSTEM_64bit
         typedef __int64 czl_long;
-        typedef unsigned __int64 czl_ulong;
+        typedef unsigned long czl_ulong;
         typedef double czl_float;
     #else
         typedef long czl_long;
@@ -33,7 +33,7 @@
     #endif
     #ifdef CZL_SYSTEM_64bit
         typedef long long czl_long;
-        typedef unsigned long long czl_ulong;
+        typedef unsigned long czl_ulong;
         typedef double czl_float;
     #else
         typedef long czl_long;
@@ -154,19 +154,19 @@ typedef enum czl_mm_sp_type_enum
 
 typedef struct czl_mm_sp
 {
-    unsigned char null; //保留
     unsigned char heapNum;
+    unsigned char useNum;
     unsigned char freeNum;
-    unsigned char rank;
-    unsigned char threshold;
     unsigned char useHead;
     unsigned char freeHead;
     unsigned char restHead;
+    unsigned char rank;
+    unsigned char threshold;
     struct czl_mm_sp *next;
     struct czl_mm_sp *last;
     struct czl_mm_sp *freeNext;
     struct czl_mm_sp *freeLast;
-    char heap[4];
+    unsigned char heap[4];
 } czl_mm_sp;
 
 typedef struct czl_mm_sp_pool

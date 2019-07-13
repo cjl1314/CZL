@@ -20,8 +20,8 @@ const czl_sys_fun czl_lib_udp[] =
     {"server",   czl_udp_server,   2,        "str_v1,int_v2"},
     {"connect",  czl_udp_connect,  2,        "str_v1,int_v2"},
     {"close",    czl_udp_close,    1,        "str_v1"},
-    {"recv",     czl_udp_recv,     3,        "&str_v1,int_v2=-1,int_v3=0"},
-    {"send",     czl_udp_send,     5,        "str_v1,str_v2,int_v3=1024,int_v4=0,int_v5=0"},
+    {"recv",     czl_udp_recv,     2,        "&str_v1,int_v2=-1"},
+    {"send",     czl_udp_send,     4,        "str_v1,str_v2,int_v3=1024,int_v4=0"},
     {"ip",       czl_udp_ip,       1,        "str_v1"},
 };
 
@@ -35,23 +35,18 @@ char czl_udp_server(czl_gp *gp, czl_fun *fun)
 
 #ifdef CZL_SYSTEM_WINDOWS
     WSADATA wsaData;
+    if (SOCKET_ERROR == WSAStartup(MAKEWORD(2, 2), &wsaData))
+    {
+        fun->ret.val.inum = 0;
+        return 1;
+    }
 #endif //#ifdef CZL_SYSTEM_WINDOWS
 
     service.sin_family = AF_INET;
     service.sin_addr.s_addr = inet_addr(CZL_STR(fun->vars[0].val.str.Obj)->str);
     service.sin_port = htons(fun->vars[1].val.inum);
 
-    fun->ret.val.inum = 0;
-
-#ifdef CZL_SYSTEM_WINDOWS
-    if (SOCKET_ERROR == WSAStartup(MAKEWORD(2, 2), &wsaData))
-        return 1;
-#endif //#ifdef CZL_SYSTEM_WINDOWS
-
-    if ((sock=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) <= 0)
-        return 1;
-
-    if (
+    if ((sock=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) <= 0 ||
     #ifdef CZL_SYSTEM_WINDOWS
         SOCKET_ERROR == ioctlsocket(sock, FIONBIO, &type) ||
     #else //CZL_SYSTEM_LINUX
@@ -60,6 +55,7 @@ char czl_udp_server(czl_gp *gp, czl_fun *fun)
         SOCKET_ERROR == bind(sock, (struct sockaddr*)&service, sizeof(service)) ||
         !czl_str_create(gp, &str, 11, 10, NULL))
     {
+        fun->ret.val.inum = 0;
     #ifdef CZL_SYSTEM_WINDOWS
         closesocket(sock);
     #else //CZL_SYSTEM_LINUX
@@ -150,9 +146,6 @@ char czl_udp_recv(czl_gp *gp, czl_fun *fun)
     long len;
     struct timeval timeout, *pTime = NULL;
     fd_set fdRead;
-#ifdef CZL_SYSTEM_LINUX
-    char mode = fun->vars[2].val.inum; //0: epoll, 1: select
-#endif
 
     if (!str)
         return 0;
@@ -180,29 +173,19 @@ char czl_udp_recv(czl_gp *gp, czl_fun *fun)
 #ifdef CZL_SYSTEM_WINDOWS
     if (time >= 0) { timeout.tv_sec = 0; timeout.tv_usec = time*1000; pTime = &timeout; }
     FD_ZERO(&fdRead); FD_SET(sock, &fdRead);
-    if (select(sock+1, &fdRead, NULL, NULL, pTime) <= 0 || !FD_ISSET(sock, &fdRead))
+    if (select(0, &fdRead, NULL, NULL, pTime) <= 0 || !FD_ISSET(sock, &fdRead))
         return 1;
 #else //CZL_SYSTEM_LINUX
-    if (mode)
+    struct epoll_event ev, events[1];
+    ev.events = EPOLLIN;
+    ev.data.fd = sock;
+    if (epoll_ctl(gp->kdpfd, EPOLL_CTL_ADD, sock, &ev) < 0 ||
+        epoll_wait(gp->kdpfd, events, 1, time) <= 0)
     {
-        if (time >= 0) { timeout.tv_sec = 0; timeout.tv_usec = time*1000; pTime = &timeout; }
-        FD_ZERO(&fdRead); FD_SET(sock, &fdRead);
-        if (select(sock+1, &fdRead, NULL, NULL, pTime) <= 0 || !FD_ISSET(sock, &fdRead))
-            return 1;
-    }
-    else
-    {
-        struct epoll_event ev, events[1];
-        ev.events = EPOLLIN;
-        ev.data.fd = sock;
-        if (epoll_ctl(gp->kdpfd, EPOLL_CTL_ADD, sock, &ev) < 0 ||
-            epoll_wait(gp->kdpfd, events, 1, time) <= 0)
-        {
-            epoll_ctl(gp->kdpfd, EPOLL_CTL_DEL, sock, NULL);
-            return 1;
-        }
         epoll_ctl(gp->kdpfd, EPOLL_CTL_DEL, sock, NULL);
+        return 1;
     }
+    epoll_ctl(gp->kdpfd, EPOLL_CTL_DEL, sock, NULL);
 #endif
 
     if ((len=recvfrom(sock, buf, CZL_UDP_PACKET_MAX, 0, (struct sockaddr*)&in, &in_len)) <= 0)
@@ -241,8 +224,7 @@ char czl_udp_send(czl_gp *gp, czl_fun *fun)
     SOCKET sock;
     struct sockaddr_in in;
     unsigned long cnt = 0;
-    unsigned long len;
-    long ret;
+    long len, ret;
 
     size = (size <= 0 || size > CZL_UDP_PACKET_MAX ? CZL_UDP_PACKET_MAX : size);
     len = (buf->len < size ? buf->len : size);
@@ -258,15 +240,11 @@ char czl_udp_send(czl_gp *gp, czl_fun *fun)
     in.sin_port = *((unsigned short*)(s->str+8));
 
 #ifdef CZL_SYSTEM_LINUX
-    char mode = fun->vars[4].val.inum; //0: epoll, 1: select
     struct epoll_event ev, events[1];
-    if (0 == mode)
-    {
-        ev.events = EPOLLOUT;
-        ev.data.fd = sock;
-        if (epoll_ctl(gp->kdpfd, EPOLL_CTL_ADD, sock, &ev) < 0)
-            return 1;
-    }
+    ev.events = EPOLLOUT;
+    ev.data.fd = sock;
+    if (epoll_ctl(gp->kdpfd, EPOLL_CTL_ADD, sock, &ev) < 0)
+        return 1;
 #endif
 
     for (;;)
@@ -274,18 +252,11 @@ char czl_udp_send(czl_gp *gp, czl_fun *fun)
     #ifdef CZL_SYSTEM_WINDOWS
         fd_set fdWrite;
         FD_ZERO(&fdWrite); FD_SET(sock, &fdWrite);
-        if (select(sock+1, NULL, &fdWrite, NULL, NULL) < 0)
-            return 1;
+        if (select(0, NULL, &fdWrite, NULL, NULL) < 0)
+            break;
     #else //CZL_SYSTEM_LINUX
-        if (mode)
-        {
-            fd_set fdWrite;
-            FD_ZERO(&fdWrite); FD_SET(sock, &fdWrite);
-            if (select(sock+1, NULL, &fdWrite, NULL, NULL) < 0)
-                return 1;
-        }
-        else if (epoll_wait(gp->kdpfd, events, 1, -1) < 0)
-            goto CZL_END;
+        if (epoll_wait(gp->kdpfd, events, 1, -1) < 0)
+            break;
     #endif
         ret = sendto(sock, buf->str+cnt, len, 0,
                      (struct sockaddr*)&in, sizeof(struct sockaddr));
@@ -328,10 +299,9 @@ char czl_udp_send(czl_gp *gp, czl_fun *fun)
 
 #ifdef CZL_SYSTEM_LINUX
 CZL_END:
+    epoll_ctl(gp->kdpfd, EPOLL_CTL_DEL, sock, NULL);
     if (-1 == fun->ret.val.inum)
         close(sock);
-    if (0 == mode)
-        epoll_ctl(gp->kdpfd, EPOLL_CTL_DEL, sock, NULL);
 #endif
 
     return 1;

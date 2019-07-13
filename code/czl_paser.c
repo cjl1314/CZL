@@ -42,9 +42,9 @@ enum czl_keyword_index_enum
     CZL_FINAL_INDEX,
     CZL_MY_INDEX,
     CZL_FUNC_INDEX,
-    CZL_PUB_INDEX,
-    CZL_PRO_INDEX,
-    CZL_PRI_INDEX,
+    CZL_PUBLIC_INDEX,
+    CZL_PROTECTED_INDEX,
+    CZL_PRIVATE_INDEX,
     CZL_NEW_INDEX,
     CZL_NIL_INDEX,
     CZL_NULL_INDEX,
@@ -54,7 +54,7 @@ enum czl_keyword_index_enum
     CZL_RBRACKET_INDEX,
     //以下仅起到标记作用
     CZL_INS_INDEX,
-    CZL_GOTO_FLAG
+    CZL_GOTO_FLAG,
 };
 
 //系统关键字列表
@@ -97,16 +97,16 @@ const czl_keyword czl_keyword_table[] =
     {"final",       CZL_FINAL_INDEX},
     {"my",          CZL_MY_INDEX},
     {"func",        CZL_FUNC_INDEX},
-    {"pub",         CZL_PUB_INDEX},
-    {"pro",         CZL_PRO_INDEX},
-    {"pri",         CZL_PRI_INDEX},
+    {"public",      CZL_PUBLIC_INDEX},
+    {"protected",   CZL_PROTECTED_INDEX},
+    {"private",     CZL_PRIVATE_INDEX},
     {"new",         CZL_NEW_INDEX},
     {"nil",         CZL_NIL_INDEX},
     {"null",        CZL_NULL_INDEX},
     {"true",        CZL_TRUE_INDEX},
     {"false",       CZL_FALSE_INDEX},
     {"{",           CZL_LBRACKET_INDEX},
-    {"}",           CZL_RBRACKET_INDEX}
+    {"}",           CZL_RBRACKET_INDEX},
 };
 const unsigned long czl_keyword_table_num =
         sizeof(czl_keyword_table) / sizeof(czl_keyword);
@@ -121,10 +121,22 @@ const unsigned long czl_keyword_table_num =
 (CZL_NIL_INDEX == index || CZL_NULL_INDEX == index || \
  CZL_TRUE_INDEX == index || CZL_FALSE_INDEX == index)
 ///////////////////////////////////////////////////////////////
-czl_var czl_true = {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {1}};
+czl_var czl_nil =   {NULL, CZL_NIL, CZL_CONST_VAR, 0, CZL_NIL, {0}};
+czl_var czl_null =  {NULL, CZL_OBJ_REF, CZL_REF_ELE, 0, CZL_NULL, {0}};
+//
+czl_var czl_true =  {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {1}};
 czl_var czl_false = {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {0}};
-czl_var czl_nil = {NULL, CZL_NIL, CZL_CONST_VAR, 0, CZL_NIL, {0}};
-czl_var czl_null = {NULL, CZL_OBJ_REF, CZL_REF_ELE, 0, CZL_NULL, {0}};
+//
+czl_var czl_type_int =      {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {0}};
+czl_var czl_type_float =    {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {1}};
+czl_var czl_type_string =   {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {2}};
+czl_var czl_type_array =    {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {3}};
+czl_var czl_type_table =    {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {4}};
+czl_var czl_type_ins =      {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {5}};
+czl_var czl_type_stack =    {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {6}};
+czl_var czl_type_queue =    {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {7}};
+czl_var czl_type_file =     {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {8}};
+czl_var czl_type_fun =      {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {9}};
 ///////////////////////////////////////////////////////////////
 char* czl_exp_analysis(czl_gp*, char*, czl_exp_handle*);
 char* czl_expression_analysis(czl_gp*, char*);
@@ -141,7 +153,7 @@ char* czl_annotate_check(czl_gp *gp, char *code)
         {
             if ('\n' == *code)
                 return code;
-            code++;
+            ++code;
         }
     }
     else
@@ -153,13 +165,13 @@ char* czl_annotate_check(czl_gp *gp, char *code)
                 gp->error_line++;
             else if ('\"' == *code && *(code-1) != '\\')
                 flag = !flag;
-            else if ('/' == *code && '*' == *(code+1))
+            else if (flag && '/' == *code && '*' == *(code+1))
             {
                 code = czl_annotate_check(gp, code+1);
                 continue;
             }
-            code++;
-            if ('*' == *code && '/' == *(code+1) && flag)
+            ++code;
+            if (flag && '*' == *code && '/' == *(code+1))
                 return code+2;
         }
     }
@@ -175,7 +187,7 @@ char* czl_ignore_sign_filt(czl_gp *gp, char *code)
         if ('\n' == *code)
             gp->error_line++;
         if (' ' == *code || '\t' == *code || '\n' == *code || '\r' == *code)
-            code++;
+            ++code;
         else if ('/' == *code && ('/' == *(code+1) || '*' == *(code+1)))
             code = czl_annotate_check(gp, code+1);
         else
@@ -526,7 +538,7 @@ char* czl_end_sign_check(czl_gp *gp, char *code)
     switch (*code)
     {
     case '_': case '(': case '{': case '}': case '\"': case '\'':
-    case '!': case '~': case '+': case '-': case '#': case '\0':
+    case '!': case '~': case '+': case '-': case '#': case '$': case '\0':
         return code;
     default:
         return NULL;
@@ -714,14 +726,6 @@ char* czl_string_match(czl_gp *gp, char *code, czl_exp_node **node)
 
     if (!(*node=czl_opr_node_create(gp, CZL_STRING, &val)))
         return NULL;
-
-    return code;
-}
-
-char* czl_numstr_ignore_sign_filt(char *code)
-{
-    while (' ' == *code || '\t' == *code || '\n' == *code || '\r' == *code)
-        code++;
 
     return code;
 }
@@ -936,7 +940,14 @@ char* czl_tabkv_list_match
             goto CZL_SYNTAX_ERROR;
         czl_table_node_insert(&(*list)->paras, &paras_tail, para);
         if (',' == *code)
-            code++;
+        {
+            code = czl_ignore_sign_filt(gp, code+1);
+            if ('}' == *code)
+            {
+                code++;
+                break;
+            }
+        }
         else if ('}' == *code)
         {
             code++;
@@ -994,7 +1005,18 @@ char* czl_paras_match
             return NULL;
         }
         if (',' == *code)
+        {
             ++code;
+            if (']' == end_sign)
+            {
+                code = czl_ignore_sign_filt(gp, code);
+                if (']' == *code)
+                {
+                    ++code;
+                    break;
+                }
+            }
+        }
         else if (end_sign == *code++)
             break;
         else
@@ -1490,46 +1512,41 @@ char* czl_var_match
             return NULL;
         type = CZL_LG_VAR;
     }
+    else if (my_flag)
+    {
+        sprintf(gp->log_buf, "undefined variable %s, ", name);
+        return NULL;
+    }
+    else if ('.' == *code)
+    {
+        //系统变量、函数调用
+        return czl_lib_obj_match(gp, code+1, name, node);
+    }
+    else if (strcmp("new", name) == 0)
+    {
+        czl_new_sentence *newObj;
+        type = CZL_NEW;
+        if (!(code=czl_new_sentence_def(gp, code, &newObj)))
+            return NULL;
+        var = (czl_var*)newObj;
+    }
     else
     {
-        if (my_flag)
-        {
-            sprintf(gp->log_buf, "undefined variable %s, ", name);
-            return NULL;
-        }
-        if ('.' == *code)
-        {
-            //系统变量、函数调用
-            return czl_lib_obj_match(gp, code+1, name, node);
-        }
-        else if (strcmp("new", name) == 0)
-        {
-            czl_new_sentence *newObj;
-            type = CZL_NEW;
-            if (!(code=czl_new_sentence_def(gp, code, &newObj)))
-                return NULL;
-            var = (czl_var*)newObj;
-        }
-        else if (strcmp("true", name) == 0)
-        {
-            type = CZL_ENUM;
-            var = &czl_true;
-        }
-        else if (strcmp("false", name) == 0)
-        {
-            type = CZL_ENUM;
-            var = &czl_false;
-        }
-        else if (strcmp("nil", name) == 0)
-        {
-            type = CZL_ENUM;
-            var = &czl_nil;
-        }
-        else if (strcmp("null", name) == 0)
-        {
-            type = CZL_ENUM;
-            var = &czl_null;
-        }
+        type = CZL_ENUM;
+        if (strcmp("true", name) == 0) var = &czl_true;
+        else if (strcmp("false", name) == 0) var = &czl_false;
+        else if (strcmp("nil", name) == 0) var = &czl_nil;
+        else if (strcmp("null", name) == 0) var = &czl_null;
+        else if (strcmp("TP_INT", name) == 0) var = &czl_type_int;
+        else if (strcmp("TP_FLOAT", name) == 0) var = &czl_type_float;
+        else if (strcmp("TP_STR", name) == 0) var = &czl_type_string;
+        else if (strcmp("TP_ARR", name) == 0) var = &czl_type_array;
+        else if (strcmp("TP_MAP", name) == 0) var = &czl_type_table;
+        else if (strcmp("TP_OBJ", name) == 0) var = &czl_type_ins;
+        else if (strcmp("TP_STACK", name) == 0) var = &czl_type_stack;
+        else if (strcmp("TP_QUEUE", name) == 0) var = &czl_type_queue;
+        else if (strcmp("TP_FILE", name) == 0) var = &czl_type_file;
+        else if (strcmp("TP_FUN", name) == 0) var = &czl_type_fun;
         else
         {
             if (CZL_IN_CONSTANT == gp->tmp->variable_field)
@@ -2609,11 +2626,6 @@ char* czl_foreach_dynamic_var_create
     if (!(code=czl_name_match(gp, code, name)))
     {
         sprintf(gp->log_buf, "missed variable after for, ");
-        return NULL;
-    }
-    if (czl_is_keyword(gp, name))
-    {
-        sprintf(gp->log_buf, "%s is a keyword, ", name);
         return NULL;
     }
     if (!(var=czl_dynamic_var_create(gp, name)))
@@ -3704,23 +3716,26 @@ char* czl_load_shell(czl_gp *gp, char *old_code)
 char* czl_permission_dec(czl_gp *gp, char *code, int index)
 {
     code = czl_ignore_sign_filt(gp, code);
-    if (*code != ':')
+    if (*(code++) != ':')
+    {
+        sprintf(gp->log_buf, "missed ':'' after class permission declared, ");
         return NULL;
+    }
 
     switch (index)
     {
-    case CZL_PUB_INDEX:
+    case CZL_PUBLIC_INDEX:
         gp->tmp->permission = CZL_PUBLIC;
         break;
-    case CZL_PRO_INDEX:
+    case CZL_PROTECTED_INDEX:
         gp->tmp->permission = CZL_PROTECTED;
         break;
-    default: //CZL_PRI_INDEX
+    default: //CZL_PRIVATE_INDEX
         gp->tmp->permission = CZL_PRIVATE;
         break;
     }
 
-    return code+1;
+    return code;
 }
 
 //给类、函数起别名
@@ -3905,8 +3920,8 @@ char* czl_class_body_match
             gp->tmp->cur_class = parent;
             gp->tmp->class_vars_tail = var_list_backup;
             return code;
-        case CZL_PUB_INDEX:         //访问权限声明
-        case CZL_PRO_INDEX: case CZL_PRI_INDEX:
+        case CZL_PUBLIC_INDEX:         //访问权限声明
+        case CZL_PROTECTED_INDEX: case CZL_PRIVATE_INDEX:
             code = czl_permission_dec(gp, code, index);
             break;
         case CZL_STATIC_INDEX:      //静态变量、实例定义
@@ -3951,13 +3966,13 @@ char* czl_class_inherit_match(czl_gp *gp, char *code, czl_class *pclass)
         code = czl_keyword_find(gp, code, &index, 0);
         switch (index)
         {
-        case CZL_PUB_INDEX:
+        case CZL_PUBLIC_INDEX:
             permission = CZL_PUBLIC;
             break;
-        case CZL_PRO_INDEX:
+        case CZL_PROTECTED_INDEX:
             permission = CZL_PROTECTED;
             break;
-        case CZL_PRI_INDEX:
+        case CZL_PRIVATE_INDEX:
             permission = CZL_PRIVATE;
             break;
         default:
@@ -4246,7 +4261,8 @@ char czl_global_paras_init(czl_gp *gp)
 
 char czl_sys_init(czl_gp *gp)
 {
-#if defined CZL_SYSTEM_LINUX && (defined CZL_LIB_TCP || defined CZL_LIB_UDP)
+#if defined CZL_SYSTEM_LINUX && (defined CZL_LIB_COM || \
+                                 defined CZL_LIB_TCP || defined CZL_LIB_UDP)
     if ((gp->kdpfd=epoll_create(1)) < 0)
         return 0;
 #endif
@@ -4279,7 +4295,7 @@ char czl_sys_init(czl_gp *gp)
 #endif //#if (defined CZL_MULT_THREAD && defined CZL_CONSOLE)
 
 #ifndef CZL_CONSOLE
-    if (!(gp->table=czl_empty_table_create(gp)))
+    if (!(gp->table=czl_table_create(gp, 1, 0, 0)))
         return 0;
 #endif //#ifndef CZL_CONSOLE
 

@@ -6,7 +6,7 @@
 ///////////////////////////////////////////////////////////////
 //检查释放数组连接缓存、函数返回值: tmp buf check free
 #define CZL_TB_CF(gp, res) \
-if (CZL_ARRBUF_VAR == res->quality || CZL_FUNRET_VAR == res->quality) { \
+if (res->quality) { \
     czl_val_del(gp, res); \
     res->quality = CZL_DYNAMIC_VAR; \
 }
@@ -126,12 +126,19 @@ if (pc->lt != CZL_REG_VAR || CZL_OBJ_REF == pc->lo->type) { \
 else if (pc->ro != pc->lo) \
     pc->ro = pc->lo; \
 CZL_TB_CF(gp, pc->res); \
-if (CZL_CONDITION == pc->kind) { \
+switch (pc->kind) { \
+case CZL_CONDITION: \
     pc->res->type = CZL_INT; \
     pc->res->val.inum = CZL_EIT(pc->ro); \
+    break; \
+case CZL_OBJ_TYPE: \
+    pc->res->type = CZL_INT; \
+    pc->res->val.inum = pc->ro->type; \
+    break; \
+default: \
+    if (!czl_opt_cac_funs[pc->kind](gp, pc->res, pc->ro)) \
+        goto CZL_EXCEPTION_CATCH; \
 } \
-else if (!czl_opt_cac_funs[pc->kind](gp, pc->res, pc->ro)) \
-    goto CZL_EXCEPTION_CATCH; \
 ++pc;
 
 //执行有临时结果的双目运算符指令: run binary2 opt
@@ -140,7 +147,7 @@ if (pc->lo != pc->res) \
     CZL_TB_CF(gp, pc->res); \
 if (CZL_ADD_A == pc->kind || CZL_DEC_A == pc->kind) { \
     gp->next_pc = pc+1; \
-    if (pc->res->quality != CZL_ARRLINK_VAR && pc->res->quality != CZL_ARRBUF_VAR) \
+    if (CZL_DYNAMIC_VAR == pc->res->quality) \
         pc->res->quality = CZL_ARRLINK_VAR; \
 } \
 if (CZL_REG_VAR == pc->lt && pc->lo->type != CZL_OBJ_REF) { \
@@ -264,18 +271,18 @@ default: goto CZL_EXCEPTION_CATCH; \
 #define CZL_RSS(gp, pc) \
 CZL_TB_CF(gp, pc->res); \
 *pc->res = *(pc-1)->res; \
-if (CZL_FUNRET_VAR == (pc-1)->res->quality) \
+if (CZL_FUNRET_VAR == pc->res->quality) \
     (pc-1)->res->type = CZL_INT; \
-else if (CZL_ARRBUF_VAR == (pc-1)->res->quality) \
+else if (CZL_ARRBUF_VAR == pc->res->quality) \
     (pc-1)->res->quality = CZL_DYNAMIC_VAR; \
-else if (CZL_STRING == (pc-1)->res->type) { \
+else if (CZL_STRING == pc->res->type) { \
     CZL_SRCA1((pc-1)->res->val.str); \
     pc->res->quality = CZL_ARRBUF_VAR; \
 } \
 ++pc;
 
 //执行case/default语句: run case sentence
-#define CZL_RCS(pc) pc = czl_switch_case_cmp(pc);
+#define CZL_RCS(gp, pc) pc = czl_switch_case_cmp(gp, pc);
 
 //执行return/yeild语句: run return/yeild sentence
 #define CZL_RRYS(gp, pc) \
@@ -310,12 +317,19 @@ if (var->type != CZL_INT) { \
 //执行函数单目运算符指令: run fun unary opt
 #define CZL_RFUO(gp, lo, pc) \
 CZL_TB_CF(gp, pc->res); \
-if (CZL_CONDITION == pc->kind) { \
+switch (pc->kind) { \
+case CZL_CONDITION: \
     pc->res->type = CZL_INT; \
     pc->res->val.inum = CZL_EIT(lo); \
+    break; \
+case CZL_OBJ_TYPE: \
+    pc->res->type = CZL_INT; \
+    pc->res->val.inum = lo->type; \
+    break; \
+default: \
+    if (!czl_opt_cac_funs[pc->kind](gp, pc->res, lo)) \
+        goto CZL_EXCEPTION_CATCH; \
 } \
-else if (!czl_opt_cac_funs[pc->kind](gp, pc->res, lo)) \
-    goto CZL_EXCEPTION_CATCH; \
 CZL_CF_FR2(gp, lo); \
 ++pc;
 

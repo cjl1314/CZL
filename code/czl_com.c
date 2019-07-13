@@ -263,24 +263,24 @@ char czl_com_write(czl_gp *gp, czl_fun *fun)
 
     return 1;
 #else //CZL_SYSTEM_LINUX
-    czl_var *h = CZL_GRV(fun->vars);
+    int fd = CZL_GRV(fun->vars)->val.ext.v2.i32;
     czl_string *buf = CZL_STR(fun->vars[1].val.str.Obj);
     struct epoll_event ev, events[1];
-    int fd = h->val.ext.v1.i32, kdpfd = -1;
 
-    ev.events = EPOLLOUT | EPOLLET | EPOLLONESHOT;
+    if ((fun->ret.val.inum=write(fd, buf->str, buf->len)) >= 0)
+        return 1;
+
+    ev.events = EPOLLOUT;
     ev.data.fd = fd;
 
-    if (h->type != CZL_INT ||
-        (kdpfd=epoll_create(1)) < 0 ||
-        epoll_ctl(kdpfd, EPOLL_CTL_ADD, fd, &ev) < 0 ||
-        epoll_wait(kdpfd, events, 1, -1) < 0 ||
-        events[0].data.fd != fd)
+    if (epoll_ctl(gp->kdpfd, EPOLL_CTL_ADD, fd, &ev) < 0 ||
+        epoll_wait(gp->kdpfd, events, 1, -1) < 0)
         fun->ret.val.inum = 0;
     else
         fun->ret.val.inum = write(fd, buf->str, buf->len);
 
-    close(kdpfd);
+    epoll_ctl(gp->kdpfd, EPOLL_CTL_DEL, fd, NULL);
+
     return 1;
 #endif
 }
@@ -341,28 +341,25 @@ char czl_com_read(czl_gp *gp, czl_fun *fun)
 #else //CZL_SYSTEM_LINUX
     czl_var *h = CZL_GRV(fun->vars);
     struct epoll_event ev, events[1];
-    int fd = h->val.ext.v1.i32, kdpfd = -1;
+    int fd = h->val.ext.v1.i32;
     long timeOut = h->val.ext.v2.i32;
     long len = fun->vars[1].val.inum;
     long ret;
     char tmp[1024];
     char *buf = tmp;
 
-    ev.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
+    ev.events = EPOLLIN;
     ev.data.fd = fd;
 
-    if (h->type != CZL_INT ||
-        (kdpfd=epoll_create(1)) < 0 ||
-        epoll_ctl(kdpfd, EPOLL_CTL_ADD, fd, &ev) < 0 ||
-        epoll_wait(kdpfd, events, 1, timeOut) <= 0 ||
-        events[0].data.fd != fd ||
+    if (epoll_ctl(gp->kdpfd, EPOLL_CTL_ADD, fd, &ev) < 0 ||
+        epoll_wait(gp->kdpfd, events, 1, timeOut) <= 0 ||
         (len > 1024 && !(buf=(char*)CZL_TMP_MALLOC(gp, len))))
     {
-        close(kdpfd);
+        epoll_ctl(gp->kdpfd, EPOLL_CTL_DEL, fd, NULL);
         fun->ret.val.inum = 0;
         return 1;
     }
-    close(kdpfd);
+    epoll_ctl(gp->kdpfd, EPOLL_CTL_DEL, fd, NULL);
 
     if ((ret=read(fd, buf, len)) > 0)
         ret = czl_str_create(gp, &fun->ret.val.str, ret+1, ret, buf);

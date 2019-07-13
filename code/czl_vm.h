@@ -60,8 +60,8 @@
 #define CZL_SF(gp, str) CZL_STR_FREE(gp, str.Obj, CZL_SL(str.size))
 
 //重新调整字符串长度: string resize
-#define CZL_SR(gp, str, len) \
-(void**)CZL_STR_REALLOC(gp, str.Obj, CZL_SL(len), CZL_SL(str.size))
+#define CZL_SR(gp, str, new_size) \
+(void**)CZL_STR_REALLOC(gp, str.Obj, CZL_SL(new_size), CZL_SL(str.size))
 ///////////////////////////////////////////////////////////////
 //字符串引用计数加一: str ref_cnt add 1
 #define CZL_SRCA1(str) ++CZL_STR(str.Obj)->rc
@@ -72,7 +72,7 @@
 
 //哈希表键字符串引用计数减一: key string ref_cnt dec 1
 #define CZL_KEY_SRCD1(gp, s) \
-{ if (0 == --CZL_STR(s)->rc) CZL_STR_FREE(gp, s, CZL_SL(CZL_STR(s)->len)); }
+{ if (0 == --CZL_STR(s)->rc) CZL_STR_FREE(gp, s, CZL_SL(CZL_STR(s)->len+1)); }
 ///////////////////////////////////////////////////////////////
 //对象引用计数加一: obj ref_cnt add 1
 #define CZL_ORCA1(obj) ++CZL_INS(obj)->rc
@@ -287,6 +287,8 @@ typedef enum czl_op_enum
     CZL_ADD_SELF,	// ++i
     CZL_DEC_SELF,	// --i
     //
+    CZL_OBJ_TYPE,   // $
+    //
     CZL_OR_OR,		// ||
     CZL_AND_AND,	// &&
     //
@@ -333,16 +335,16 @@ typedef enum czl_binary_opt_ass_enum
 typedef enum czl_opr_type_enum
 {
     CZL_INT,            // 32/64bit整形， CZL_INT 必须为 0
-    CZL_FLOAT,          // 64bit浮点型
+    CZL_FLOAT,          // 32/64bit浮点型
     CZL_STRING,         // 任意长度的堆字符串
-    CZL_INSTANCE,       // 类实例
-    CZL_TABLE,          // 表
     CZL_ARRAY,          // 数组
+    CZL_TABLE,          // 哈希表
+    CZL_INSTANCE,       // 类实例
     CZL_STACK,          // 栈
     CZL_QUEUE,          // 队列
     CZL_FILE,           // 文件
-    CZL_OBJ_REF,        // 对象指针 32bit
     CZL_FUN_REF,        // 函数指针 32bit
+    CZL_OBJ_REF,        // 对象指针 32bit
     CZL_ARRAY_LIST,     // 数组[]列表
     CZL_TABLE_LIST,     // 表{}列表
     //
@@ -380,8 +382,8 @@ typedef enum czl_find_mode_enum
 //变量属性
 typedef enum czl_var_quality_enum
 {
+    CZL_DYNAMIC_VAR,    //动态变量，必须是0
     CZL_CONST_VAR,      //常量
-    CZL_DYNAMIC_VAR,    //动态变量
     CZL_STATIC_VAR,     //静态变量
     CZL_FUNRET_VAR,     //函数返回值变量，不能等于0
     CZL_ARRBUF_VAR,     //数组连接缓存变量，不能等于0
@@ -690,6 +692,7 @@ typedef struct czl_glo_var
     unsigned char optimizable;  //标记变量是否可优化，注意与czl_loc_var的optimizable内存对其
     unsigned char ot;           //强制类型: czl_opr_type_enum
     czl_value val;              //变量值
+    unsigned long hash;         //缓存常量字符串哈希值
     struct czl_glo_var *next;
 } czl_glo_var, *czl_glo_var_list;
 
@@ -1024,10 +1027,24 @@ typedef struct czl_file
 {
     unsigned long rc;   //引用计数
     FILE *fp;           //文件指针
-    unsigned char mode; //1:结构化 2:行 3:字节流
+    unsigned char mode; //1:字节流 2:行读写 3:结构化
     unsigned char sign; //行写间隔符号
+#ifdef CZL_SYSTEM_WINDOWS
+    unsigned char txt;  //是否是文本读写方式
+#endif
     long addr;          //文件偏移地址
 } czl_file;
+
+//缓存文件结构
+typedef struct czl_buf_file
+{
+    char *path;
+    FILE *fp;
+    void **buf;
+    long date;
+    struct czl_buf_file *next;
+    struct czl_buf_file *last;
+} czl_buf_file;
 
 //哈希表桶链节点
 typedef struct czl_bucket
@@ -1526,6 +1543,7 @@ typedef struct czl_gp
     czl_mm_sp_pool mmp_ref;         //ref_var结构内存池
     czl_mm_sp_pool mmp_cor;         //coroutine结构内存池
     czl_mm_sp_pool mmp_file;        //file结构内存池
+    czl_mm_sp_pool mmp_buf_file;    //buf_file结构内存池
 #ifdef CZL_MULT_THREAD
     czl_mm_sp_pool mmp_thread;      //thread结构内存池
 #endif //#ifdef CZL_MULT_THREAD
@@ -1568,6 +1586,9 @@ typedef struct czl_gp
 #endif //#ifdef CZL_MULT_THREAD
     //
     czl_sys_hash class_hash; //格式化文件读操作需要用到，不能在运行前释放内存
+    //
+    czl_sys_hash file_hash; //缓存文件哈希表
+    czl_buf_file *file_head; //缓存文件链表头
     //
     czl_fun *cur_fun;   //当前函数
     //
@@ -1659,7 +1680,7 @@ void* czl_loc_var_find(const char*, czl_loc_var*);
 czl_var* czl_var_in_class_find(const char*, char);
 czl_var* czl_var_find(czl_gp*, char*, char);
 czl_var* czl_var_find_in_exp(czl_gp*, char*, char);
-void czl_file_delete(czl_gp*, void**);
+char czl_file_delete(czl_gp*, void**);
 czl_class* czl_class_create(czl_gp*, char*, char);
 czl_class* czl_class_find_in_local(czl_gp*, char*);
 czl_class* czl_class_find(czl_gp*, char*, char);
@@ -1670,9 +1691,11 @@ void czl_class_parent_node_insert(czl_class_parent**,
                                   czl_class_parent*);
 char czl_instance_delete(czl_gp*, void**);
 void** czl_instance_fork(czl_gp*, czl_class*, char);
-char czl_array_fork(czl_gp*, czl_array*, czl_value*, char);
-char czl_table_fork(czl_gp*, czl_table*, czl_value*, char);
-char czl_sq_fork(czl_gp*, czl_sq*, czl_value*, char);
+czl_array* czl_array_fork(czl_gp*, czl_var*);
+czl_table* czl_table_fork(czl_gp*, czl_var*);
+czl_sq* czl_sq_fork(czl_gp*, czl_var*);
+czl_string* czl_string_fork(czl_gp*, czl_var*);
+czl_file* czl_file_fork(czl_gp*, czl_var*);
 czl_glo_var* czl_sqele_node_create
 (
     czl_gp*
@@ -1723,7 +1746,7 @@ char czl_fun_insert(czl_gp*, czl_fun*);
 czl_fun* czl_fun_node_find(char*, const czl_sys_hash*);
 void* czl_sys_hash_find(char, char, char*, const czl_sys_hash*);
 char czl_sys_hash_insert(czl_gp*, char, void*, czl_sys_hash*);
-void czl_sys_hash_delete(czl_gp*, unsigned long, czl_sys_hash*);
+void czl_sys_hash_delete(czl_gp*, char, void*, czl_sys_hash*);
 czl_fun* czl_fun_find(czl_gp*, char*, char);
 czl_fun* czl_fun_find_in_exp(czl_gp*, char*, char);
 char czl_integrity_check(czl_gp*, char);
@@ -1744,10 +1767,11 @@ void czl_table_node_insert(czl_table_node**,
 void czl_table_list_delete(czl_gp*, czl_table_list*);
 char czl_hash_init(czl_gp*, czl_table*, unsigned long);
 void** czl_table_create(czl_gp*, unsigned long, unsigned long, unsigned long);
-char czl_delete_tabkv(czl_gp*, czl_value*, czl_var*);
-char czl_delete_num_tabkv(czl_gp*, czl_value*, czl_long);
+char czl_delete_tabkv(czl_gp*, czl_var*, czl_var*);
+char czl_delete_num_tabkv(czl_gp*, czl_var*, czl_long);
 czl_tabkv* czl_create_tabkv(czl_gp*, czl_table*, czl_var*, czl_tabkv*, unsigned char);
 czl_tabkv* czl_create_key_num_tabkv(czl_gp*, czl_table*, czl_long, czl_tabkv*, unsigned char);
+czl_tabkv* czl_create_key_str_tabkv(czl_gp*, czl_table*, czl_var*, czl_tabkv*, unsigned char);
 czl_tabkv* czl_find_tabkv(czl_table*, czl_var*);
 czl_tabkv* czl_find_num_tabkv(czl_table*, czl_long);
 char czl_table_delete(czl_gp*, void**);
@@ -1757,10 +1781,10 @@ char czl_table_new(czl_gp*, const czl_table_list*, czl_var*);
 void** czl_table_new_by_table(czl_gp*, czl_table*);
 char czl_table_union_by_table(czl_gp*, czl_table*, czl_tabkv*);
 char czl_table_union_by_list(czl_gp*, czl_table*, czl_table_node*);
-void czl_table_mix_by_table(czl_gp*, czl_value*, czl_tabkv*);
-void czl_table_mix_by_array(czl_gp*, czl_value*, czl_array*);
-void czl_table_mix_by_sq(czl_gp*, czl_value*, czl_glo_var*);
-char czl_table_mix_by_list(czl_gp*, czl_value*, czl_para*);
+void czl_table_mix_by_table(czl_gp*, czl_var*, czl_tabkv*);
+void czl_table_mix_by_array(czl_gp*, czl_var*, czl_array*);
+void czl_table_mix_by_sq(czl_gp*, czl_var*, czl_glo_var*);
+char czl_table_mix_by_list(czl_gp*, czl_var*, czl_para*);
 czl_goto_flag* czl_goto_node_create(czl_gp*, const char*);
 void czl_goto_node_insert(czl_goto_flag**, czl_goto_flag*);
 char czl_sentence_block_create(czl_gp*, char);
@@ -1803,6 +1827,8 @@ czl_var* czl_coroutine_run(czl_gp*, czl_para*, unsigned long, void**);
 void czl_log(czl_gp*, char*);
 czl_usrlib* czl_usrlib_create(czl_gp*, char*);
 char czl_sort_cmp_fun_ret(czl_gp*, czl_var*, czl_var*);
+void czl_buf_file_delete(czl_gp*, czl_buf_file*);
+unsigned long czl_bkdr_hash(char*, unsigned long);
 ///////////////////////////////////////////////////////////////
 void* czl_malloc(czl_gp*, czl_ulong
                  #ifdef CZL_MM_MODULE
@@ -1882,6 +1908,9 @@ void czl_free(czl_gp*, void*, czl_ulong
     #define CZL_FILE_MALLOC(gp) (czl_file*)czl_malloc(gp, sizeof(czl_file), &gp->mmp_file)
     #define CZL_FILE_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_file), &gp->mmp_file)
 
+    #define CZL_BUF_FILE_MALLOC(gp) (czl_buf_file*)czl_malloc(gp, sizeof(czl_buf_file), &gp->mmp_buf_file)
+    #define CZL_BUF_FILE_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_buf_file), &gp->mmp_buf_file)
+
 #ifdef CZL_MULT_THREAD
     #define CZL_THREAD_MALLOC(gp) czl_malloc(gp, sizeof(czl_thread), &gp->mmp_thread)
     #define CZL_THREAD_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_thread), &gp->mmp_thread)
@@ -1925,6 +1954,9 @@ void czl_free(czl_gp*, void*, czl_ulong
 
     #define CZL_FILE_MALLOC(gp) (czl_file*)czl_malloc(gp, sizeof(czl_file))
     #define CZL_FILE_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_file))
+
+    #define CZL_BUF_FILE_MALLOC(gp) (czl_buf_file*)czl_malloc(gp, sizeof(czl_buf_file))
+    #define CZL_BUF_FILE_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_buf_file))
 
 #ifdef CZL_MULT_THREAD
     #define CZL_THREAD_MALLOC(gp) czl_malloc(gp, sizeof(czl_thread))

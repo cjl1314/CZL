@@ -5,7 +5,7 @@
 
 #ifdef CZL_LIB_COM
     #ifdef CZL_SYSTEM_WINDOWS //声明windows平台
-        extern const czl_sys_fun czl_lib_com[]; //库函数表声明
+
     #elif defined CZL_SYSTEM_LINUX
         #include <termios.h>
         #include <fcntl.h>
@@ -14,6 +14,11 @@
     #else
         #undef CZL_LIB_COM //不支持其它平台关闭宏控
     #endif
+#endif //CZL_LIB_COM
+
+#ifdef CZL_LIB_COM
+    extern const czl_sys_fun czl_lib_com[]; //库函数表声明
+    #define CZL_LIB_COM_CNT 5               //库函数个数
 #endif //CZL_LIB_COM
 
 #endif // CZL_COM_H
