@@ -1300,6 +1300,7 @@ void czl_mm_module_init
     czl_mm_pool_init(&gp->mmp_file, sizeof(czl_file), CZL_MM_OBJ_SP);
 
     czl_mm_pool_init(&gp->mmp_buf_file, sizeof(czl_buf_file), CZL_MM_BUF_SP);
+    czl_mm_pool_init(&gp->mmp_extsrc, sizeof(czl_buf_file), CZL_MM_BUF_SP);
     czl_mm_pool_init(&gp->mmp_ref, sizeof(czl_ref_var), CZL_MM_BUF_SP);
 #ifdef CZL_MULT_THREAD
     czl_mm_pool_init(&gp->mmp_thread, sizeof(czl_thread), CZL_MM_BUF_SP);

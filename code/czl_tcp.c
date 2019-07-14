@@ -2,8 +2,6 @@
 
 #ifdef CZL_LIB_TCP
 
-#define CZL_TCP_BUF_SIZE 50*1024
-
 //库函数声明，其中gp是CZL运行时用到的全局参数，fun是函数。
 char czl_tcp_server(czl_gp *gp, czl_fun *fun);  //创建服务器socket
 char czl_tcp_listen(czl_gp *gp, czl_fun *fun);  //服务器侦听新客户端并获取socket
@@ -25,6 +23,8 @@ const czl_sys_fun czl_lib_tcp[] =
     {"send",     czl_tcp_send,     3,        "int_v1,str_v2,int_v3=-1"},
     {"ip",       czl_tcp_ip,       1,        "int_v1"},
 };
+
+#define CZL_TCP_BUF_SIZE 50*1024
 
 //库函数定义
 char czl_tcp_server(czl_gp *gp, czl_fun *fun)

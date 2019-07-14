@@ -1046,6 +1046,15 @@ typedef struct czl_buf_file
     struct czl_buf_file *last;
 } czl_buf_file;
 
+//扩展库资源结构
+typedef struct czl_extsrc
+{
+    void *src;
+    void (*src_free)(void*);
+    struct czl_extsrc *next;
+    struct czl_extsrc *last;
+} czl_extsrc;
+
 //哈希表桶链节点
 typedef struct czl_bucket
 {
@@ -1544,6 +1553,7 @@ typedef struct czl_gp
     czl_mm_sp_pool mmp_cor;         //coroutine结构内存池
     czl_mm_sp_pool mmp_file;        //file结构内存池
     czl_mm_sp_pool mmp_buf_file;    //buf_file结构内存池
+    czl_mm_sp_pool mmp_extsrc;      //extsrc结构内存池
 #ifdef CZL_MULT_THREAD
     czl_mm_sp_pool mmp_thread;      //thread结构内存池
 #endif //#ifdef CZL_MULT_THREAD
@@ -1570,14 +1580,6 @@ typedef struct czl_gp
     czl_ulong mm_cnt;   //当前内存总字节数
     czl_ulong mm_max;   //内存使用峰值统计
     //
-#ifndef CZL_CONSOLE
-    void **table; //与C/C++数据交互表
-    char *shell_path;
-    char *log_path;
-    char *class_name;
-    czl_class *pclass;
-#endif //#ifndef CZL_CONSOLE
-    //
 #ifdef CZL_MULT_THREAD
     czl_sys_hash threads_hash;
     czl_thread *threads_head;
@@ -1585,10 +1587,16 @@ typedef struct czl_gp
     czl_fun *killFun; //子线程被kill回调函数
 #endif //#ifdef CZL_MULT_THREAD
     //
-    czl_sys_hash class_hash; //格式化文件读操作需要用到，不能在运行前释放内存
+    czl_sys_hash coroutines_hash;
+    void **coroutines_head;
     //
     czl_sys_hash file_hash; //缓存文件哈希表
     czl_buf_file *file_head; //缓存文件链表头
+    //
+    czl_sys_hash extsrc_hash; //扩展库资源哈希表
+    czl_extsrc *extsrc_head; //扩展库资源链表表头
+    //
+    czl_sys_hash class_hash; //格式化文件读操作需要用到，不能在运行前释放内存
     //
     czl_fun *cur_fun;   //当前函数
     //
@@ -1644,8 +1652,13 @@ typedef struct czl_gp
     char exceptionCode;             //运行时异常码: czl_exception_code_enum
     czl_fun *exceptionFuns[CZL_EXCEPTION_CODE_NUM]; //运行时异常回调函数
     //
-    czl_sys_hash coroutines_hash;
-    void **coroutines_head;
+#ifndef CZL_CONSOLE
+    void **table; //与C/C++数据交互表
+    char *shell_path;
+    char *log_path;
+    char *class_name;
+    czl_class *pclass;
+#endif //#ifndef CZL_CONSOLE
     //
 #ifdef CZL_SYSTEM_LINUX
     int kdpfd;  //用于tcp/udp库的epoll_create
@@ -1710,7 +1723,6 @@ char czl_array_vars_new_by_array(czl_gp*, czl_var*, czl_var*, int);
 void** czl_array_create(czl_gp*, unsigned long, unsigned long);
 char czl_array_resize(czl_gp*, czl_array*, unsigned long);
 char czl_array_delete(czl_gp*, void**);
-char czl_str_resize(czl_gp*, czl_str*);
 char czl_str_create(czl_gp*, czl_str*, unsigned long, unsigned long, const void*);
 void** czl_sq_new(czl_gp*, czl_exp_stack len, const czl_array_list*);
 char czl_array_new(czl_gp*, czl_exp_stack len, const czl_array_list*, czl_var*);
@@ -1744,9 +1756,9 @@ czl_fun* czl_fun_node_create(czl_gp*, char*, char, char, char, void*);
 void czl_fun_node_insert(czl_fun**, czl_fun*);
 char czl_fun_insert(czl_gp*, czl_fun*);
 czl_fun* czl_fun_node_find(char*, const czl_sys_hash*);
-void* czl_sys_hash_find(char, char, char*, const czl_sys_hash*);
+void* czl_sys_hash_find(char, char, void*, const czl_sys_hash*);
 char czl_sys_hash_insert(czl_gp*, char, void*, czl_sys_hash*);
-void czl_sys_hash_delete(czl_gp*, char, void*, czl_sys_hash*);
+void* czl_sys_hash_delete(czl_gp*, char, void*, czl_sys_hash*);
 czl_fun* czl_fun_find(czl_gp*, char*, char);
 czl_fun* czl_fun_find_in_exp(czl_gp*, char*, char);
 char czl_integrity_check(czl_gp*, char);
@@ -1829,6 +1841,20 @@ czl_usrlib* czl_usrlib_create(czl_gp*, char*);
 char czl_sort_cmp_fun_ret(czl_gp*, czl_var*, czl_var*);
 void czl_buf_file_delete(czl_gp*, czl_buf_file*);
 unsigned long czl_bkdr_hash(char*, unsigned long);
+unsigned long czl_extsrc_create(czl_gp*, void*, void (*)(void*));
+char czl_extsrc_free(czl_gp*, unsigned long);
+void* czl_extsrc_get(czl_gp*, unsigned long);
+///////////////////////////////////////////////////////////////
+#if ((defined CZL_MULT_THREAD) && (defined CZL_CONSOLE))
+    extern unsigned char czl_print_lock_init; //控制台输出锁初始化标志位
+    #ifdef CZL_SYSTEM_WINDOWS
+        extern CRITICAL_SECTION czl_print_cs; //控制台输出锁
+    #elif defined CZL_SYSTEM_LINUX
+        extern pthread_mutex_t czl_print_mutex; //控制台输出锁
+    #endif
+    void czl_print_lock(void);
+    void czl_print_unlock(void);
+#endif //#if ((defined CZL_MULT_THREAD) && (defined CZL_CONSOLE))
 ///////////////////////////////////////////////////////////////
 void* czl_malloc(czl_gp*, czl_ulong
                  #ifdef CZL_MM_MODULE
@@ -1911,6 +1937,9 @@ void czl_free(czl_gp*, void*, czl_ulong
     #define CZL_BUF_FILE_MALLOC(gp) (czl_buf_file*)czl_malloc(gp, sizeof(czl_buf_file), &gp->mmp_buf_file)
     #define CZL_BUF_FILE_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_buf_file), &gp->mmp_buf_file)
 
+    #define CZL_EXTSRC_MALLOC(gp) (czl_extsrc*)czl_malloc(gp, sizeof(czl_extsrc), &gp->mmp_extsrc)
+    #define CZL_EXTSRC_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_extsrc), &gp->mmp_extsrc)
+
 #ifdef CZL_MULT_THREAD
     #define CZL_THREAD_MALLOC(gp) czl_malloc(gp, sizeof(czl_thread), &gp->mmp_thread)
     #define CZL_THREAD_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_thread), &gp->mmp_thread)
@@ -1958,22 +1987,14 @@ void czl_free(czl_gp*, void*, czl_ulong
     #define CZL_BUF_FILE_MALLOC(gp) (czl_buf_file*)czl_malloc(gp, sizeof(czl_buf_file))
     #define CZL_BUF_FILE_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_buf_file))
 
+    #define CZL_EXTSRC_MALLOC(gp) (czl_extsrc*)czl_malloc(gp, sizeof(czl_extsrc))
+    #define CZL_EXTSRC_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_extsrc))
+
 #ifdef CZL_MULT_THREAD
     #define CZL_THREAD_MALLOC(gp) czl_malloc(gp, sizeof(czl_thread))
     #define CZL_THREAD_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_thread))
 #endif //#ifdef CZL_MULT_THREAD
 
 #endif //#ifdef CZL_MM_MODULE
-///////////////////////////////////////////////////////////////
-#if ((defined CZL_MULT_THREAD) && (defined CZL_CONSOLE))
-    extern unsigned char czl_print_lock_init; //控制台输出锁初始化标志位
-    #ifdef CZL_SYSTEM_WINDOWS
-        extern CRITICAL_SECTION czl_print_cs; //控制台输出锁
-    #elif defined CZL_SYSTEM_LINUX
-        extern pthread_mutex_t czl_print_mutex; //控制台输出锁
-    #endif
-    void czl_print_lock(void);
-    void czl_print_unlock(void);
-#endif //#if ((defined CZL_MULT_THREAD) && (defined CZL_CONSOLE))
 ///////////////////////////////////////////////////////////////
 #endif //CZL_VM_H

@@ -1,15 +1,17 @@
 #ifndef CZL_MM_H
 #define CZL_MM_H
 
-#define CZL_SYSTEM_WINDOWS  //运行在windows系统宏
-//#define CZL_SYSTEM_LINUX    //运行在linux系统宏
+#ifdef _WIN32
+    #define CZL_SYSTEM_WINDOWS  //运行在windows系统宏
+#elif defined __linux
+    #define CZL_SYSTEM_LINUX    //运行在linux系统宏
+#endif
 
 #define CZL_SYSTEM_64bit    //64位数值类型支持宏
 #define CZL_MULT_THREAD     //多线程支持宏
-
 #define CZL_MM_MODULE       //内存管理模块宏
-#define CZL_CONSOLE         //控制台运行方式宏，关了就运行在扩展方式
 
+#define CZL_CONSOLE         //控制台运行方式宏，关了就运行在扩展方式
 //#define CZL_DEBUG           //调试模式
 
 ///////////////////////////////////////////////////////////////

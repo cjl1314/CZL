@@ -2,9 +2,6 @@
 
 #ifdef CZL_LIB_UDP
 
-#define CZL_UDP_PACKET_MAX 65507 //udp单次数据发送不得超过65507
-//UDP与TCP不同，UDP不会对数据包进行分割、合并、排序、重传，所以sendto与recvfrom总是一一对应的
-
 //库函数声明，其中gp是CZL运行时用到的全局参数，fun是函数。
 char czl_udp_server(czl_gp *gp, czl_fun *fun);  //创建服务器socket
 char czl_udp_connect(czl_gp *gp, czl_fun *fun); //连接服务器并获得socket
@@ -24,6 +21,9 @@ const czl_sys_fun czl_lib_udp[] =
     {"send",     czl_udp_send,     4,        "str_v1,str_v2,int_v3=1024,int_v4=0"},
     {"ip",       czl_udp_ip,       1,        "str_v1"},
 };
+
+#define CZL_UDP_PACKET_MAX 65507 //udp单次数据发送不得超过65507
+//UDP与TCP不同，UDP不会对数据包进行分割、合并、排序、重传，所以sendto与recvfrom总是一一对应的
 
 //库函数定义
 char czl_udp_server(czl_gp *gp, czl_fun *fun)

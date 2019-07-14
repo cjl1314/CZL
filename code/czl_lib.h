@@ -6,6 +6,7 @@
 #define CZL_LIB_TCP
 #define CZL_LIB_UDP
 #define CZL_LIB_HTTP
+#define CZL_LIB_REG
 ///////////////////////////////////////////////////////////////
 #include "czl_vm.h"
 extern const czl_sys_lib czl_syslibs[];

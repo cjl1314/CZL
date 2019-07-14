@@ -2877,7 +2877,7 @@ void* czl_sys_hash_find
 (
     char type,
     char flag, //用于 type==CZL_ENUM 时 key 的类型
-    char *key,
+    void *key,
     const czl_sys_hash *table
 )
 {
@@ -2924,7 +2924,7 @@ void* czl_sys_hash_find
     switch (type)
     {
     case CZL_INT:
-        while (p && (long)key != (long)p->key)
+        while (p && key != p->key)
             p = p->next;
         break;
     case CZL_STRING:
@@ -2963,7 +2963,7 @@ char czl_sys_hash_insert
 (
     czl_gp *gp,
     char type,
-    void *kv,
+    void *key,
     czl_sys_hash *table
 )
 {
@@ -2974,12 +2974,12 @@ char czl_sys_hash_insert
         !czl_sys_hash_size_update(gp, type, table->size<<1, table))
         return 0;
 
-    index = czl_hash_index_get(type, kv, table->mask);
+    index = czl_hash_index_get(type, key, table->mask);
 
     if (!(node=(czl_bucket*)CZL_TMP_MALLOC(gp, sizeof(czl_bucket))))
         return 0;
 
-    node->key = kv;
+    node->key = key;
     node->next = table->buckets[index];
     table->buckets[index] = node;
     table->count++;
@@ -2987,29 +2987,32 @@ char czl_sys_hash_insert
     return 1;
 }
 
-void czl_sys_hash_delete
+void* czl_sys_hash_delete
 (
     czl_gp *gp,
     char type,
-    void *kv,
+    void *key,
     czl_sys_hash *table
 )
 {
-    long index = czl_hash_index_get(type, kv, table->mask);
+    long index = czl_hash_index_get(type, key, table->mask);
     czl_bucket *p = table->buckets[index], *q = NULL;
+    void *ret;
 
     if (CZL_INT == type)
-        while (p && (unsigned long)kv != (unsigned long)p->key) {
+        while (p && key != p->key) {
             q = p;
             p = p->next;
         }
     else //CZL_STRING
-        while (p && strcmp(((czl_name*)kv)->name, ((czl_name*)p->key)->name)) {
+        while (p && strcmp(((czl_name*)key)->name, ((czl_name*)p->key)->name)) {
             q = p;
             p = p->next;
         }
 
-    if (!p) return;
+    if (!p) return NULL;
+
+    ret = p->key;
 
     if (q)
         q->next = p->next;
@@ -3020,6 +3023,8 @@ void czl_sys_hash_delete
 
     if (--table->count <= table->size>>2 && table->size >= 16)
         czl_sys_hash_size_update(gp, type, table->size>>1, table);
+
+    return ret;
 }
 
 void czl_hash_table_delete(czl_gp *gp, czl_sys_hash *table)
@@ -5456,20 +5461,6 @@ char czl_str_create
     if (init && len > 0)
         memcpy(s->str, init, len);
 
-    return 1;
-}
-
-char czl_str_resize(czl_gp *gp, czl_str *str)
-{
-    void **obj;
-
-    if (CZL_STR(str->Obj)->len+1 == str->size)
-        return 1;
-
-    if (!(obj=CZL_SR(gp, (*str), CZL_STR(str->Obj)->len+1)))
-        return 0;
-    str->Obj = obj;
-    str->size = CZL_STR(str->Obj)->len + 1;
     return 1;
 }
 
@@ -11146,7 +11137,73 @@ void czl_buf_file_list_delete(czl_gp *gp, czl_buf_file *p)
         p = q;
     }
 }
+/////////////////////////////////////////////////////////////
+unsigned long czl_extsrc_create(czl_gp *gp, void *src, void (*src_free)(void*))
+{
+    czl_extsrc *p = CZL_EXTSRC_MALLOC(gp);
 
+    if (!p) return 0;
+
+    if (!czl_sys_hash_insert(gp, CZL_INT, p, &gp->extsrc_hash))
+    {
+        CZL_EXTSRC_FREE(gp, p);
+        src_free(src);
+        return 0;
+    }
+
+    p->src = src;
+    p->src_free = src_free;
+
+    p->last = NULL;
+    p->next = gp->extsrc_head;
+    if (gp->extsrc_head)
+        gp->extsrc_head->last = p;
+    gp->extsrc_head = p;
+
+    return (unsigned long)p;
+}
+
+char czl_extsrc_free(czl_gp *gp, unsigned long src)
+{
+    czl_extsrc *p = (czl_extsrc*)czl_sys_hash_delete(gp, CZL_INT,
+                                                     (void*)src, &gp->extsrc_hash);
+
+    if (!p) return 0;
+
+    if (p->last)
+        p->last->next = p->next;
+    else
+        gp->extsrc_head = p->next;
+    if (p->next)
+        p->next->last = p->last;
+
+    if (p->src_free)
+        p->src_free(p->src);
+
+    CZL_EXTSRC_FREE(gp, p);
+    return 1;
+}
+
+void* czl_extsrc_get(czl_gp *gp, unsigned long src)
+{
+    czl_extsrc *p = czl_sys_hash_find(CZL_INT, CZL_NIL, (void*)src, &gp->extsrc_hash);
+    return (p ? p->src : NULL);
+}
+
+void czl_extsrc_list_delete(czl_gp *gp, czl_extsrc *p)
+{
+    czl_extsrc *q;
+
+    while (p)
+    {
+        q = p->next;
+        if (p->src_free)
+            p->src_free(p->src);
+        CZL_EXTSRC_FREE(gp, p);
+        p = q;
+    }
+}
+///////////////////////////////////////////////////////////////
 void czl_shell_free(czl_gp *gp)
 {
     free(gp->tmp);
@@ -11165,6 +11222,8 @@ void czl_shell_free(czl_gp *gp)
     czl_coroutine_list_delete(gp, gp->coroutines_head);
     czl_hash_table_delete(gp, &gp->file_hash);
     czl_buf_file_list_delete(gp, gp->file_head);
+    czl_hash_table_delete(gp, &gp->extsrc_hash);
+    czl_extsrc_list_delete(gp, gp->extsrc_head);
 #ifdef CZL_MULT_THREAD
     czl_hash_table_delete(gp, &gp->threads_hash);
     czl_thread_list_delete(gp, gp->threads_head);
@@ -11194,8 +11253,10 @@ unsigned char czl_free_set(czl_mm_sp *t, unsigned char *s, unsigned long size)
 void czl_mm_free(czl_gp *gp)
 {
     czl_class *c;
-    czl_mm_sp *t;
+    czl_mm_sp *h;
     czl_buf_file *f;
+    czl_extsrc *e;
+    czl_thread *t;
     unsigned long i;
     unsigned char *tmp;
     czl_mm_sys_heap *p, *q;
@@ -11209,63 +11270,81 @@ void czl_mm_free(czl_gp *gp)
     for (f = gp->file_head; f; f = f->next)
         fclose(f->fp);
 
+    for (e = gp->extsrc_head; e; e = e->next)
+        if (e->src_free)
+            e->src_free(e->src);
+
+    for (t = gp->threads_head; t; t = t->next)
+    {
+    #ifdef CZL_SYSTEM_WINDOWS
+        CloseHandle(t->id);
+    #endif
+        if (t->pipe->alive)
+        {
+            t->pipe->alive = 0;
+            czl_event_send(&t->pipe->notify_event);
+        }
+        else
+            czl_thread_pipe_delete(t->pipe);
+    }
+
     for (c = gp->class_head; c; c = c->next)
         czl_mm_sp_destroy(gp, &c->pool);
 
 #ifdef CZL_MM_RT_GC
-    for (t = gp->mmp_tab.head; t; t = t->next)
-        for (id = t->useHead; id; id = tmp[2])
+    for (h = gp->mmp_tab.head; h; h = h->next)
+        for (id = h->useHead; id; id = tmp[2])
         {
-			czl_table *tab;
-            tmp = CZL_MM_OBJ_HEAP_GET(t->heap, id, gp->mmp_tab.max);
+            czl_table *tab;
+            tmp = CZL_MM_OBJ_HEAP_GET(h->heap, id, gp->mmp_tab.max);
             tab = (czl_table*)(tmp+CZL_MM_OBJ_HEAP_MSG_SIZE);
             czl_mm_sp_destroy(gp, &tab->pool);
         }
 
-    for (t = gp->mmp_sq.head; t; t = t->next)
-        for (id = t->useHead; id; id = tmp[2])
+    for (h = gp->mmp_sq.head; h; h = h->next)
+        for (id = h->useHead; id; id = tmp[2])
         {
             czl_sq *sq;
-            tmp = CZL_MM_OBJ_HEAP_GET(t->heap, id, gp->mmp_sq.max);
+            tmp = CZL_MM_OBJ_HEAP_GET(h->heap, id, gp->mmp_sq.max);
             sq = (czl_sq*)(tmp+CZL_MM_OBJ_HEAP_MSG_SIZE);
             czl_mm_sp_destroy(gp, &sq->pool);
         }
 
-    for (t = gp->mmp_file.head; t; t = t->next)
-        for (id = t->useHead; id; id = tmp[2])
+    for (h = gp->mmp_file.head; h; h = h->next)
+        for (id = h->useHead; id; id = tmp[2])
         {
             czl_file *file;
-            tmp = CZL_MM_OBJ_HEAP_GET(t->heap, id, gp->mmp_file.max);
+            tmp = CZL_MM_OBJ_HEAP_GET(h->heap, id, gp->mmp_file.max);
             file = (czl_file*)(tmp+CZL_MM_OBJ_HEAP_MSG_SIZE);
             fclose(file->fp);
         }
 #else
-    for (t = gp->mmp_tab.head; t; t = t->next)
-        for (i = 0, j = czl_free_set(t, s, gp->mmp_tab.max); i < j; ++i)
+    for (h = gp->mmp_tab.head; h; h = h->next)
+        for (i = 0, j = czl_free_set(h, s, gp->mmp_tab.max); i < j; ++i)
             if (s[i])
             {
                 czl_table *tab;
-                tmp = CZL_MM_BUF_HEAP_GET(t->heap, i+1, gp->mmp_tab.max);
+                tmp = CZL_MM_BUF_HEAP_GET(h->heap, i+1, gp->mmp_tab.max);
                 tab = (czl_table*)(tmp+CZL_MM_BUF_HEAP_MSG_SIZE);
                 czl_mm_sp_destroy(gp, &tab->pool);
             }
 
-    for (t = gp->mmp_sq.head; t; t = t->next)
-        for (i = 0, j = czl_free_set(t, s, gp->mmp_sq.max); i < j; ++i)
+    for (h = gp->mmp_sq.head; h; h = h->next)
+        for (i = 0, j = czl_free_set(h, s, gp->mmp_sq.max); i < j; ++i)
             if (s[i])
             {
                 czl_sq *sq;
-                tmp = CZL_MM_BUF_HEAP_GET(t->heap, i+1, gp->mmp_sq.max);
+                tmp = CZL_MM_BUF_HEAP_GET(h->heap, i+1, gp->mmp_sq.max);
                 sq = (czl_sq*)(tmp+CZL_MM_BUF_HEAP_MSG_SIZE);
                 czl_mm_sp_destroy(gp, &sq->pool);
             }
 
-    for (t = gp->mmp_file.head; t; t = t->next)
-        for (i = 0, j = czl_free_set(t, s, gp->mmp_file.max); i < j; ++i)
+    for (h = gp->mmp_file.head; h; h = h->next)
+        for (i = 0, j = czl_free_set(h, s, gp->mmp_file.max); i < j; ++i)
             if (s[i])
             {
                 czl_file *file;
-                tmp = CZL_MM_BUF_HEAP_GET(t->heap, i+1, gp->mmp_file.max);
+                tmp = CZL_MM_BUF_HEAP_GET(h->heap, i+1, gp->mmp_file.max);
                 file = (czl_file*)(tmp+CZL_MM_BUF_HEAP_MSG_SIZE);
                 fclose(file->fp);
             }
@@ -11286,6 +11365,7 @@ void czl_mm_free(czl_gp *gp)
     czl_mm_sp_destroy(gp, &gp->mmp_cor);
     czl_mm_sp_destroy(gp, &gp->mmp_file);
     czl_mm_sp_destroy(gp, &gp->mmp_buf_file);
+    czl_mm_sp_destroy(gp, &gp->mmp_extsrc);
     czl_mm_sp_destroy(gp, &gp->mmp_ref);
 
 #ifdef CZL_MULT_THREAD
@@ -11310,18 +11390,18 @@ void czl_memory_free(czl_gp *gp)
 #ifdef CZL_MM_MODULE
     free(gp->tmp);
     czl_mm_free(gp);
-    #ifndef CZL_CONSOLE
-        gp->table = NULL;
-    #endif //#ifndef CZL_CONSOLE
 #else //用于测试内存是否泄漏
     czl_shell_free(gp);
     czl_val_del(gp, &gp->enter_var);
     CZL_STACK_FREE(gp, gp->ch_head, sizeof(czl_char_var));
     #ifndef CZL_CONSOLE
         czl_table_delete(gp, gp->table);
-        gp->table = NULL;
     #endif //#ifndef CZL_CONSOLE
 #endif //#ifdef CZL_MM_MODULE
+
+#ifndef CZL_CONSOLE
+    gp->table = NULL;
+#endif //#ifndef CZL_CONSOLE
 
 #if defined CZL_SYSTEM_LINUX && (defined CZL_LIB_COM || \
                                  defined CZL_LIB_TCP || defined CZL_LIB_UDP)

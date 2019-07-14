@@ -16,8 +16,7 @@ int main(int argc, char **argv)
     {
         printf("CZL 1.0.0 (built: April 05 2019 12:00:00)\n");
         printf("Copyright 2017-2019 by JL.C\n");
-        printf("CZL included register-model, multi-thread, rt-gc, class, table and so on\n");
-        printf("CZL is high-performance, provincial-memory, powerful-function and easy-to-use\n");
+        printf("CZL can run never restart\n");
         return 1;
     }
     shell_path = argv[1];

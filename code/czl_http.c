@@ -4,13 +4,6 @@
 
 #define CZL_HTTP_BUF_SIZE 10*1024
 
-#define CZL_HTTP_ENCODE(s, obj, buf, len, sign) { \
-    s = CZL_STR(obj); \
-    memcpy(buf+len, s->str, s->len); \
-    len += s->len; \
-    buf[len++] = sign; \
-}
-
 //库函数声明，其中gp是CZL运行时用到的全局参数，fun是函数。
 char czl_http_req(czl_gp *gp, czl_fun *fun);    //发送http请求
 char czl_http_res(czl_gp *gp, czl_fun *fun);    //发送http响应
@@ -24,6 +17,13 @@ const czl_sys_fun czl_lib_http[] =
     {"res",      czl_http_res,     3,        "int_v1,map_v2,str_v3=\"\""},
     {"doc",      czl_http_doc,     1,        "&str_v1"},
 };
+
+#define CZL_HTTP_ENCODE(s, obj, buf, len, sign) { \
+    s = CZL_STR(obj); \
+    memcpy(buf+len, s->str, s->len); \
+    len += s->len; \
+    buf[len++] = sign; \
+}
 
 char* czl_dns(char *domain)
 {
@@ -262,10 +262,10 @@ char czl_recv_data(czl_gp *gp, czl_array *arr, char *data, unsigned long len)
         if (!obj)
             return 0;
         var->val.str.Obj = obj;
+        var->val.str.size += len;
         s = CZL_STR(obj);
         memcpy(s->str + s->len, data, len);
         s->len += len;
-        var->val.str.size += len;
         s->str[s->len] = '\0';
     }
     else
