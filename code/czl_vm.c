@@ -2506,12 +2506,11 @@ char czl_exp_tree_to_stack(czl_gp *gp, czl_exp_node *exp_root)
 char czl_sort_cmp_fun_ret(czl_gp *gp, czl_var *a, czl_var *b)
 {
     czl_var *ret;
-    czl_exp_fun *f = (czl_exp_fun*)gp->cur_fun;
 
-    f->paras->para->res = a;
-    f->paras->next->para->res = b;
+    gp->efe1.res = a;
+    gp->efe2.res = b;
 
-    if (!(ret=czl_exp_fun_run(gp, f)))
+    if (!(ret=czl_exp_fun_run(gp, &gp->ef2)))
     {
         gp->error_flag = 1;
         return -1;
@@ -2527,15 +2526,20 @@ char czl_sort_cmp_fun_ret(czl_gp *gp, czl_var *a, czl_var *b)
     }
 }
 
-static char czl_callback_fun_run(czl_gp *gp, czl_fun *fun)
+#ifdef CZL_LIB_TCP
+char czl_tcp_event_handle(czl_gp *gp, czl_fun *cb_fun, czl_var *srv, unsigned long fd)
 {
-    czl_exp_fun exp_fun;
-    exp_fun.fun = fun;
-    exp_fun.paras = NULL;
-    exp_fun.paras_count = 0;
-    exp_fun.quality = CZL_STATIC_FUN;
-    exp_fun.flag = 1;
-    return czl_exp_fun_run(gp, &exp_fun) ? 1 : 0;
+    gp->tcp_v1.val.ref.var = srv;
+    gp->tcp_v2.val.inum = fd;
+    gp->tcp_ef.fun = cb_fun;
+    return czl_exp_fun_run(gp, &gp->tcp_ef) ? 1 : 0;
+}
+#endif //#ifdef CZL_LIB_TCP
+
+static void czl_callback_fun_run(czl_gp *gp, czl_fun *fun)
+{
+    gp->ef0.fun = fun;
+    czl_exp_fun_run(gp, &gp->ef0);
 }
 
 static void czl_runtime_error_report(czl_gp *gp, czl_exp_ele *err)
@@ -2621,36 +2625,36 @@ static czl_var* czl_exp_stack_cac(czl_gp *gp, czl_exp_stack pc)
     do {
         switch (pc->flag)
         {
-        case CZL_BINARY_OPT:
-            CZL_RBO(gp, ro, pc);
-            break;
-        case CZL_BINARY2_OPT:
-            CZL_RB2O(gp, lo, ro, pc);
-            break;
         case CZL_ASS_OPT:
             CZL_RAO(gp, ro, pc);
-            break;
-        case CZL_UNARY_OPT:
-            CZL_RUO(gp, pc);
-            break;
-        case CZL_UNARY2_OPT:
-            CZL_RU2O(gp, pc);
-            break;
-        case CZL_AND_AND:
-            CZL_AA_CJ(gp, (pc-1)->res, pc);
-            break;
-        case CZL_OR_OR:
-            CZL_OO_CJ(gp, (pc-1)->res, pc);
             break;
         case CZL_OPERAND:
             CZL_GOR(gp, pc);
             CZL_COT(gp, pc);
             break;
+        case CZL_UNARY_OPT:
+            CZL_RUO(gp, pc);
+            break;
+        case CZL_BINARY_OPT:
+            CZL_RBO(gp, ro, pc);
+            break;
+        case CZL_UNARY2_OPT:
+            CZL_RU2O(gp, pc);
+            break;
+        case CZL_BINARY2_OPT:
+            CZL_RB2O(gp, lo, ro, pc);
+            break;
         case CZL_THREE_OPT:
             CZL_RTO((pc-1)->res, pc);
             break;
-        default: //CZL_THREE_END
+        case CZL_THREE_END:
             CZL_TORM(gp, pc->lo, (pc-1)->res, pc);
+            break;
+        case CZL_OR_OR:
+            CZL_OO_CJ(gp, (pc-1)->res, pc);
+            break;
+        default: //CZL_AND_AND
+            CZL_AA_CJ(gp, (pc-1)->res, pc);
             break;
         }
         if (ro)
@@ -2811,6 +2815,10 @@ static long czl_hash_index_get
                              (((czl_name*)kv)->name,
                               strlen(((czl_name*)kv)->name)),
                              mask);
+#if (defined CZL_TIMER && defined CZL_SYSTEM_WINDOWS)
+    case CZL_NIL: //用于定时器查找
+        return CZL_INDEX_CAC(index, ((czl_timer*)kv)->id, mask);
+#endif //#if (defined CZL_TIMER && defined CZL_SYSTEM_WINDOWS)
     default: //CZL_ENUM 用于常量字符串
         switch (((czl_var*)kv)->type)
         {
@@ -2897,6 +2905,11 @@ void* czl_sys_hash_find
         //这样做可以避免对每种结构哈希时需要判断哈希对象的地址。
         CZL_INDEX_CAC(index, czl_bkdr_hash(key, strlen(key)), table->mask);
         break;
+#if (defined CZL_TIMER && defined CZL_SYSTEM_WINDOWS)
+    case CZL_NIL: //用于定时器查找
+        CZL_INDEX_CAC(index, (unsigned long)key, table->mask);
+        break;
+#endif //#if (defined CZL_TIMER && defined CZL_SYSTEM_WINDOWS)
     default: //CZL_ENUM 用于常量字符串
         switch (flag)
         {
@@ -2931,6 +2944,12 @@ void* czl_sys_hash_find
         while (p && strcmp(key, ((czl_name*)p->key)->name))
             p = p->next;
         break;
+#if (defined CZL_TIMER && defined CZL_SYSTEM_WINDOWS)
+    case CZL_NIL:
+        while (p && (unsigned long)key != ((czl_timer*)p->key)->id)
+            p = p->next;
+        break;
+#endif //#if (defined CZL_TIMER && defined CZL_SYSTEM_WINDOWS)
     default: //CZL_ENUM
         switch (flag)
         {
@@ -2995,20 +3014,34 @@ void* czl_sys_hash_delete
     czl_sys_hash *table
 )
 {
-    long index = czl_hash_index_get(type, key, table->mask);
-    czl_bucket *p = table->buckets[index], *q = NULL;
+    czl_bucket *p, *q = NULL;
+    long index;
     void *ret;
+
+    if (CZL_NIL == type)
+        index = CZL_INDEX_CAC(index, (unsigned long)key, table->mask);
+    else
+        index = czl_hash_index_get(type, key, table->mask);
+
+    p = table->buckets[index];
 
     if (CZL_INT == type)
         while (p && key != p->key) {
             q = p;
             p = p->next;
         }
-    else //CZL_STRING
+    else if (CZL_STRING == type)
         while (p && strcmp(((czl_name*)key)->name, ((czl_name*)p->key)->name)) {
             q = p;
             p = p->next;
         }
+#if (defined CZL_TIMER && defined CZL_SYSTEM_WINDOWS)
+    else //CZL_NIL
+        while (p && (unsigned long)key != ((czl_timer*)p->key)->id) {
+            q = p;
+            p = p->next;
+        }
+#endif //#if (defined CZL_TIMER && defined CZL_SYSTEM_WINDOWS)
 
     if (!p) return NULL;
 
@@ -6459,7 +6492,7 @@ czl_class_var* czl_class_var_find
     czl_class_var *var;
     czl_class_parent *p;
 
-    var = (czl_class_var*)czl_sys_hash_find(CZL_STRING, CZL_INT, name, &pclass->vars_hash);
+    var = (czl_class_var*)czl_sys_hash_find(CZL_STRING, CZL_NIL, name, &pclass->vars_hash);
     if (var && CZL_PUBLIC == var->permission)
         return var;
 
@@ -7063,11 +7096,14 @@ static czl_var* czl_get_member_res(czl_gp *gp, const czl_obj_member *member)
         }
         switch (obj->type)
         {
-        case CZL_INSTANCE:
-            if (member->flag && CZL_INS(obj->val.Obj)->rc > 1 && !czl_ins_fork(gp, obj))
+        case CZL_STRING:
+            if (CZL_REF_VAR == member->flag)
                 goto CZL_ERROR_END;
-            if (inx->type != CZL_INSTANCE_INDEX ||
-                !(obj=czl_get_ins_member_res(gp, &inx->index.ins, obj->val.Obj)))
+            if (member->flag &&
+                CZL_STR(obj->val.str.Obj)->rc > 1 && !czl_string_fork(gp, obj))
+                goto CZL_ERROR_END;
+            if (inx->type != CZL_ARRAY_INDEX ||
+                !(obj=czl_get_str_member_res(gp, inx, &obj->val.str, member->flag)))
                 goto CZL_ERROR_END;
             break;
         case CZL_ARRAY:
@@ -7084,14 +7120,11 @@ static czl_var* czl_get_member_res(czl_gp *gp, const czl_obj_member *member)
                 !(obj=czl_get_tab_member_res(gp, &inx->index.arr, obj, member->flag)))
                 goto CZL_ERROR_END;
             break;
-        case CZL_STRING:
-            if (CZL_REF_VAR == member->flag)
+        case CZL_INSTANCE:
+            if (member->flag && CZL_INS(obj->val.Obj)->rc > 1 && !czl_ins_fork(gp, obj))
                 goto CZL_ERROR_END;
-            if (member->flag &&
-                CZL_STR(obj->val.str.Obj)->rc > 1 && !czl_string_fork(gp, obj))
-                goto CZL_ERROR_END;
-            if (inx->type != CZL_ARRAY_INDEX ||
-                !(obj=czl_get_str_member_res(gp, inx, &obj->val.str, member->flag)))
+            if (inx->type != CZL_INSTANCE_INDEX ||
+                !(obj=czl_get_ins_member_res(gp, &inx->index.ins, obj->val.Obj)))
                 goto CZL_ERROR_END;
             break;
         default:
@@ -8732,47 +8765,62 @@ static char czl_fun_run(czl_gp *gp, czl_exp_ele *pc, czl_fun *fun)
     CZL_BEGIN:
         switch (pc->flag)
         {
-        case CZL_BINARY_OPT:
-            CZL_RBO(gp, ro, pc);
-            break;
-        case CZL_BINARY2_OPT:
-            CZL_RB2O(gp, lo, ro, pc);
-            break;
         case CZL_ASS_OPT:
             CZL_RAO(gp, ro, pc);
-            break;
-        case CZL_UNARY_OPT:
-            CZL_RUO(gp, pc);
-            break;
-        case CZL_UNARY2_OPT:
-            CZL_RU2O(gp, pc);
-            break;
-        case CZL_AND_AND:
-            CZL_AA_CJ(gp, (pc-1)->res, pc);
-            break;
-        case CZL_OR_OR:
-            CZL_OO_CJ(gp, (pc-1)->res, pc);
             break;
         case CZL_OPERAND:
             CZL_GOR(gp, pc);
             CZL_COT(gp, pc);
             break;
+        case CZL_UNARY_OPT:
+            CZL_RUO(gp, pc);
+            break;
+        case CZL_BINARY_OPT:
+            CZL_RBO(gp, ro, pc);
+            break;
+        case CZL_UNARY2_OPT:
+            CZL_RU2O(gp, pc);
+            break;
+        case CZL_BINARY2_OPT:
+            CZL_RB2O(gp, lo, ro, pc);
+            break;
+        case CZL_THREE_OPT:
+            CZL_RTO((pc-1)->res, pc);
+            break;
+        case CZL_THREE_END:
+            CZL_TORM(gp, pc->lo, (pc-1)->res, pc);
+            break;
+        case CZL_OR_OR:
+            CZL_OO_CJ(gp, (pc-1)->res, pc);
+            break;
+        case CZL_AND_AND:
+            CZL_AA_CJ(gp, (pc-1)->res, pc);
+            break;
         case CZL_FOREACH_BLOCK:
             CZL_RFS(gp, pc);
+            #ifdef CZL_TIMER
+                CZL_CTiS(gp);
+            #endif //#ifdef CZL_TIMER
             #ifdef CZL_MULT_THREAD
-                CZL_CTS(gp);
+                CZL_CThS(gp);
             #endif //#ifdef CZL_MULT_THREAD
             break;
         case CZL_BLOCK_BEGIN:
             pc = (CZL_EIT((pc-1)->res) ? pc->pl.pc : pc->next);
+            #ifdef CZL_TIMER
+                CZL_CTiS(gp);
+            #endif //#ifdef CZL_TIMER
             #ifdef CZL_MULT_THREAD
-                CZL_CTS(gp);
+                CZL_CThS(gp);
             #endif //#ifdef CZL_MULT_THREAD
             break;
         case CZL_LOGIC_JUMP:
             pc = pc->pl.pc;
+            #ifdef CZL_TIMER
+                CZL_CTiS(gp);
+            #endif //#ifdef CZL_TIMER
             #ifdef CZL_MULT_THREAD
-                CZL_CTS(gp);
+                CZL_CThS(gp);
             #endif //#ifdef CZL_MULT_THREAD
             break;
         case CZL_CASE_SENTENCE:
@@ -8783,12 +8831,6 @@ static char czl_fun_run(czl_gp *gp, czl_exp_ele *pc, czl_fun *fun)
             break;
         case CZL_RETURN_SENTENCE: case CZL_YEILD_SENTENCE:
             CZL_RRYS(gp, pc);
-        case CZL_THREE_OPT:
-            CZL_RTO((pc-1)->res, pc);
-            break;
-        case CZL_THREE_END:
-            CZL_TORM(gp, pc->lo, (pc-1)->res, pc);
-            break;
         case CZL_TRY_BLOCK:
             CZL_RTS(gp, pc, stack, size);
             break;
@@ -10783,42 +10825,42 @@ char czl_tabkv_delete
 }
 #endif //#ifndef CZL_CONSOLE
 ///////////////////////////////////////////////////////////////
-#if ((defined CZL_MULT_THREAD) && (defined CZL_CONSOLE))
-unsigned char czl_print_lock_init; //控制台输出锁初始化标志位
+#if (defined CZL_MULT_THREAD && defined CZL_CONSOLE)
+unsigned char czl_global_lock_init;
 #ifdef CZL_SYSTEM_WINDOWS
-    CRITICAL_SECTION czl_print_cs; //控制台输出锁
+    CRITICAL_SECTION czl_global_cs;
 #elif defined CZL_SYSTEM_LINUX
-    pthread_mutex_t czl_print_mutex; //控制台输出锁
+    pthread_mutex_t czl_global_mutex;
 #endif
 
-void czl_print_lock(void)
+void czl_global_lock(void)
 {
 #ifdef CZL_SYSTEM_WINDOWS
-    EnterCriticalSection(&czl_print_cs);
+    EnterCriticalSection(&czl_global_cs);
 #elif defined CZL_SYSTEM_LINUX
-    pthread_mutex_lock(&czl_print_mutex);
+    pthread_mutex_lock(&czl_global_mutex);
 #endif
 }
 
-void czl_print_unlock(void)
+void czl_global_unlock(void)
 {
 #ifdef CZL_SYSTEM_WINDOWS
-    LeaveCriticalSection(&czl_print_cs);
+    LeaveCriticalSection(&czl_global_cs);
 #elif defined CZL_SYSTEM_LINUX
-    pthread_mutex_unlock(&czl_print_mutex);
+    pthread_mutex_unlock(&czl_global_mutex);
 #endif
 }
-#endif //#if ((defined CZL_MULT_THREAD) && (defined CZL_CONSOLE))
+#endif //#if (defined CZL_MULT_THREAD && defined CZL_CONSOLE)
 
 void czl_log(czl_gp *gp, char *log)
 {
 #ifdef CZL_CONSOLE
     #ifdef CZL_MULT_THREAD
-        czl_print_lock();
+        czl_global_lock();
     #endif
     fprintf(stdout, "%s", log);
     #ifdef CZL_MULT_THREAD
-        czl_print_unlock();
+        czl_global_unlock();
     #endif
 #else
 	FILE *fout;
@@ -11138,7 +11180,12 @@ void czl_buf_file_list_delete(czl_gp *gp, czl_buf_file *p)
     }
 }
 /////////////////////////////////////////////////////////////
-unsigned long czl_extsrc_create(czl_gp *gp, void *src, void (*src_free)(void*))
+unsigned long czl_extsrc_create
+(
+    czl_gp *gp,
+    void *src,
+    void (*src_free)(void*)
+)
 {
     czl_extsrc *p = CZL_EXTSRC_MALLOC(gp);
 
@@ -11147,7 +11194,8 @@ unsigned long czl_extsrc_create(czl_gp *gp, void *src, void (*src_free)(void*))
     if (!czl_sys_hash_insert(gp, CZL_INT, p, &gp->extsrc_hash))
     {
         CZL_EXTSRC_FREE(gp, p);
-        src_free(src);
+        if (src_free)
+            src_free(src);
         return 0;
     }
 
@@ -11203,6 +11251,171 @@ void czl_extsrc_list_delete(czl_gp *gp, czl_extsrc *p)
         p = q;
     }
 }
+/////////////////////////////////////////////////////////////
+#ifdef CZL_TIMER
+void czl_timer_lock(czl_gp *gp)
+{
+#ifdef CZL_SYSTEM_WINDOWS
+    EnterCriticalSection(&gp->timer_cs);
+#elif defined CZL_SYSTEM_LINUX
+    pthread_mutex_lock(&gp->timer_mutex);
+#endif
+}
+
+void czl_timer_unlock(czl_gp *gp)
+{
+#ifdef CZL_SYSTEM_WINDOWS
+    LeaveCriticalSection(&gp->timer_cs);
+#elif defined CZL_SYSTEM_LINUX
+    pthread_mutex_unlock(&gp->timer_mutex);
+#endif
+}
+
+unsigned long czl_timer_create
+(
+    czl_gp *gp,
+    czl_timer *p,
+#ifdef CZL_SYSTEM_WINDOWS
+    unsigned long timerId,
+    WINAPI int (*timer_delete)(unsigned long),
+#else //CZL_SYSTEM_LINUX
+    timer_t timerId,
+    int (*timer_delete)(timer_t),
+#endif
+    czl_fun *cb_fun
+)
+{
+    p->id = timerId;
+    p->state = 0;
+
+    czl_timer_lock(gp);
+
+    if (!czl_sys_hash_insert(gp,
+                         #ifdef CZL_SYSTEM_WINDOWS
+                             CZL_NIL,
+                         #else //CZL_SYSTEM_LINUX
+                             CZL_INT,
+                         #endif
+                             p, &gp->timers_hash))
+    {
+        CZL_TIMER_FREE(gp, p);
+        timer_delete(timerId);
+        return 0;
+    }
+
+    p->last = NULL;
+    p->next = gp->timers_head;
+    if (gp->timers_head)
+        gp->timers_head->last = p;
+    gp->timers_head = p;
+
+    czl_timer_unlock(gp);
+
+#ifdef CZL_SYSTEM_LINUX
+    p->gp = gp;
+#endif
+
+    p->timer_delete = timer_delete;
+    p->cb_fun = cb_fun;
+
+#ifdef CZL_SYSTEM_WINDOWS
+    return timerId;
+#else //CZL_SYSTEM_LINUX
+    return (unsigned long)p;
+#endif
+}
+
+char czl_timer_delete(czl_gp *gp, unsigned long timerId)
+{
+    czl_timer *p;
+
+    czl_timer_lock(gp);
+
+    if ((p=(czl_timer*)czl_sys_hash_delete(gp,
+                                       #ifdef CZL_SYSTEM_WINDOWS
+                                           CZL_NIL,
+                                       #else //CZL_SYSTEM_LINUX
+                                           CZL_INT,
+                                       #endif
+                                           (void*)timerId, &gp->timers_hash)))
+    {
+        if (p->last)
+            p->last->next = p->next;
+        else
+            gp->timers_head = p->next;
+        if (p->next)
+            p->next->last = p->last;
+        if (p->state)
+            --gp->timerEventCnt;
+        if (p == gp->timer_next)
+            gp->timer_next = p->next;
+    }
+
+    czl_timer_unlock(gp);
+
+    if (!p)
+        return 0;
+
+    p->timer_delete(p->id);
+    CZL_TIMER_FREE(gp, p);
+    return 1;
+}
+
+void czl_timer_list_delete(czl_gp *gp, czl_timer *p)
+{
+    czl_timer *q;
+
+    while (p)
+    {
+        q = p->next;
+        p->timer_delete(p->id);
+        CZL_TIMER_FREE(gp, p);
+        p = q;
+    }
+}
+
+char czl_timer_cb_fun_run(czl_gp *gp)
+{
+CZL_BEGIN:
+
+    gp->timer_next = gp->timers_head;
+
+    do {
+        czl_timer *t;
+        czl_timer_lock(gp);
+        t = gp->timer_next;
+        gp->timer_next = t->next;
+        t->state = 0;
+        --gp->timerEventCnt;
+        czl_timer_unlock(gp);
+        if (t->cb_fun->enter_vars_cnt)
+        {
+            czl_var var;
+            var.type = CZL_INT;
+        #ifdef CZL_SYSTEM_WINDOWS
+            var.val.inum = t->id;
+        #else //CZL_SYSTEM_LINUX
+            var.val.inum = (unsigned long)t;
+        #endif
+            gp->efe2.res = &var;
+            gp->ef1.fun = t->cb_fun;
+            if (!czl_exp_fun_run(gp, &gp->ef1))
+                return 0;
+        }
+        else
+        {
+            gp->ef0.fun = t->cb_fun;
+            if (!czl_exp_fun_run(gp, &gp->ef0))
+                return 0;
+        }
+    } while (gp->timer_next && gp->timer_next->state);
+
+    if (gp->timerEventCnt)
+        goto CZL_BEGIN;
+
+    return 1;
+}
+#endif //#ifdef CZL_TIMER
 ///////////////////////////////////////////////////////////////
 void czl_shell_free(czl_gp *gp)
 {
@@ -11228,6 +11441,13 @@ void czl_shell_free(czl_gp *gp)
     czl_hash_table_delete(gp, &gp->threads_hash);
     czl_thread_list_delete(gp, gp->threads_head);
 #endif //#ifdef CZL_MULT_THREAD
+#ifdef CZL_TIMER
+    czl_timer_lock(gp);
+    czl_hash_table_delete(gp, &gp->timers_hash);
+    czl_timer_list_delete(gp, gp->timers_head);
+    gp->timers_hash.count = 0;
+    czl_timer_unlock(gp);
+#endif //#ifdef CZL_TIMER
 }
 
 #ifdef CZL_MM_MODULE
@@ -11256,10 +11476,10 @@ void czl_mm_free(czl_gp *gp)
     czl_mm_sp *h;
     czl_buf_file *f;
     czl_extsrc *e;
-    czl_thread *t;
     unsigned long i;
     unsigned char *tmp;
     czl_mm_sys_heap *p, *q;
+
 #ifdef CZL_MM_RT_GC
     unsigned char id;
 #else
@@ -11267,26 +11487,44 @@ void czl_mm_free(czl_gp *gp)
     unsigned char s[CZL_MM_SP_HEAP_NUM_MAX];
 #endif
 
+#ifdef CZL_MULT_THREAD
+    czl_thread *th;
+#endif //#ifdef CZL_MULT_THREAD
+
+#ifdef CZL_TIMER
+    czl_timer *ti;
+#endif //#ifdef CZL_TIMER
+
+#ifdef CZL_MULT_THREAD
+    for (th = gp->threads_head; th; th = th->next)
+    {
+    #ifdef CZL_SYSTEM_WINDOWS
+        CloseHandle(th->id);
+    #endif
+        if (th->pipe->alive)
+        {
+            th->pipe->alive = 0;
+            czl_event_send(&th->pipe->notify_event);
+        }
+        else
+            czl_thread_pipe_delete(th->pipe);
+    }
+#endif //#ifdef CZL_MULT_THREAD
+
+#ifdef CZL_TIMER
+    czl_timer_lock(gp);
+    for (ti = gp->timers_head; ti; ti = ti->next)
+        ti->timer_delete(ti->id);
+    gp->timers_hash.count = 0;
+    czl_timer_unlock(gp);
+#endif //#ifdef CZL_TIMER
+
     for (f = gp->file_head; f; f = f->next)
         fclose(f->fp);
 
     for (e = gp->extsrc_head; e; e = e->next)
         if (e->src_free)
             e->src_free(e->src);
-
-    for (t = gp->threads_head; t; t = t->next)
-    {
-    #ifdef CZL_SYSTEM_WINDOWS
-        CloseHandle(t->id);
-    #endif
-        if (t->pipe->alive)
-        {
-            t->pipe->alive = 0;
-            czl_event_send(&t->pipe->notify_event);
-        }
-        else
-            czl_thread_pipe_delete(t->pipe);
-    }
 
     for (c = gp->class_head; c; c = c->next)
         czl_mm_sp_destroy(gp, &c->pool);
@@ -11362,15 +11600,19 @@ void czl_mm_free(czl_gp *gp)
     czl_mm_sp_destroy(gp, &gp->mmp_tab);
     czl_mm_sp_destroy(gp, &gp->mmp_arr);
     czl_mm_sp_destroy(gp, &gp->mmp_sq);
+    czl_mm_sp_destroy(gp, &gp->mmp_ref);
     czl_mm_sp_destroy(gp, &gp->mmp_cor);
     czl_mm_sp_destroy(gp, &gp->mmp_file);
     czl_mm_sp_destroy(gp, &gp->mmp_buf_file);
     czl_mm_sp_destroy(gp, &gp->mmp_extsrc);
-    czl_mm_sp_destroy(gp, &gp->mmp_ref);
 
 #ifdef CZL_MULT_THREAD
     czl_mm_sp_destroy(gp, &gp->mmp_thread);
 #endif //#ifdef CZL_MULT_THREAD
+
+#ifdef CZL_TIMER
+    czl_mm_sp_destroy(gp, &gp->mmp_timer);
+#endif //#ifdef CZL_TIMER
 
 #ifdef CZL_MM_CACHE
     czl_mm_cache_pools_destroy(gp, &gp->mm_cache);
@@ -11408,6 +11650,14 @@ void czl_memory_free(czl_gp *gp)
     close(gp->kdpfd);
 #endif
 
+#ifdef CZL_TIMER
+    #ifdef CZL_SYSTEM_WINDOWS
+        DeleteCriticalSection(&gp->timer_cs);
+    #elif defined CZL_SYSTEM_LINUX
+        pthread_mutex_destroy(&gp->timer_mutex);
+    #endif
+#endif //#ifdef CZL_TIMER
+
     czl_mm_print(gp); //打印内存统计信息用于检查是否发生内存泄露
 }
 
@@ -11423,6 +11673,7 @@ void czl_init_free(czl_gp *gp, char flag)
     if (flag)
     {
         CZL_STACK_FREE(gp, gp->ch_head, sizeof(czl_char_var));
+
     #ifndef CZL_CONSOLE
         if (gp->table)
         {
@@ -11435,5 +11686,13 @@ void czl_init_free(czl_gp *gp, char flag)
                                      defined CZL_LIB_TCP || defined CZL_LIB_UDP)
         close(gp->kdpfd);
     #endif
+
+    #ifdef CZL_TIMER
+        #ifdef CZL_SYSTEM_WINDOWS
+            DeleteCriticalSection(&gp->timer_cs);
+        #elif defined CZL_SYSTEM_LINUX
+            pthread_mutex_destroy(&gp->timer_mutex);
+        #endif
+    #endif //#ifdef CZL_TIMER
     }
 }

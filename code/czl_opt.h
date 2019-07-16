@@ -17,9 +17,15 @@ if (res->quality) { \
  (pc && left == pc->lo && CZL_BINARY2_OPT == pc->flag && CZL_ADD_A == pc->kind) ? \
  (al)*2+bl+1 : al+bl+1)
 ///////////////////////////////////////////////////////////////
+#ifdef CZL_TIMER
+//检查定时器状态: check timer state
+#define CZL_CTiS(gp) \
+if (gp->timerEventCnt && !czl_timer_cb_fun_run(gp)) goto CZL_EXCEPTION_CATCH;
+#endif //#ifdef CZL_TIMER
+///////////////////////////////////////////////////////////////
 #ifdef CZL_MULT_THREAD
 //检查线程状态: check thread state
-#define CZL_CTS(gp) \
+#define CZL_CThS(gp) \
 if (!gp->thread_pipe) \
     break; \
 else if (gp->thread_pipe->kill) { \

@@ -7,15 +7,15 @@ class a
 
 main
 {
-	f = open("datas.txt", "wb+")
+	f = fopen("datas.txt", "3wb+")
 	
 	a = []
 	for i in (0, 1000000-1)
 		a[i] = new a
 
-	write(f, a)
+	fwrite(f, a)
 	echo(clock())
 
-	read(f, a)
+	a = fread(f)
 	echo(clock())
 }

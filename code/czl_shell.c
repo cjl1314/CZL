@@ -4,7 +4,7 @@
 #ifdef CZL_CONSOLE
 int main(int argc, char **argv)
 {
-    czl_gp gp; //全局参数句柄
+    czl_gp gp;
 
 #ifdef CZL_DEBUG
     char *shell_path = "shell.txt";
@@ -31,7 +31,6 @@ int main(int argc, char **argv)
         gp.enter_var.val.ext.v2.u32 = argc-2;
     }
 
-    //系统初始化
     if (!czl_sys_init(&gp))
     {
         czl_init_free(&gp, 1);
@@ -39,8 +38,8 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    czl_exec_shell(&gp, shell_path, 1); //解析执行脚本
-    czl_memory_free(&gp); //释放内存
+    czl_exec_shell(&gp, shell_path, 1);
+    czl_memory_free(&gp);
 
     return 1;
 }

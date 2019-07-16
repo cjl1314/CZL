@@ -72,6 +72,9 @@ char czl_sys_setFun(czl_gp*, czl_fun*);
 #if (defined CZL_SYSTEM_LINUX || defined CZL_SYSTEM_WINDOWS)
 char czl_sys_sleep(czl_gp*, czl_fun*);
 char czl_sys_clock(czl_gp*, czl_fun*);
+#ifdef CZL_TIMER
+char czl_sys_timer(czl_gp*, czl_fun*);
+#endif //#ifdef CZL_TIMER
 #endif //#if (defined CZL_SYSTEM_LINUX || defined CZL_SYSTEM_WINDOWS)
 char czl_sys_date(czl_gp*, czl_fun*);
 char czl_sys_useMem(czl_gp*, czl_fun*);
@@ -195,7 +198,7 @@ const czl_sys_fun czl_lib_os[] =
     {"memspn",    czl_sys_memspn,     4,  "str_v1,str_v2,int_v3=0,int_v4=-1"},
     {"memrep",    czl_sys_memrep,     5,  "&str_v1,str_v2,str_v3,int_v4=0,int_v5=-1"},
     //系统函数
-    {"abort",     czl_sys_abort,      1,  NULL},
+    {"abort",     czl_sys_abort,      1,  "v1=1"},
     {"assert",    czl_sys_assert,     1,  NULL},
     {"errLine",   czl_sys_errLine,    0,  NULL},
     {"errfile",   czl_sys_errfile,    0,  NULL},
@@ -204,6 +207,9 @@ const czl_sys_fun czl_lib_os[] =
 #if (defined CZL_SYSTEM_LINUX || defined CZL_SYSTEM_WINDOWS)
     {"sleep",     czl_sys_sleep,      1,  "int_v1"},
     {"clock",     czl_sys_clock,      1,  "int_v1=0"},
+#ifdef CZL_TIMER
+    {"timer",     czl_sys_timer,      2,  "int_v1,fun_v2"},
+#endif //#ifdef CZL_TIMER
 #endif //#if (defined CZL_SYSTEM_LINUX || defined CZL_SYSTEM_WINDOWS)
     {"date",      czl_sys_date,       1,  "str_v1=\"Y-M-D h:m:s\""},
     {"useMem",    czl_sys_useMem,     0,  NULL},
@@ -741,7 +747,7 @@ char czl_sys_echo(czl_gp *gp, czl_fun *fun)
 #ifdef CZL_CONSOLE
     #ifdef CZL_MULT_THREAD
         //多线程控制台工作方式下echo递归会导致死锁
-        czl_print_lock();
+        czl_global_lock();
     #endif
     fout = stdout;
     fun->ret.val.inum = 1;
@@ -769,7 +775,7 @@ char czl_sys_echo(czl_gp *gp, czl_fun *fun)
 
 #ifdef CZL_CONSOLE
     #ifdef CZL_MULT_THREAD
-        czl_print_unlock();
+        czl_global_unlock();
     #endif
 #else
     fclose(fout);
@@ -839,7 +845,7 @@ char czl_sys_print(czl_gp *gp, czl_fun *fun)
 #ifdef CZL_CONSOLE
     #ifdef CZL_MULT_THREAD
         //多线程控制台工作方式下print递归会导致死锁
-        czl_print_lock();
+        czl_global_lock();
     #endif
 	fout = stdout;
     fun->ret.val.inum = 1;
@@ -858,7 +864,7 @@ char czl_sys_print(czl_gp *gp, czl_fun *fun)
 
 #ifdef CZL_CONSOLE
     #ifdef CZL_MULT_THREAD
-        czl_print_unlock();
+        czl_global_unlock();
     #endif
 #else
     fclose(fout);
@@ -2040,8 +2046,7 @@ char czl_sys_fseek(czl_gp *gp, czl_fun *fun)
     czl_var *file = CZL_GCRV(fun->vars);
     long end, addr = fun->vars[1].val.inum;
 
-    if (!file)
-        return 0;
+    if (!file) return 0;
 
     f = CZL_FIL(file->val.Obj);
     if (f->rc > 1 && !(f=czl_file_fork(gp, file)))
@@ -2949,8 +2954,7 @@ char czl_str_toul(czl_gp *gp, czl_fun *fun, char flag)
     long j = fun->vars[2].val.inum;
     czl_string *s;
 
-    if (!str)
-        return 0;
+    if (!str) return 0;
 
     s = CZL_STR(str->val.str.Obj);
 
@@ -2998,8 +3002,7 @@ char czl_sys_memset(czl_gp *gp, czl_fun *fun)
     long j = fun->vars[3].val.inum;
     czl_string *s;
 
-    if (!str)
-        return 0;
+    if (!str) return 0;
 
     s = CZL_STR(str->val.str.Obj);
 
@@ -3112,8 +3115,7 @@ char czl_sys_memrep(czl_gp *gp, czl_fun *fun)
     czl_string *s, *res;
     czl_str tmp;
 
-    if (!str)
-        return 0;
+    if (!str) return 0;
 
     s = CZL_STR(str->val.str.Obj);
     if (i < 0 || (unsigned long)i >= s->len || i > (j = (j >= 0 ? j : (long)s->len-1)) ||
@@ -3246,6 +3248,109 @@ char czl_sys_clock(czl_gp *gp, czl_fun *fun)
     }
     return 1;
 }
+
+#ifdef CZL_TIMER
+#ifdef CZL_SYSTEM_WINDOWS
+void WINAPI czl_timer_event(UINT uTimerID, UINT uMsg, DWORD dwUser, DWORD dwl, DWORD dw2)
+#else //CZL_SYSTEM_LINUX
+void czl_timer_event(union sigval sv)
+#endif
+{
+    czl_timer *t;
+#ifdef CZL_SYSTEM_WINDOWS
+    czl_gp *gp = ((czl_gp*)dwUser);
+#else //CZL_SYSTEM_LINUX
+    czl_timer *uTimerID = sv.sival_ptr;
+    czl_gp *gp = uTimerID->gp;
+#endif
+
+    czl_timer_lock(gp);
+
+    if ((t=czl_sys_hash_find(
+                         #ifdef CZL_SYSTEM_WINDOWS
+                             CZL_NIL,
+                         #else //CZL_SYSTEM_LINUX
+                             CZL_INT,
+                         #endif
+                             CZL_NIL, (void*)uTimerID, &gp->timers_hash)) && 0 == t->state)
+    {
+        //将有事件的定时器放到链表头
+        if (t->last)
+        {
+            t->last->next = t->next;
+            if (t->next)
+                t->next->last = t->last;
+            t->last = NULL;
+            t->next = gp->timers_head;
+            gp->timers_head = gp->timers_head->last = t;
+        }
+        t->state = 1;
+        ++gp->timerEventCnt;
+    }
+
+    czl_timer_unlock(gp);
+}
+
+char czl_sys_timer(czl_gp *gp, czl_fun *fun)
+{
+    long period = fun->vars->val.inum;
+    czl_fun *cb_fun = fun->vars[1].val.fun;
+    czl_timer *p;
+
+#ifdef CZL_SYSTEM_WINDOWS
+    unsigned long timerId;
+#else //CZL_SYSTEM_LINUX
+    timer_t timerId;
+#endif
+
+    fun->ret.val.inum = 0;
+
+    if (period <= 0 || cb_fun->enter_vars_cnt > 1)
+        return 1;
+
+    if (!(p=CZL_TIMER_MALLOC(gp)))
+        return 0;
+
+#ifdef CZL_SYSTEM_WINDOWS
+    timerId = timeSetEvent(period, 1, czl_timer_event, gp, TIME_PERIODIC);
+#else //CZL_SYSTEM_LINUX
+    struct sigevent se;
+    memset(&se, 0, sizeof(struct sigevent));
+    se.sigev_value.sival_ptr = p;
+    se.sigev_notify = SIGEV_THREAD;
+    se.sigev_notify_function = czl_timer_event;
+    if (timer_create(CLOCK_REALTIME, &se, &timerId) == -1)
+    {
+        CZL_TIMER_FREE(gp, p);
+        return 1;
+    }
+    struct itimerspec it; //统一转为毫秒
+    unsigned long sec = period/1000;
+    unsigned long nsec = (period - sec*1000) * 1000*1000;
+    it.it_interval.tv_sec = sec;
+    it.it_interval.tv_nsec = nsec;
+    it.it_value.tv_sec = sec; //延迟启动定时器时间
+    it.it_value.tv_nsec = nsec;
+    if (timer_settime(timerId, 0, &it, NULL) == -1)
+    {
+        CZL_TIMER_FREE(gp, p);
+        timer_delete(timerId);
+        return 1;
+    }
+#endif
+
+    if (!(fun->ret.val.inum=czl_timer_create(gp, p, timerId,
+                                         #ifdef CZL_SYSTEM_WINDOWS
+                                             timeKillEvent,
+                                         #else //CZL_SYSTEM_LINUX
+                                             timer_delete,
+                                         #endif
+                                             cb_fun)))
+        return 0;
+
+    return 1;
+}
+#endif //#ifdef CZL_TIMER
 #endif //#if (defined CZL_SYSTEM_LINUX || defined CZL_SYSTEM_WINDOWS)
 
 char czl_sys_date(czl_gp *gp, czl_fun *fun)
@@ -3432,10 +3537,6 @@ void czl_gp_copy(czl_gp *a, czl_gp *b)
 {
 #ifdef CZL_MM_MODULE
 	unsigned long i;
-#ifdef CZL_MM_CACHE
-    a->mm_cache_size = b->mm_cache_size;
-    a->mm_cache = b->mm_cache;
-#endif //#ifdef CZL_MM_CACHE
     for (i = 0; i < CZL_MM_SP_RANGE; ++i)
     {
         a->mmp_tmp[i] = b->mmp_tmp[i];
@@ -3447,16 +3548,28 @@ void czl_gp_copy(czl_gp *a, czl_gp *b)
     a->mmp_tab = b->mmp_tab;
     a->mmp_arr = b->mmp_arr;
     a->mmp_sq = b->mmp_sq;
-    a->mmp_file = b->mmp_file;
-    a->mmp_buf_file = b->mmp_buf_file;
     a->mmp_ref = b->mmp_ref;
+    a->mmp_file = b->mmp_file;
+    #ifdef CZL_MM_CACHE
+        a->mm_cache_size = b->mm_cache_size;
+        a->mm_cache = b->mm_cache;
+    #endif //#ifdef CZL_MM_CACHE
+    a->mmp_sh_head = b->mmp_sh_head;
+    a->mmp_gc_size = b->mmp_gc_size;
     a->mmp_rank = b->mmp_rank;
     a->mmp_selfAdapt = b->mmp_selfAdapt;
-    a->mmp_gc_size = b->mmp_gc_size;
 #endif //#ifdef CZL_MM_MODULE
+    a->mm_limit_backup = b->mm_limit_backup;
     a->mm_limit = b->mm_limit;
     a->mm_cnt = b->mm_cnt;
     a->mm_max = b->mm_max;
+#ifdef CZL_TIMER
+    #ifdef CZL_SYSTEM_WINDOWS
+        a->timer_cs = b->timer_cs;
+    #elif defined CZL_SYSTEM_LINUX
+        a->timer_mutex = b->timer_mutex;
+    #endif
+#endif //#ifdef CZL_TIMER
 #ifndef CZL_CONSOLE
     a->table = b->table;
     a->log_path = b->log_path;
@@ -3778,38 +3891,17 @@ char czl_sys_sort(czl_gp *gp, czl_fun *fun)
     char *flag = CZL_STR(fun->vars[1].val.str.Obj)->str;
     unsigned char mode = 0;
     unsigned char quality = obj->quality;
-    //注意下面这些构造变量的生命周期
-    czl_exp_fun exp_fun;
-    czl_para p1, p2;
-    czl_exp_ele e1, e2;
 
     if (CZL_FUN_REF == fun->vars[2].type)
     {
-        czl_fun *f = fun->vars[2].val.fun;
-        if (!f || f->enter_vars_cnt != 2 || f->para_explain)
+        czl_fun *cmp_fun = fun->vars[2].val.fun;
+        if (cmp_fun->enter_vars_cnt != 2)
         {
             fun->ret.val.inum = 0;
             return 1;
         }
-        //
-        p1.para = &e1;
-        p1.next = &p2;
-        p2.para = &e2;
-        p2.next = NULL;
-        //
-        e1.flag = e1.lt = CZL_OPERAND;
-        e1.kind = CZL_REG_VAR;
-        e2.flag = e2.lt = CZL_OPERAND;
-        e2.kind = CZL_REG_VAR;
-        //
-        exp_fun.fun = f;
-        exp_fun.paras = &p1;
-        exp_fun.paras_count = 2;
-        exp_fun.quality = CZL_STATIC_FUN;
-        exp_fun.flag = 1;
-        //
-        gp->cur_fun = (czl_fun*)&exp_fun;
-        //
+        gp->ef2.fun = cmp_fun;
+        gp->cur_fun = (czl_fun*)&gp->ef2;
         CZL_LOCK_OBJ(obj); //防止在排序函数删除中删除了obj
     }
     else
@@ -3984,8 +4076,7 @@ char czl_sys_push(czl_gp *gp, czl_fun *fun)
 	czl_glo_var *ele;
     czl_var *ref = CZL_GCRV(fun->vars);
 
-    if (!ref)
-        return 0;
+    if (!ref) return 0;
 
     stack = CZL_SQ(ref->val.Obj);
     if (stack->rc > 1 && !(stack=czl_sq_fork(gp, ref)))
@@ -4060,8 +4151,7 @@ char czl_sys_in(czl_gp *gp, czl_fun *fun)
 	czl_glo_var *ele;
     czl_var *ref = CZL_GCRV(fun->vars);
 
-    if (!ref)
-        return 0;
+    if (!ref) return 0;
 
     queue = CZL_SQ(ref->val.Obj);
     if (queue->rc > 1 && !(queue=czl_sq_fork(gp, ref)))
@@ -4099,8 +4189,7 @@ char czl_sys_ins(czl_gp *gp, czl_fun *fun)
     czl_tabkv *p, *q;
     czl_var *ref = CZL_GCRV(fun->vars);
 
-    if (!ref)
-        return 0;
+    if (!ref) return 0;
 
     tab = CZL_TAB(ref->val.Obj);
     if (tab->rc > 1 && !(tab=czl_table_fork(gp, ref)))
@@ -4166,9 +4255,8 @@ void** czl_coroutine_create(czl_gp *gp, czl_fun *fun, unsigned char type)
 
 char czl_sys_coroutine(czl_gp *gp, czl_fun *fun)
 {
-    fun->ret.val.inum =
-            (unsigned long)czl_coroutine_create(gp, fun->vars->val.fun,
-                                                fun->vars[1].val.inum);
+    fun->ret.val.inum = (unsigned long)czl_coroutine_create(gp, fun->vars->val.fun,
+                                                            fun->vars[1].val.inum);
     return 1;
 }
 
@@ -4177,7 +4265,7 @@ char czl_sys_reset(czl_gp *gp, czl_fun *fun)
     if (CZL_FUN_REF == fun->vars->type)
     {
         czl_fun *f = fun->vars->val.fun;
-        if (!f || CZL_SYS_FUN == f->type || !f->yeild_flag || CZL_IN_BUSY == f->state)
+        if (CZL_SYS_FUN == f->type || !f->yeild_flag || CZL_IN_BUSY == f->state)
         {
             fun->ret.val.inum = 0;
             return 1;
@@ -4278,6 +4366,12 @@ char czl_sys_kill(czl_gp *gp, czl_fun *fun)
             czl_coroutine_delete(gp, (czl_var*)c->vars, obj);
         }
     }
+#ifdef CZL_TIMER
+    else if (czl_timer_delete(gp, id))
+    {
+        fun->ret.val.inum = 1;
+    }
+#endif //#ifdef CZL_TIMER
     else
     {
     #ifdef CZL_MULT_THREAD

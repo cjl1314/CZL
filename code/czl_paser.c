@@ -114,7 +114,7 @@ const unsigned long czl_keyword_table_num =
 //是否是转义关键字
 #define CZL_IS_ESCAPE_KW(index) \
 (CZL_INT_INDEX == index || CZL_FLOAT_INDEX == index || \
- CZL_NUM_INDEX == index || CZL_STR_INDEX == index)
+ CZL_NUM_INDEX == index || CZL_STR_INDEX == index || CZL_TIMER_INDEX == index)
 
 //是否是系统常量关键字
 #define CZL_IS_CONST_KW(index) \
@@ -1021,6 +1021,7 @@ char* czl_paras_match
             break;
         else
         {
+            printf("debug: %c%c\n", *(code-1), *code);
             sprintf(gp->log_buf, "missed '%c' for end a paras-list, ", end_sign);
             return NULL;
         }
@@ -4256,6 +4257,55 @@ char czl_global_paras_init(czl_gp *gp)
     if (!(gp->tmp->glo_lib = gp->tmp->cur_usrlib = czl_usrlib_create(gp, "g")))
         return 0;
 
+    //初始化运行时构造函数
+    gp->ef0.paras = NULL;
+    gp->ef0.paras_count = 0;
+    gp->ef0.quality = CZL_STATIC_FUN;
+    gp->ef0.flag = 1;
+
+    gp->ef1.paras = &gp->efp2;
+    gp->ef1.paras_count = 1;
+    gp->ef1.quality = CZL_STATIC_FUN;
+    gp->ef1.flag = 1;
+
+    gp->ef2.paras = &gp->efp1;
+    gp->ef2.paras_count = 2;
+    gp->ef2.quality = CZL_STATIC_FUN;
+    gp->ef2.flag = 1;
+
+    gp->efp1.para = &gp->efe1;
+    gp->efp1.next = &gp->efp2;
+    gp->efp2.para = &gp->efe2;
+    gp->efp2.next = NULL;
+
+    gp->efe1.flag = gp->efe1.lt = CZL_OPERAND;
+    gp->efe1.kind = CZL_REG_VAR;
+    gp->efe2.flag = gp->efe2.lt = CZL_OPERAND;
+    gp->efe2.kind = CZL_REG_VAR;
+
+#ifdef CZL_LIB_TCP
+    //初始化运行时tcp事件回调构造函数
+    gp->tcp_ef.paras = &gp->tcp_efp1;
+    gp->tcp_ef.paras_count = 2;
+    gp->tcp_ef.quality = CZL_STATIC_FUN;
+    gp->tcp_ef.flag = 1;
+
+    gp->tcp_efp1.para = &gp->tcp_efe1;
+    gp->tcp_efp1.next = &gp->tcp_efp2;
+    gp->tcp_efp2.para = &gp->tcp_efe2;
+    gp->tcp_efp2.next = NULL;
+
+    gp->tcp_efe1.flag = gp->tcp_efe1.lt = CZL_OPERAND;
+    gp->tcp_efe1.kind = CZL_REG_VAR;
+    gp->tcp_efe1.res = &gp->tcp_v1;
+    gp->tcp_efe2.flag = gp->tcp_efe2.lt = CZL_OPERAND;
+    gp->tcp_efe2.kind = CZL_REG_VAR;
+    gp->tcp_efe2.res = &gp->tcp_v2;
+
+    gp->tcp_v1.type = CZL_NIL;
+    gp->tcp_v1.val.ref.inx = -1;
+#endif //#ifdef CZL_LIB_TCP
+
     return 1;
 }
 
@@ -4283,16 +4333,24 @@ char czl_sys_init(czl_gp *gp)
     gp->mm_limit = CZL_MM_3GB;
 
 #if (defined CZL_MULT_THREAD && defined CZL_CONSOLE)
-    if (!czl_print_lock_init)
+    if (!czl_global_lock_init)
     {
-        czl_print_lock_init = 1;
+        czl_global_lock_init = 1;
     #ifdef CZL_SYSTEM_WINDOWS
-        InitializeCriticalSection(&czl_print_cs);
+        InitializeCriticalSection(&czl_global_cs);
     #elif defined CZL_SYSTEM_LINUX
-        pthread_mutex_init(&czl_print_mutex, NULL);
+        pthread_mutex_init(&czl_global_mutex, NULL);
     #endif
     }
 #endif //#if (defined CZL_MULT_THREAD && defined CZL_CONSOLE)
+
+#ifdef CZL_TIMER
+    #ifdef CZL_SYSTEM_WINDOWS
+        InitializeCriticalSection(&gp->timer_cs);
+    #elif defined CZL_SYSTEM_LINUX
+        pthread_mutex_init(&gp->timer_mutex, NULL);
+    #endif
+#endif //#ifdef CZL_TIMER
 
 #ifndef CZL_CONSOLE
     if (!(gp->table=czl_table_create(gp, 1, 0, 0)))

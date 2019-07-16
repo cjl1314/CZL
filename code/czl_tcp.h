@@ -21,7 +21,7 @@
 
 #ifdef CZL_LIB_TCP
     extern const czl_sys_fun czl_lib_tcp[]; //库函数表声明
-    #define CZL_LIB_TCP_CNT 7               //库函数个数
+    #define CZL_LIB_TCP_CNT 8               //库函数个数
 #endif //CZL_LIB_TCP
 
 #endif // CZL_TCP_H

@@ -147,8 +147,7 @@ char czl_udp_recv(czl_gp *gp, czl_fun *fun)
     struct timeval timeout, *pTime = NULL;
     fd_set fdRead;
 
-    if (!str)
-        return 0;
+    if (!str) return 0;
 
     fun->ret.val.inum = 0;
 

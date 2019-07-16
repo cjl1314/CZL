@@ -289,19 +289,18 @@ typedef enum czl_op_enum
     //
     CZL_OBJ_TYPE,   // $
     //
-    CZL_OR_OR,		// ||
-    CZL_AND_AND,	// &&
-    //
     CZL_CONDITION,  //&&、||条件判断
     //
-    CZL_OPERAND,            //操作数: 必须是0
+    CZL_ASS_OPT,            //赋值运算符
+    CZL_OPERAND,            //操作数
     CZL_UNARY_OPT,          //单目运算符
     CZL_BINARY_OPT,         //双目运算符
+    CZL_UNARY2_OPT,         //产生临时结果的单目运算符
+    CZL_BINARY2_OPT,        //产生临时结果的双目运算符
     CZL_THREE_OPT,          //三目运算符
     CZL_THREE_END,          //三目运算符子表达式结束符
-    CZL_ASS_OPT,            //赋值运算符
-    CZL_BINARY2_OPT,        //产生临时结果的双目运算符
-    CZL_UNARY2_OPT,         //产生临时结果的单目运算符
+    CZL_OR_OR,              // ||
+    CZL_AND_AND,            // &&
     //
     CZL_FOREACH_BLOCK,      //foreach语句
     CZL_BLOCK_BEGIN,        //逻辑块开始
@@ -567,13 +566,14 @@ typedef struct czl_ext
 {
     union czl_ext_v1
     {
-        void *ptr;
         int i32;
+        void *ptr;
     } v1;
     union czl_ext_v2
     {
-        unsigned long u32;
         int i32;
+        unsigned long u32;
+        void *ptr;
     } v2;
 } czl_ext;
 
@@ -1463,6 +1463,25 @@ typedef struct czl_thread
 } czl_thread;
 #endif //#ifdef CZL_MULT_THREAD
 
+#ifdef CZL_TIMER
+typedef struct czl_timer
+{
+
+#ifdef CZL_SYSTEM_WINDOWS
+    unsigned long id;
+    WINAPI int (*timer_delete)(unsigned long);
+#else //CZL_SYSTEM_LINUX
+    timer_t id;
+    int (*timer_delete)(timer_t);
+    struct czl_gp *gp;
+#endif
+    czl_fun *cb_fun;
+    unsigned char state;
+    struct czl_timer *next;
+    struct czl_timer *last;
+} czl_timer;
+#endif //#ifdef CZL_TIMER
+
 //解释时全局参数结构
 typedef struct czl_analysis_gp
 {
@@ -1557,6 +1576,9 @@ typedef struct czl_gp
 #ifdef CZL_MULT_THREAD
     czl_mm_sp_pool mmp_thread;      //thread结构内存池
 #endif //#ifdef CZL_MULT_THREAD
+#ifdef CZL_TIMER
+    czl_mm_sp_pool mmp_timer;       //timer结构内存池
+#endif //#ifdef CZL_TIMER
     //内存池: 运行时全局函数、类、变量、常量、代码等，静态
     czl_mm_sp_pool mmp_rt[CZL_MM_SP_RANGE];
     //内存池: 解释时临时AST内存、各个哈希表内存、全局语句，动态
@@ -1586,6 +1608,17 @@ typedef struct czl_gp
     czl_thread_pipe *thread_pipe;
     czl_fun *killFun; //子线程被kill回调函数
 #endif //#ifdef CZL_MULT_THREAD
+#ifdef CZL_TIMER
+    czl_sys_hash timers_hash;
+    czl_timer *timers_head;
+    czl_timer *timer_next;
+    unsigned long timerEventCnt;
+    #ifdef CZL_SYSTEM_WINDOWS
+        CRITICAL_SECTION timer_cs;
+    #elif defined CZL_SYSTEM_LINUX
+        pthread_mutex_t timer_mutex;
+    #endif
+#endif //#ifdef CZL_TIMER
     //
     czl_sys_hash coroutines_hash;
     void **coroutines_head;
@@ -1651,6 +1684,15 @@ typedef struct czl_gp
     char log_buf[CZL_LOG_BUF_SIZE]; //log缓冲区
     char exceptionCode;             //运行时异常码: czl_exception_code_enum
     czl_fun *exceptionFuns[CZL_EXCEPTION_CODE_NUM]; //运行时异常回调函数
+    //
+    czl_exp_fun ef0, ef1, ef2; //运行时构造函数
+    czl_para efp1, efp2;
+    czl_exp_ele efe1, efe2;
+    //
+    czl_exp_fun tcp_ef; //运行时tcp事件回调构造函数
+    czl_para tcp_efp1, tcp_efp2;
+    czl_exp_ele tcp_efe1, tcp_efe2;
+    czl_var tcp_v1, tcp_v2;
     //
 #ifndef CZL_CONSOLE
     void **table; //与C/C++数据交互表
@@ -1844,17 +1886,34 @@ unsigned long czl_bkdr_hash(char*, unsigned long);
 unsigned long czl_extsrc_create(czl_gp*, void*, void (*)(void*));
 char czl_extsrc_free(czl_gp*, unsigned long);
 void* czl_extsrc_get(czl_gp*, unsigned long);
+char czl_tcp_event_handle(czl_gp*, czl_fun*, czl_var*, unsigned long);
 ///////////////////////////////////////////////////////////////
-#if ((defined CZL_MULT_THREAD) && (defined CZL_CONSOLE))
-    extern unsigned char czl_print_lock_init; //控制台输出锁初始化标志位
+#ifdef CZL_TIMER
+void czl_timer_lock(czl_gp*);
+void czl_timer_unlock(czl_gp*);
+unsigned long czl_timer_create(czl_gp*, czl_timer*,
+                           #ifdef CZL_SYSTEM_WINDOWS
+                               unsigned long,
+                               WINAPI int (*)(unsigned long),
+                           #else //CZL_SYSTEM_LINUX
+                               timer_t,
+                               int (*)(timer_t),
+                           #endif
+                               czl_fun*);
+char czl_timer_delete(czl_gp*, unsigned long);
+char czl_timer_cb_fun_run(czl_gp*);
+#endif //#ifdef CZL_TIMER
+///////////////////////////////////////////////////////////////
+#if (defined CZL_MULT_THREAD && defined CZL_CONSOLE)
+    extern unsigned char czl_global_lock_init;
     #ifdef CZL_SYSTEM_WINDOWS
-        extern CRITICAL_SECTION czl_print_cs; //控制台输出锁
+        extern CRITICAL_SECTION czl_global_cs;
     #elif defined CZL_SYSTEM_LINUX
-        extern pthread_mutex_t czl_print_mutex; //控制台输出锁
+        extern pthread_mutex_t czl_global_mutex;
     #endif
-    void czl_print_lock(void);
-    void czl_print_unlock(void);
-#endif //#if ((defined CZL_MULT_THREAD) && (defined CZL_CONSOLE))
+    void czl_global_lock(void);
+    void czl_global_unlock(void);
+#endif //#if (defined CZL_MULT_THREAD && defined CZL_CONSOLE)
 ///////////////////////////////////////////////////////////////
 void* czl_malloc(czl_gp*, czl_ulong
                  #ifdef CZL_MM_MODULE
@@ -1945,6 +2004,11 @@ void czl_free(czl_gp*, void*, czl_ulong
     #define CZL_THREAD_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_thread), &gp->mmp_thread)
 #endif //#ifdef CZL_MULT_THREAD
 
+#ifdef CZL_TIMER
+    #define CZL_TIMER_MALLOC(gp) (czl_timer*)czl_malloc(gp, sizeof(czl_timer), &gp->mmp_timer)
+    #define CZL_TIMER_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_timer), &gp->mmp_timer)
+#endif //#ifdef CZL_TIMER
+
 #else
     #define CZL_RT_MALLOC(gp, size) czl_malloc(gp, size)
     #define CZL_RT_CALLOC(gp, num, size) czl_calloc(gp, num, size)
@@ -1994,6 +2058,11 @@ void czl_free(czl_gp*, void*, czl_ulong
     #define CZL_THREAD_MALLOC(gp) czl_malloc(gp, sizeof(czl_thread))
     #define CZL_THREAD_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_thread))
 #endif //#ifdef CZL_MULT_THREAD
+
+#ifdef CZL_TIMER
+    #define CZL_TIMER_MALLOC(gp) (czl_timer*)czl_malloc(gp, sizeof(czl_timer))
+    #define CZL_TIMER_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_timer))
+#endif //#ifdef CZL_TIMER
 
 #endif //#ifdef CZL_MM_MODULE
 ///////////////////////////////////////////////////////////////

@@ -5,6 +5,7 @@ char czl_ref_copy(czl_gp *gp, czl_var *left, czl_var *var)
 {
     czl_ref_var *ref = (czl_ref_var*)left->name;
     czl_ref_obj *obj = (czl_ref_obj*)var->name;
+
     if (!left->name)
     {
         if (!(left->name=(char*)CZL_REF_MALLOC(gp)))
@@ -119,19 +120,17 @@ char czl_val_copy(czl_gp *gp, czl_var *left, czl_var *right)
         default:
             goto CZL_TYPE_ERROR;
         }
-    case CZL_OBJ_REF:
-        return czl_ref_set(gp, left, right);
     case CZL_FUN_REF:
         if (left->ot != CZL_NIL && left->ot != CZL_FUN_REF)
             goto CZL_TYPE_ERROR;
         left->type = right->type;
         left->val = right->val;
         return 1;
-    case CZL_NEW:
-        if (left->ot != CZL_NIL &&
-            left->ot != ((czl_new_sentence*)right->val.Obj)->type)
-            goto CZL_TYPE_ERROR;
-        return czl_obj_new(gp, (czl_new_sentence*)right->val.Obj, left);
+    case CZL_OBJ_REF:
+#ifdef CZL_LIB_TCP
+    case CZL_NIL: //用于tcp库事件回调函数快速引用类型入参
+#endif //#ifdef CZL_LIB_TCP
+        return czl_ref_set(gp, left, right);
     case CZL_ARRAY_LIST:
         switch (left->ot)
         {
@@ -149,6 +148,11 @@ char czl_val_copy(czl_gp *gp, czl_var *left, czl_var *right)
         if (left->ot != CZL_NIL && left->ot != CZL_TABLE)
             goto CZL_TYPE_ERROR;
         return czl_table_new(gp, CZL_TAB_LIST(right->val.Obj), left);
+    case CZL_NEW:
+        if (left->ot != CZL_NIL &&
+            left->ot != ((czl_new_sentence*)right->val.Obj)->type)
+            goto CZL_TYPE_ERROR;
+        return czl_obj_new(gp, (czl_new_sentence*)right->val.Obj, left);
     case CZL_INSTANCE:
         if (left->ot != CZL_NIL && left->ot != CZL_INS(right->val.Obj)->pclass->ot_num)
             goto CZL_TYPE_ERROR;
