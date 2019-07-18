@@ -21,7 +21,7 @@
 
 #ifdef CZL_LIB_HTTP
     extern const czl_sys_fun czl_lib_http[]; //库函数表声明
-    #define CZL_LIB_HTTP_CNT 3               //库函数个数
+    #define CZL_LIB_HTTP_CNT 4               //库函数个数
 #endif //CZL_LIB_HTTP
 
 #endif // CZL_HTTP_H

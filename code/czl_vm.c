@@ -2815,10 +2815,6 @@ static long czl_hash_index_get
                              (((czl_name*)kv)->name,
                               strlen(((czl_name*)kv)->name)),
                              mask);
-#if (defined CZL_TIMER && defined CZL_SYSTEM_WINDOWS)
-    case CZL_NIL: //用于定时器查找
-        return CZL_INDEX_CAC(index, ((czl_timer*)kv)->id, mask);
-#endif //#if (defined CZL_TIMER && defined CZL_SYSTEM_WINDOWS)
     default: //CZL_ENUM 用于常量字符串
         switch (((czl_var*)kv)->type)
         {
@@ -2905,11 +2901,6 @@ void* czl_sys_hash_find
         //这样做可以避免对每种结构哈希时需要判断哈希对象的地址。
         CZL_INDEX_CAC(index, czl_bkdr_hash(key, strlen(key)), table->mask);
         break;
-#if (defined CZL_TIMER && defined CZL_SYSTEM_WINDOWS)
-    case CZL_NIL: //用于定时器查找
-        CZL_INDEX_CAC(index, (unsigned long)key, table->mask);
-        break;
-#endif //#if (defined CZL_TIMER && defined CZL_SYSTEM_WINDOWS)
     default: //CZL_ENUM 用于常量字符串
         switch (flag)
         {
@@ -2944,12 +2935,6 @@ void* czl_sys_hash_find
         while (p && strcmp(key, ((czl_name*)p->key)->name))
             p = p->next;
         break;
-#if (defined CZL_TIMER && defined CZL_SYSTEM_WINDOWS)
-    case CZL_NIL:
-        while (p && (unsigned long)key != ((czl_timer*)p->key)->id)
-            p = p->next;
-        break;
-#endif //#if (defined CZL_TIMER && defined CZL_SYSTEM_WINDOWS)
     default: //CZL_ENUM
         switch (flag)
         {
@@ -3030,18 +3015,11 @@ void* czl_sys_hash_delete
             q = p;
             p = p->next;
         }
-    else if (CZL_STRING == type)
+    else //CZL_STRING
         while (p && strcmp(((czl_name*)key)->name, ((czl_name*)p->key)->name)) {
             q = p;
             p = p->next;
         }
-#if (defined CZL_TIMER && defined CZL_SYSTEM_WINDOWS)
-    else //CZL_NIL
-        while (p && (unsigned long)key != ((czl_timer*)p->key)->id) {
-            q = p;
-            p = p->next;
-        }
-#endif //#if (defined CZL_TIMER && defined CZL_SYSTEM_WINDOWS)
 
     if (!p) return NULL;
 
@@ -7903,9 +7881,17 @@ czl_sentence* czl_sentence_create(czl_gp *gp, char type)
     switch (type)
     {
     case CZL_EXP_SENTENCE:
-    case CZL_RETURN_SENTENCE: case CZL_YEILD_SENTENCE:
-        if (CZL_YEILD_SENTENCE == type)
-            gp->cur_fun->yeild_flag = 1;
+    case CZL_RETURN_SENTENCE:
+        p->sentence.exp = gp->tmp->exp_head;
+        gp->tmp->exp_head = NULL;
+        break;
+    case CZL_YEILD_SENTENCE:
+        if (gp->cur_fun->para_explain)
+        {
+            sprintf(gp->log_buf, "coroutine %s should not have default paras, ", gp->cur_fun->name);
+            return NULL;
+        }
+        gp->cur_fun->yeild_flag = 1;
         p->sentence.exp = gp->tmp->exp_head;
         gp->tmp->exp_head = NULL;
         break;
@@ -11282,6 +11268,7 @@ unsigned long czl_timer_create
     timer_t timerId,
     int (*timer_delete)(timer_t),
 #endif
+    unsigned long period,
     czl_fun *cb_fun
 )
 {
@@ -11290,13 +11277,7 @@ unsigned long czl_timer_create
 
     czl_timer_lock(gp);
 
-    if (!czl_sys_hash_insert(gp,
-                         #ifdef CZL_SYSTEM_WINDOWS
-                             CZL_NIL,
-                         #else //CZL_SYSTEM_LINUX
-                             CZL_INT,
-                         #endif
-                             p, &gp->timers_hash))
+    if (!czl_sys_hash_insert(gp, CZL_INT, p, &gp->timers_hash))
     {
         CZL_TIMER_FREE(gp, p);
         timer_delete(timerId);
@@ -11311,18 +11292,12 @@ unsigned long czl_timer_create
 
     czl_timer_unlock(gp);
 
-#ifdef CZL_SYSTEM_LINUX
+    p->period = period;
     p->gp = gp;
-#endif
-
     p->timer_delete = timer_delete;
     p->cb_fun = cb_fun;
 
-#ifdef CZL_SYSTEM_WINDOWS
-    return timerId;
-#else //CZL_SYSTEM_LINUX
     return (unsigned long)p;
-#endif
 }
 
 char czl_timer_delete(czl_gp *gp, unsigned long timerId)
@@ -11331,13 +11306,7 @@ char czl_timer_delete(czl_gp *gp, unsigned long timerId)
 
     czl_timer_lock(gp);
 
-    if ((p=(czl_timer*)czl_sys_hash_delete(gp,
-                                       #ifdef CZL_SYSTEM_WINDOWS
-                                           CZL_NIL,
-                                       #else //CZL_SYSTEM_LINUX
-                                           CZL_INT,
-                                       #endif
-                                           (void*)timerId, &gp->timers_hash)))
+    if ((p=(czl_timer*)czl_sys_hash_delete(gp, CZL_INT, (void*)timerId, &gp->timers_hash)))
     {
         if (p->last)
             p->last->next = p->next;
@@ -11392,11 +11361,7 @@ CZL_BEGIN:
         {
             czl_var var;
             var.type = CZL_INT;
-        #ifdef CZL_SYSTEM_WINDOWS
-            var.val.inum = t->id;
-        #else //CZL_SYSTEM_LINUX
             var.val.inum = (unsigned long)t;
-        #endif
             gp->efe2.res = &var;
             gp->ef1.fun = t->cb_fun;
             if (!czl_exp_fun_run(gp, &gp->ef1))

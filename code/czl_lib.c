@@ -32,6 +32,8 @@ char czl_sys_srand(czl_gp*, czl_fun*);
 char czl_sys_rand(czl_gp*, czl_fun*);
 char czl_sys_rands(czl_gp*, czl_fun*);
 //
+char czl_sys_Hash(czl_gp*, czl_fun*);
+//
 char czl_sys_int(czl_gp*, czl_fun*);
 char czl_sys_float(czl_gp*, czl_fun*);
 char czl_sys_num(czl_gp*, czl_fun*);
@@ -62,6 +64,10 @@ char czl_sys_memget(czl_gp*, czl_fun*);
 char czl_sys_memcmp(czl_gp*, czl_fun*);
 char czl_sys_memspn(czl_gp*, czl_fun*);
 char czl_sys_memrep(czl_gp*, czl_fun*);
+#ifdef CZL_SYSTEM_WINDOWS
+char czl_sys_toUtf8(czl_gp*, czl_fun*);
+char czl_sys_toAnsi(czl_gp*, czl_fun*);
+#endif //#ifdef CZL_SYSTEM_WINDOWS
 //
 char czl_sys_abort(czl_gp*, czl_fun*);
 char czl_sys_assert(czl_gp*, czl_fun*);
@@ -166,6 +172,8 @@ const czl_sys_fun czl_lib_os[] =
     {"srand",     czl_sys_srand,      1,  "int_v1"},
     {"rand",      czl_sys_rand,       0,  NULL},
     {"rands",     czl_sys_rands,      0,  NULL},
+    //哈希函数
+    {"hash",      czl_sys_Hash,       2,  "str_v1,int_v2=0"},
     //数值处理函数
     {"int",       czl_sys_int,        1,  NULL},
     {"float",     czl_sys_float,      1,  NULL},
@@ -197,6 +205,10 @@ const czl_sys_fun czl_lib_os[] =
     {"memcmp",    czl_sys_memcmp,     4,  "str_v1,str_v2,int_v3=-1,int_v4=-1"},
     {"memspn",    czl_sys_memspn,     4,  "str_v1,str_v2,int_v3=0,int_v4=-1"},
     {"memrep",    czl_sys_memrep,     5,  "&str_v1,str_v2,str_v3,int_v4=0,int_v5=-1"},
+#ifdef CZL_SYSTEM_WINDOWS
+    {"toUtf8",    czl_sys_toUtf8,     1,  "str_v1"},
+    {"toAnsi",    czl_sys_toAnsi,     1,  "str_v1"},
+#endif //#ifdef CZL_SYSTEM_WINDOWS
     //系统函数
     {"abort",     czl_sys_abort,      1,  "v1=1"},
     {"assert",    czl_sys_assert,     1,  NULL},
@@ -246,9 +258,10 @@ const czl_sys_fun czl_lib_os[] =
     {"ins",       czl_sys_ins,        4,  "&map_v1"},
     //协程框架接口函数
     {"coroutine", czl_sys_coroutine,  2,  "fun_v1,int_v2=0"},
+    //协程和定时器共用reset函数
     {"reset",     czl_sys_reset,      1,  NULL},
     {"corsta",    czl_sys_corsta,     1,  "int_v1"},
-    //线程和协程共用kill函数
+    //线程、协程和定时器共用kill函数
     {"resume",    czl_sys_resume,     -1, NULL},
     {"kill",      czl_sys_kill,       1,  "int_v1"},
 #if (defined CZL_LIB_TCP || defined CZL_LIB_UDP)
@@ -332,7 +345,7 @@ const czl_sys_lib czl_syslibs[] =
 const unsigned long czl_syslibs_num = sizeof(czl_syslibs)/sizeof(czl_sys_lib);
 ///////////////////////////////////////////////////////////////
 #define CZL_FILE_BUF_SIZE   10*1024
-const unsigned long czl_check_sum = 0xF1E2C3B4;
+static const unsigned long CZL_CHECK_SUM = 0xF1E2C3B4;
 ///////////////////////////////////////////////////////////////
 char czl_print_obj(czl_gp *gp, const czl_var*, FILE*);
 char czl_sizeof_obj(czl_gp*, char, const czl_var*, unsigned long*);
@@ -368,6 +381,15 @@ char czl_set_ret_str
     ret->type = CZL_STRING;
 
     return 1;
+}
+
+char czl_strcmp(const char *a, const char *b)
+{
+    while ((*a == *b || *a == *b+32 || *b == *a+32) && *a)
+    {
+        ++a; ++b;
+    }
+    return (*a || *b ? 0 : 1);
 }
 ///////////////////////////////////////////////////////////////
 int czl_get_int_mode(char *mode)
@@ -1395,7 +1417,7 @@ char czl_struct_write(czl_gp *gp, FILE *fp, czl_para *p)
 {
     if (!ftell(fp))
     {
-        if (!fwrite(&czl_check_sum, 4, 1, fp))
+        if (!fwrite(&CZL_CHECK_SUM, 4, 1, fp))
             return 0;
     }
 
@@ -1753,7 +1775,7 @@ char czl_obj_read(czl_gp *gp, FILE *fp, czl_var *ret)
     if (!ftell(fp))
     {
         unsigned long check_sum;
-        if (!fread(&check_sum, 4, 1, fp) || check_sum != czl_check_sum)
+        if (!fread(&check_sum, 4, 1, fp) || check_sum != CZL_CHECK_SUM)
             return 0;
     }
 
@@ -1783,7 +1805,7 @@ char czl_objs_read(czl_gp *gp, FILE *fp, czl_var *ret, unsigned long sum)
     if (!ftell(fp))
     {
         unsigned long check_sum;
-        if (!fread(&check_sum, 4, 1, fp) || check_sum != czl_check_sum)
+        if (!fread(&check_sum, 4, 1, fp) || check_sum != CZL_CHECK_SUM)
             return 0;
     }
 
@@ -1837,7 +1859,7 @@ char czl_struct_read(czl_gp *gp, FILE *fp, czl_var *ret, long sum)
     if (!ftell(fp))
     {
         unsigned long check_sum;
-        if (!fread(&check_sum, 4, 1, fp) || check_sum != czl_check_sum)
+        if (!fread(&check_sum, 4, 1, fp) || check_sum != CZL_CHECK_SUM)
             return 0;
     }
 
@@ -2242,23 +2264,33 @@ char czl_sys_rand(czl_gp *gp, czl_fun *fun)
 
 char czl_sys_rands(czl_gp *gp, czl_fun *fun)
 {
-    const char *s = "abcdefghijklm0123456789nopqrstuvwxyz0123456789ABCDEFGHIJKLM0123456789NOPQRSTUVWXYZ0123456789";
     static int inx = 0;
     unsigned long r = rand();
     unsigned long i, j = r%11 + 10, m = inx, n = 92/j;
     char res[20];
+    const char *STR_TABLE = "abcdefghijklm0123456789nopqrstuvwxyz0123456789ABCDEFGHIJKLM0123456789NOPQRSTUVWXYZ0123456789";
 
     r *= r;
     for (i = 0; i < j; ++i)
     {
         if (m >= 91) m = 0;
-        res[i] = (r&0x01 ? s[m+1] : s[m]);
+        res[i] = (r&0x01 ? STR_TABLE[m+1] : STR_TABLE[m]);
         r >>= 1;
         m += n;
     }
     inx = m;
 
     return czl_set_ret_str(gp, &fun->ret, res, j);
+}
+///////////////////////////////////////////////////////////////
+char czl_sys_Hash(czl_gp *gp, czl_fun *fun)
+{
+    czl_string *s = CZL_STR(fun->vars->val.str.Obj);
+
+    fun->ret.val.inum = czl_bkdr_hash(s->str, s->len);
+    fun->ret.val.inum ^= fun->vars[1].val.inum;
+
+    return 1;
 }
 ///////////////////////////////////////////////////////////////
 char czl_sys_int(czl_gp *gp, czl_fun *fun)
@@ -3160,6 +3192,51 @@ char czl_sys_memrep(czl_gp *gp, czl_fun *fun)
     str->val.str = tmp;
     return 1;
 }
+
+#ifdef CZL_SYSTEM_WINDOWS
+char czl_sys_toUtf8(czl_gp *gp, czl_fun *fun)
+{
+    char *str = CZL_STR(fun->vars->val.str.Obj)->str;
+    UINT len, wlen = MultiByteToWideChar(936, 0, str, -1, 0, 0);
+    WCHAR *wbuf = CZL_TMP_MALLOC(gp, sizeof(WCHAR)*(wlen+1));
+    MultiByteToWideChar(936, 0, str, -1, wbuf, wlen);
+
+    len = WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, NULL, 0, 0, 0);
+    if (!czl_str_create(gp, &fun->ret.val.str, len, len-1, NULL))
+    {
+        CZL_TMP_FREE(gp, wbuf, sizeof(WCHAR)*(wlen+1));
+        return 0;
+    }
+    fun->ret.type = CZL_STRING;
+    WideCharToMultiByte(CP_UTF8, 0, wbuf, -1,
+                        CZL_STR(fun->ret.val.str.Obj)->str,
+                        len, 0, 0);
+
+    CZL_TMP_FREE(gp, wbuf, sizeof(WCHAR)*(wlen+1));
+    return 1;
+}
+
+char czl_sys_toAnsi(czl_gp *gp, czl_fun *fun)
+{
+    const unsigned char *str = CZL_STR(fun->vars->val.str.Obj)->str;
+    UINT len, wlen = MultiByteToWideChar(CP_UTF8, 0, str, -1, 0, 0);
+    WCHAR *wbuf = CZL_TMP_MALLOC(gp, sizeof(WCHAR)*(wlen+1));
+    MultiByteToWideChar(CP_UTF8, 0, str, -1, wbuf, wlen);
+
+    len = WideCharToMultiByte(936, 0, wbuf, -1, NULL, 0, 0, 0);
+    if (!czl_str_create(gp, &fun->ret.val.str, len, len-1, NULL))
+    {
+        CZL_TMP_FREE(gp, wbuf, sizeof(WCHAR)*(wlen+1));
+        return 0;
+    }
+    fun->ret.type = CZL_STRING;
+    WideCharToMultiByte(936, 0, wbuf, -1,
+                        CZL_STR(fun->ret.val.str.Obj)->str, len, 0, 0);
+
+    CZL_TMP_FREE(gp, wbuf, sizeof(WCHAR)*(wlen+1));
+    return 1;
+}
+#endif //#ifdef CZL_SYSTEM_WINDOWS
 ///////////////////////////////////////////////////////////////
 char czl_sys_abort(czl_gp *gp, czl_fun *fun)
 {
@@ -3256,23 +3333,16 @@ void WINAPI czl_timer_event(UINT uTimerID, UINT uMsg, DWORD dwUser, DWORD dwl, D
 void czl_timer_event(union sigval sv)
 #endif
 {
-    czl_timer *t;
 #ifdef CZL_SYSTEM_WINDOWS
-    czl_gp *gp = ((czl_gp*)dwUser);
+    czl_timer *t = ((czl_timer*)dwUser);
 #else //CZL_SYSTEM_LINUX
-    czl_timer *uTimerID = sv.sival_ptr;
-    czl_gp *gp = uTimerID->gp;
+    czl_timer *t = sv.sival_ptr;
 #endif
+    czl_gp *gp = t->gp;
 
     czl_timer_lock(gp);
 
-    if ((t=czl_sys_hash_find(
-                         #ifdef CZL_SYSTEM_WINDOWS
-                             CZL_NIL,
-                         #else //CZL_SYSTEM_LINUX
-                             CZL_INT,
-                         #endif
-                             CZL_NIL, (void*)uTimerID, &gp->timers_hash)) && 0 == t->state)
+    if ((t=czl_sys_hash_find(CZL_INT, CZL_NIL, (void*)t, &gp->timers_hash)) && 0 == t->state)
     {
         //将有事件的定时器放到链表头
         if (t->last)
@@ -3312,7 +3382,11 @@ char czl_sys_timer(czl_gp *gp, czl_fun *fun)
         return 0;
 
 #ifdef CZL_SYSTEM_WINDOWS
-    timerId = timeSetEvent(period, 1, czl_timer_event, gp, TIME_PERIODIC);
+    if (!(timerId=timeSetEvent(period, 1, czl_timer_event, (DWORD)p, TIME_PERIODIC)))
+    {
+        CZL_TIMER_FREE(gp, p);
+        return 1;
+    }
 #else //CZL_SYSTEM_LINUX
     struct sigevent se;
     memset(&se, 0, sizeof(struct sigevent));
@@ -3345,8 +3419,44 @@ char czl_sys_timer(czl_gp *gp, czl_fun *fun)
                                          #else //CZL_SYSTEM_LINUX
                                              timer_delete,
                                          #endif
-                                             cb_fun)))
+                                             period, cb_fun)))
         return 0;
+
+    return 1;
+}
+
+char czl_timer_reset(czl_gp *gp, czl_fun *fun)
+{
+    long id = fun->vars->val.inum;
+    czl_timer *t = czl_sys_hash_find(CZL_INT, CZL_NIL, (void*)id, &gp->timers_hash);
+#ifdef CZL_SYSTEM_WINDOWS
+    unsigned long timerId;
+#else //CZL_SYSTEM_LINUX
+    timer_t timerId;
+#endif
+
+#ifdef CZL_SYSTEM_WINDOWS
+    if (!t || !(timerId=timeSetEvent(t->period, 1, czl_timer_event, (DWORD)t, TIME_PERIODIC)))
+        fun->ret.val.inum = 0;
+    else
+    {
+        t->timer_delete(t->id);
+        t->id = timerId;
+        fun->ret.val.inum = 1;
+    }
+#else //CZL_SYSTEM_LINUX
+    struct itimerspec it;
+    unsigned long sec = t->period/1000;
+    unsigned long nsec = (t->period - sec*1000) * 1000*1000;
+    it.it_interval.tv_sec = sec;
+    it.it_interval.tv_nsec = nsec;
+    it.it_value.tv_sec = sec;
+    it.it_value.tv_nsec = nsec;
+    if (timer_settime(t->id, 0, &it, NULL) == -1)
+        fun->ret.val.inum = 0;
+    else
+        fun->ret.val.inum = 1;
+#endif
 
     return 1;
 }
@@ -3876,15 +3986,6 @@ void czl_fix_tabkv_ptr(czl_table *tab)
     tab->eles_tail = q;
 }
 
-char czl_strcmp(const char *a, const char *b)
-{
-    while ((*a == *b || *a == *b+32 || *b == *a+32) && *a)
-    {
-        ++a; ++b;
-    }
-    return (*a || *b ? 0 : 1);
-}
-
 char czl_sys_sort(czl_gp *gp, czl_fun *fun)
 {
     czl_var *obj = CZL_GRV(fun->vars);
@@ -3951,7 +4052,7 @@ char czl_sys_toBin(czl_gp *gp, czl_fun *fun)
         !czl_set_ret_str(gp, &fun->ret, NULL, obj_size))
         return 0;
 
-    memcpy(CZL_STR(fun->ret.val.str.Obj)->str, &czl_check_sum, 4);
+    memcpy(CZL_STR(fun->ret.val.str.Obj)->str, &CZL_CHECK_SUM, 4);
     czl_get_obj_buf(gp, fun->vars, CZL_STR(fun->ret.val.str.Obj)->str+4);
 
     return 1;
@@ -3961,7 +4062,7 @@ char czl_sys_toObj(czl_gp *gp, czl_fun *fun)
 {
     czl_string *bin = CZL_STR(fun->vars->val.str.Obj);
 
-    if (bin->len <= 4 || memcmp(&czl_check_sum, bin->str, 4) ||
+    if (bin->len <= 4 || memcmp(&CZL_CHECK_SUM, bin->str, 4) ||
         !czl_analysis_ele_buf(gp, bin->str+4, &fun->ret))
         fun->ret.val.inum = 0;
 
@@ -4280,7 +4381,10 @@ char czl_sys_reset(czl_gp *gp, czl_fun *fun)
         czl_coroutine *c = (obj ? CZL_COR(obj) : NULL);
         if (!c || CZL_IN_BUSY == c->fun->state)
         {
-            fun->ret.val.inum = 0;
+        #ifdef CZL_TIMER
+            if (!czl_timer_reset(gp, fun))
+        #endif
+                fun->ret.val.inum = 0;
             return 1;
         }
         c->pc = NULL;

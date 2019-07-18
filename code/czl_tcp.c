@@ -4,6 +4,8 @@
 
 //库函数声明，其中gp是CZL运行时用到的全局参数，fun是函数。
 char czl_tcp_server(czl_gp *gp, czl_fun *fun);  //创建服务器socket
+char czl_tcp_fork(czl_gp *gp, czl_fun *fun);    //fork一台服务器
+char czl_tcp_sock(czl_gp *gp, czl_fun *fun);    //获取服务器sock
 char czl_tcp_listen(czl_gp *gp, czl_fun *fun);  //服务器侦听新客户端并获取socket
 char czl_tcp_connect(czl_gp *gp, czl_fun *fun); //连接服务器并获得socket
 char czl_tcp_close(czl_gp *gp, czl_fun *fun);   //关闭socket
@@ -17,6 +19,8 @@ const czl_sys_fun czl_lib_tcp[] =
 {
     //函数名,     函数指针,          参数个数,  参数声明
     {"server",   czl_tcp_server,   3,        "str_v1,int_v2,int_v3=0"},
+    {"fork",     czl_tcp_fork,     2,        "int_v1,int_v2=-1"},
+    {"sock",     czl_tcp_sock,     1,        "map_v1"},
     {"listen",   czl_tcp_listen,   2,        "int_v1,int_v2=-1"},
     {"connect",  czl_tcp_connect,  2,        "str_v1,int_v2"},
     {"close",    czl_tcp_close,    2,        "&v1,int_v2=0"},
@@ -27,6 +31,61 @@ const czl_sys_fun czl_lib_tcp[] =
 };
 
 #define CZL_TCP_BUF_SIZE 50*1024
+#define CZL_TCP_DEFAULT_FD_NUM 1000000
+
+char czl_tcp_server_create(czl_gp *gp, long sock, long maxFd, czl_var *ret, char srvFlag)
+{
+    void **obj;
+    czl_tabkv *v1, *v2, *v3;
+
+    if (!(obj=czl_table_create(gp, 3, 0, 0)) ||
+        !(v1=czl_create_num_tabkv(gp, CZL_TAB(obj), -1)) ||
+        !(v2=czl_create_num_tabkv(gp, CZL_TAB(obj), -2)) ||
+        !(v3=czl_create_num_tabkv(gp, CZL_TAB(obj), sock)))
+    {
+        if (srvFlag)
+        {
+        #ifdef CZL_SYSTEM_WINDOWS
+            closesocket(sock);
+        #else //CZL_SYSTEM_LINUX
+            close(sock);
+        #endif
+        }
+        czl_table_delete(gp, obj);
+        return 0;
+    }
+
+    if (maxFd < 0) maxFd = CZL_TCP_DEFAULT_FD_NUM;
+
+    v1->val.ext.v1.ptr = v1->val.ext.v2.ptr = NULL;
+    v2->val.ext.v1.ptr = v2->val.ext.v2.ptr = NULL;
+#ifdef CZL_SYSTEM_WINDOWS
+    v3->val.ext.v1.ptr = NULL;
+#else //CZL_SYSTEM_LINUX
+    int kdpfd = -1;
+    struct epoll_event ev;
+    ev.events = EPOLLIN | EPOLLET;
+    ev.data.fd = sock;
+    if ((kdpfd=epoll_create(maxFd)) < 0 ||
+        epoll_ctl(kdpfd, EPOLL_CTL_ADD, sock, &ev) < 0)
+    {
+        if (srvFlag)
+            close(sock);
+        close(kdpfd);
+        czl_table_delete(gp, obj);
+        ret->val.inum = 0;
+        return 1;
+    }
+    v3->val.ext.v1.i32 = kdpfd;
+#endif
+    v3->val.ext.v2.u32 = maxFd+3;
+    if (!srvFlag)
+        v3->ot = CZL_INT;
+
+    ret->type = CZL_TABLE;
+    ret->val.Obj = obj;
+    return 1;
+}
 
 //库函数定义
 char czl_tcp_server(czl_gp *gp, czl_fun *fun)
@@ -49,8 +108,6 @@ char czl_tcp_server(czl_gp *gp, czl_fun *fun)
     service.sin_addr.s_addr = inet_addr(CZL_STR(fun->vars[0].val.str.Obj)->str);
     service.sin_port = htons(fun->vars[1].val.inum);
 
-    fun->ret.val.inum = 0;
-
     if ((sock=socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) <= 0 ||
     #ifdef CZL_SYSTEM_WINDOWS
         SOCKET_ERROR == ioctlsocket(sock, FIONBIO, &type) ||
@@ -65,53 +122,30 @@ char czl_tcp_server(czl_gp *gp, czl_fun *fun)
     #else //CZL_SYSTEM_LINUX
         close(sock);
     #endif
+        fun->ret.val.inum = 0;
         return 1;
     }
 
-    if (maxFd)
+    if (!maxFd)
     {
-        void **obj;
-        czl_tabkv *v1, *v2, *v3;
-        if (!(obj=czl_table_create(gp, 3, 0, 0)) ||
-            !(v1=czl_create_num_tabkv(gp, CZL_TAB(obj), -1)) ||
-            !(v2=czl_create_num_tabkv(gp, CZL_TAB(obj), -2)) ||
-            !(v3=czl_create_num_tabkv(gp, CZL_TAB(obj), sock)))
-        {
-        #ifdef CZL_SYSTEM_WINDOWS
-            closesocket(sock);
-        #else //CZL_SYSTEM_LINUX
-            close(sock);
-        #endif
-            CZL_TAB_FREE(gp, obj);
-            return 0;
-        }
-        v1->val.ext.v1.ptr = v1->val.ext.v2.ptr = NULL;
-        v2->val.ext.v1.ptr = v2->val.ext.v2.ptr = NULL;
-        if (maxFd < 0) maxFd = 1000000;
-    #ifdef CZL_SYSTEM_WINDOWS
-        v3->val.ext.v1.ptr = NULL;
-    #else //CZL_SYSTEM_LINUX
-        int kdpfd = -1;
-        struct epoll_event ev;
-        ev.events = EPOLLIN | EPOLLET;
-        ev.data.fd = sock;
-        if ((kdpfd=epoll_create(maxFd)) < 0 ||
-            epoll_ctl(kdpfd, EPOLL_CTL_ADD, sock, &ev) < 0)
-        {
-            close(sock);
-            close(kdpfd);
-            czl_table_delete(gp, obj);
-            return 1;
-        }
-        v3->val.ext.v1.i32 = kdpfd;
-    #endif
-        v3->val.ext.v2.u32 = maxFd+3;
-        fun->ret.type = CZL_TABLE;
-        fun->ret.val.Obj = obj;
+        fun->ret.val.inum = sock;
+        return 1;
     }
     else
-        fun->ret.val.inum = sock;
+        return czl_tcp_server_create(gp, sock, maxFd, &fun->ret, 1);
+}
 
+char czl_tcp_fork(czl_gp *gp, czl_fun *fun)
+{
+    long sock = fun->vars->val.inum;
+    long maxFd = fun->vars[1].val.inum;
+    return czl_tcp_server_create(gp, sock, maxFd, &fun->ret, 0);
+}
+
+char czl_tcp_sock(czl_gp *gp, czl_fun *fun)
+{
+    czl_table *tab = CZL_TAB(fun->vars->val.Obj);
+    fun->ret.val.inum = (0 == tab->count ? 0 : tab->eles_tail->key.inum);
     return 1;
 }
 
@@ -246,11 +280,11 @@ char czl_tcp_close(czl_gp *gp, czl_fun *fun)
                 if (p->key.inum < 0)
                     continue;
             #ifdef CZL_SYSTEM_WINDOWS
-                if (SOCKET_ERROR == closesocket(p->key.inum))
+                if (CZL_NIL == p->ot && SOCKET_ERROR == closesocket(p->key.inum))
                     flag = 0;
             #else //CZL_SYSTEM_LINUX
                 epoll_ctl(kdpfd, EPOLL_CTL_DEL, p->key.inum, NULL);
-                if (SOCKET_ERROR == close(p->key.inum))
+                if (CZL_NIL == p->ot && SOCKET_ERROR == close(p->key.inum))
                     flag = 0;
                 if (!p->next && SOCKET_ERROR == close(kdpfd))
                     flag = 0;

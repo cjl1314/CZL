@@ -1466,15 +1466,15 @@ typedef struct czl_thread
 #ifdef CZL_TIMER
 typedef struct czl_timer
 {
-
 #ifdef CZL_SYSTEM_WINDOWS
     unsigned long id;
     WINAPI int (*timer_delete)(unsigned long);
 #else //CZL_SYSTEM_LINUX
     timer_t id;
     int (*timer_delete)(timer_t);
-    struct czl_gp *gp;
 #endif
+    unsigned long period;
+    struct czl_gp *gp;
     czl_fun *cb_fun;
     unsigned char state;
     struct czl_timer *next;
@@ -1899,7 +1899,7 @@ unsigned long czl_timer_create(czl_gp*, czl_timer*,
                                timer_t,
                                int (*)(timer_t),
                            #endif
-                               czl_fun*);
+                               unsigned long, czl_fun*);
 char czl_timer_delete(czl_gp*, unsigned long);
 char czl_timer_cb_fun_run(czl_gp*);
 #endif //#ifdef CZL_TIMER

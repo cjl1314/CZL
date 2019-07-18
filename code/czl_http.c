@@ -8,6 +8,7 @@
 char czl_http_req(czl_gp *gp, czl_fun *fun);    //发送http请求
 char czl_http_res(czl_gp *gp, czl_fun *fun);    //发送http响应
 char czl_http_doc(czl_gp *gp, czl_fun *fun);    //解析http请求
+char czl_http_kv(czl_gp *gp, czl_fun *fun);    //解析http请求
 
 //库函数表定义
 const czl_sys_fun czl_lib_http[] =
@@ -16,13 +17,82 @@ const czl_sys_fun czl_lib_http[] =
     {"req",      czl_http_req,     3,        "int_v1,map_v2,str_v3=\"\""},
     {"res",      czl_http_res,     3,        "int_v1,map_v2,str_v3=\"\""},
     {"doc",      czl_http_doc,     1,        "&str_v1"},
+    {"kv",       czl_http_kv,      1,        "str_v1"},
 };
 
-#define CZL_HTTP_ENCODE(s, obj, buf, len, sign) { \
-    s = CZL_STR(obj); \
-    memcpy(buf+len, s->str, s->len); \
-    len += s->len; \
-    buf[len++] = sign; \
+unsigned long czl_key_num_filt(const czl_string *str)
+{
+    const char *s = str->str;
+    int i = str->len - 1;
+
+    while (i >= 0 && s[i] >= '0' && s[i] <= '9')
+        --i;
+
+    return i+1;
+}
+
+unsigned long CZL_HTTP_KEY_ENCODE
+(
+    unsigned char type,
+    czl_value val,
+    char *buf,
+    unsigned long len,
+    unsigned char sign
+)
+{
+    char tmp[32];
+    char *str = tmp;
+    unsigned long cnt;
+
+    if (CZL_STRING == type)
+    {
+        czl_string *s = CZL_STR(val.str.Obj);
+        cnt = czl_key_num_filt(s);
+        str = s->str;
+    }
+    else if (CZL_INT == type)
+        cnt = czl_itoa(val.inum, tmp);
+    else if (CZL_FLOAT == type)
+        cnt = czl_ftoa(val.fnum, tmp, 1);
+    else
+        cnt = 0;
+
+    memcpy(buf+len, str, cnt);
+    len += cnt;
+    buf[len++] = sign;
+    return len;
+}
+
+unsigned long CZL_HTTP_ENCODE
+(
+    unsigned char type,
+    czl_value val,
+    char *buf,
+    unsigned long len,
+    unsigned char sign
+)
+{
+    char tmp[32];
+    char *str = tmp;
+    unsigned long cnt;
+
+    if (CZL_STRING == type)
+    {
+        czl_string *s = CZL_STR(val.str.Obj);
+        cnt = s->len;
+        str = s->str;
+    }
+    else if (CZL_INT == type)
+        cnt = czl_itoa(val.inum, tmp);
+    else if (CZL_FLOAT == type)
+        cnt = czl_ftoa(val.fnum, tmp, 1);
+    else
+        cnt = 0;
+
+    memcpy(buf+len, str, cnt);
+    len += cnt;
+    buf[len++] = sign;
+    return len;
 }
 
 char* czl_dns(char *domain)
@@ -121,38 +191,33 @@ char czl_http_req(czl_gp *gp, czl_fun *fun)
     unsigned char sockFlag = 0;
     char buf[CZL_HTTP_BUF_SIZE];
     long len = 0;
-    czl_string *s;
 
     fun->ret.val.inum = 0;
 
     //http请求必须包含: 请求方式, 协议版本, 目标主机域名
-    if (tab->count < 3 ||
-        p->kt != CZL_STRING || p->type != CZL_STRING ||
-        p->next->kt != CZL_STRING || p->next->type != CZL_STRING)
+    if (tab->count < 3)
         return 1;
 
     //封装请求方式
-    CZL_HTTP_ENCODE(s, p->key.str.Obj, buf, len, ' ');
-    CZL_HTTP_ENCODE(s, p->val.str.Obj, buf, len, ' ')
+    len = CZL_HTTP_ENCODE(p->kt, p->key, buf, len, ' ');
+    len = CZL_HTTP_ENCODE(p->type, p->val, buf, len, ' ');
     p = p->next;
 
     //封装协议版本
-    CZL_HTTP_ENCODE(s, p->key.str.Obj, buf, len, '/');
-    port = (czl_strcmp("http", s->str) ? 80 : 443);
-    CZL_HTTP_ENCODE(s, p->val.str.Obj, buf, len, '\r');
+    len = CZL_HTTP_ENCODE(p->kt, p->key, buf, len, '/');
+    port = (CZL_STRING == p->kt && czl_strcmp("http", CZL_STR(p->key.str.Obj)->str) ? 80 : 443);
+    len = CZL_HTTP_ENCODE(p->type, p->val, buf, len, '\r');
     buf[len++] = '\n';
     p = p->next;
 
     //封装请求字段集声明
     do {
-        czl_string *k, *v;
-        if (p->kt != CZL_STRING || p->type != CZL_STRING)
-            continue;
-        CZL_HTTP_ENCODE(k, p->key.str.Obj, buf, len, ':');
-        CZL_HTTP_ENCODE(v, p->val.str.Obj, buf, len, '\r');
+        len = CZL_HTTP_KEY_ENCODE(p->kt, p->key, buf, len, ':');
+        len = CZL_HTTP_ENCODE(p->type, p->val, buf, len, '\r');
         buf[len++] = '\n';
-        if (czl_strcmp("host", k->str))
-            host = v->str;
+        if (CZL_STRING == p->kt && CZL_STRING == p->type &&
+            czl_strcmp("host", CZL_STR(p->key.str.Obj)->str))
+            host = CZL_STR(p->val.str.Obj)->str;
     } while ((p=p->next));
 
     buf[len++] = '\r';
@@ -202,36 +267,30 @@ char czl_http_res(czl_gp *gp, czl_fun *fun)
     czl_tabkv *p = tab->eles_head;
     char buf[CZL_HTTP_BUF_SIZE];
     long len = 0;
-    czl_string *s;
 
     fun->ret.val.inum = 0;
 
     //http响应必须包含: 协议版本, 响应码
-    if (tab->count < 2 ||
-        p->kt != CZL_STRING || p->type != CZL_STRING ||
-        p->next->kt != CZL_STRING || p->next->type != CZL_STRING)
+    if (tab->count < 2)
         return 1;
 
     //封装协议版本
-    CZL_HTTP_ENCODE(s, p->key.str.Obj, buf, len, '/');
-    CZL_HTTP_ENCODE(s, p->val.str.Obj, buf, len, ' ');
+    len = CZL_HTTP_ENCODE(p->kt, p->key, buf, len, '/');
+    len = CZL_HTTP_ENCODE(p->type, p->val, buf, len, ' ');
     p = p->next;
 
     //封装响应码
-    CZL_HTTP_ENCODE(s, p->key.str.Obj, buf, len, ' ');
-    CZL_HTTP_ENCODE(s, p->val.str.Obj, buf, len, '\r');
+    len = CZL_HTTP_ENCODE(p->kt, p->key, buf, len, ' ');
+    len = CZL_HTTP_ENCODE(p->type, p->val, buf, len, '\r');
     buf[len++] = '\n';
     p = p->next;
 
     //封装响应字段集声明
     while (p)
     {
-        if (CZL_STRING == p->kt && CZL_STRING == p->type)
-        {
-            CZL_HTTP_ENCODE(s, p->key.str.Obj, buf, len, ':');
-            CZL_HTTP_ENCODE(s, p->val.str.Obj, buf, len, '\r');
-            buf[len++] = '\n';
-        }
+        len = CZL_HTTP_KEY_ENCODE(p->kt, p->key, buf, len, ':');
+        len = CZL_HTTP_ENCODE(p->type, p->val, buf, len, '\r');
+        buf[len++] = '\n';
         p = p->next;
     }
 
@@ -467,6 +526,126 @@ char czl_http_doc(czl_gp *gp, czl_fun *fun)
 
 CZL_OOM:
     czl_array_delete(gp, obj);
+    return 0;
+}
+
+unsigned long czl_strchr(const char *s, const char *e, const char ch)
+{
+    unsigned long cnt = 0;
+
+    while (s < e)
+        if (*s++ == ch)
+            ++cnt;
+
+    return cnt;
+}
+
+void czl_strcpy(unsigned char *a, const unsigned char *s, const unsigned char *e)
+{
+    while (s < e)
+    {
+        if ('%' == *s)
+        {
+            unsigned char n;
+            ++s;
+            if (*s >= 'A' && *s <= 'F')
+                n = ((*s-'A')+10) * 16;
+            else if (*s >= 'a' && *s <= 'f')
+                n = ((*s-'a')+10) * 16;
+            else
+                n = (*s-'0') * 16;
+            //
+            ++s;
+            if (*s >= 'A' && *s <= 'F')
+                *a = n + (*s-'A')+10;
+            else if (*s >= 'a' && *s <= 'f')
+                *a = n + (*s-'a')+10;
+            else
+                *a = n + (*s-'0');
+
+            ++a; ++s;
+        }
+        else if ('+' == *s)
+        {
+            *a++ = ' ';
+            ++s;
+        }
+        else
+            *a++ = *s++;
+    }
+}
+
+char czl_http_kv(czl_gp *gp, czl_fun *fun)
+{
+    czl_string *str = CZL_STR(fun->vars->val.Obj);
+    char *s = str->str, *e = str->str + str->len;
+    char type = (' ' == *s ? 1 : 0); //1: cookie, 0: post
+    void **obj;
+    czl_table *tab;
+
+    //申请一张哈希表格式化存储post/cookie键值对
+    if (!(obj=czl_table_create(gp, 12, 0, 0)))
+        return 0;
+    tab = CZL_TAB(obj);
+
+    //解析post/cookie键值对
+    do {
+        // uid=czl; sid=123
+        //usr=czl&pwd=czl&text=hello%2C%5B3
+        char *t;
+        czl_var key;
+        czl_tabkv *ele;
+        unsigned long count = tab->count;
+        //解析键
+        if (type) ++s;
+        if (!(t=strchr(s, '=')))
+            goto CZL_END;
+        key.quality = CZL_ARRBUF_VAR;
+        if (!czl_str_create(gp, &key.val.str, t-s+1, t-s, s) ||
+            !(ele=czl_create_key_str_tabkv(gp, tab, &key, NULL, 1)))
+        {
+            CZL_SF(gp, key.val.str);
+            goto CZL_OOM;
+        }
+        if (tab->count == count) //字段重复认为不是post数据丢弃
+        {
+            CZL_SF(gp, key.val.str);
+            goto CZL_END;
+        }
+        s = t+1;
+        //解析值
+        if (type)
+        {
+            if (!(t=strchr(s, ';')))
+                t = e;
+            if (!czl_str_create(gp, &ele->val.str, t-s+1, t-s, s))
+                goto CZL_OOM;
+        }
+        else
+        {
+            unsigned long len;
+            if (!(t=strchr(s, '&')))
+                t = e;
+            len = t-s-2*czl_strchr(s, t, '%');
+            if (!czl_str_create(gp, &ele->val.str, len+1, len, NULL))
+                goto CZL_OOM;
+            czl_strcpy(CZL_STR(ele->val.str.Obj)->str, s, t);
+        }
+        ele->type = CZL_STRING;
+        s = t+1;
+    } while (s < e);
+
+    fun->ret.val.Obj = obj;
+    fun->ret.type = CZL_TABLE;
+    return 1;
+
+CZL_END:
+    fun->ret.val.inum = 0;
+    czl_table_delete(gp, obj);
+    return 1;
+
+CZL_OOM:
+    czl_table_delete(gp, obj);
     return 0;
 }
 #endif //CZL_LIB_HTTP

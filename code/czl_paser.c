@@ -3037,6 +3037,17 @@ char* czl_goto_flag_match(czl_gp *gp, char *code)
     return code;
 }
 
+char* czl_return_yeild_match(czl_gp *gp, char *code)
+{
+    char name[CZL_NAME_MAX_SIZE];
+    char *tmp = code = czl_ignore_sign_filt(gp, code);
+
+    if (!(code=czl_name_match(gp, code, name)) || czl_is_keyword(gp, name))
+        return tmp;
+
+    return czl_exp_sentence_match(gp, tmp);
+}
+
 char czl_code_block_create(czl_gp *gp, int index)
 {
     char block_type;
@@ -3239,12 +3250,7 @@ char* czl_context_analysis(czl_gp *gp, char *code, int index)
             return NULL;
         break;
     case CZL_RETURN_INDEX: case CZL_YEILD_INDEX:
-        if (CZL_YEILD_INDEX == index && gp->cur_fun->para_explain)
-        {
-            sprintf(gp->log_buf, "coroutine %s should not have default paras, ", gp->cur_fun->name);
-            return NULL;
-        }
-        if (!(code=czl_exp_sentence_match(gp, code)))
+        if (!(code=czl_return_yeild_match(gp, code)))
             return NULL;
         if (!czl_code_block_create(gp, index))
             return NULL;
