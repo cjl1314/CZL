@@ -3042,7 +3042,7 @@ char* czl_return_yeild_match(czl_gp *gp, char *code)
     char name[CZL_NAME_MAX_SIZE];
     char *tmp = code = czl_ignore_sign_filt(gp, code);
 
-    if (!(code=czl_name_match(gp, code, name)) || czl_is_keyword(gp, name))
+    if ((code=czl_name_match(gp, code, name)) && czl_is_keyword(gp, name))
         return tmp;
 
     return czl_exp_sentence_match(gp, tmp);
