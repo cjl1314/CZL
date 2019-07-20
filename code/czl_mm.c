@@ -1073,7 +1073,21 @@ static void czl_mm_fill_heap
         return;
     }
 
-    page = (pool->freeHead ? pool->freeHead : pool->head);
+    if (pool->freeHead)
+    {
+        if (pool->freeHead->useHead)
+            page = pool->freeHead;
+        else
+        {
+            czl_mm_sp *node = pool->freeHead;
+            czl_mm_sp_break(pool, node);
+            czl_mm_sp_delete(gp, pool, node);
+            czl_mm_free_ov(gp, heap, page, pool);
+            return;
+        }
+    }
+    else
+        page = pool->head;
 
     if (CZL_MM_OBJ_SP == pool->type)
     {
