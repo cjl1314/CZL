@@ -35,6 +35,9 @@ char czl_bytes_read(czl_gp*, FILE*, unsigned char, czl_var*, long);
 #else
 char czl_bytes_read(czl_gp*, FILE*, czl_var*, long);
 #endif
+#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
+char* czl_dns(char*);
+#endif //#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
 ///////////////////////////////////////////////////////////////
 #ifdef CZL_MULT_THREAD
 void czl_thread_lock

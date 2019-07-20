@@ -33,6 +33,32 @@ const czl_sys_fun czl_lib_tcp[] =
 #define CZL_TCP_BUF_SIZE 50*1024
 #define CZL_TCP_DEFAULT_FD_NUM 1000000
 
+unsigned long czl_tcp_busy = 0; //用于避免accept惊群现象
+
+#ifdef CZL_SYSTEM_WINDOWS
+    CRITICAL_SECTION czl_tcp_cs;
+#else //CZL_SYSTEM_LINUX
+    pthread_mutex_t czl_tcp_mutex;
+#endif
+
+void czl_tcp_lock(void)
+{
+#ifdef CZL_SYSTEM_WINDOWS
+    EnterCriticalSection(&czl_tcp_cs);
+#else //CZL_SYSTEM_LINUX
+    pthread_mutex_lock(&czl_tcp_mutex);
+#endif
+}
+
+void czl_tcp_unlock(void)
+{
+#ifdef CZL_SYSTEM_WINDOWS
+    LeaveCriticalSection(&czl_tcp_cs);
+#else //CZL_SYSTEM_LINUX
+    pthread_mutex_unlock(&czl_tcp_mutex);
+#endif
+}
+
 char czl_tcp_server_create(czl_gp *gp, long sock, long maxFd, czl_var *ret, char srvFlag)
 {
     void **obj;
@@ -94,25 +120,34 @@ char czl_tcp_server(czl_gp *gp, czl_fun *fun)
     SOCKET sock;
     unsigned long type = 1; //非阻塞模式
     long maxFd = fun->vars[2].val.inum;
+    char *ip = czl_dns(CZL_STR(fun->vars[0].val.str.Obj)->str);
+    unsigned long port = fun->vars[1].val.inum;
+
+    fun->ret.val.inum = 0;
+
+    if (!ip) return 1;
 
 #ifdef CZL_SYSTEM_WINDOWS
     WSADATA wsaData;
     if (SOCKET_ERROR == WSAStartup(MAKEWORD(2, 2), &wsaData))
-    {
-        fun->ret.val.inum = 0;
         return 1;
-    }
 #endif //#ifdef CZL_SYSTEM_WINDOWS
 
     service.sin_family = AF_INET;
-    service.sin_addr.s_addr = inet_addr(CZL_STR(fun->vars[0].val.str.Obj)->str);
-    service.sin_port = htons(fun->vars[1].val.inum);
+    service.sin_addr.s_addr = inet_addr(ip);
+    service.sin_port = htons(port);
 
     if ((sock=socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) <= 0 ||
     #ifdef CZL_SYSTEM_WINDOWS
         SOCKET_ERROR == ioctlsocket(sock, FIONBIO, &type) ||
     #else //CZL_SYSTEM_LINUX
-        SOCKET_ERROR == setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &type, sizeof(int)) ||
+        SOCKET_ERROR == setsockopt(sock, SOL_SOCKET,
+                               #ifdef CZL_TCP_REUSEPORT
+                                   SO_REUSEPORT,
+                               #else
+                                   SO_REUSEADDR,
+                               #endif
+                                   &type, sizeof(int)) ||
     #endif
         SOCKET_ERROR == bind(sock, (struct sockaddr*)&service, sizeof(service)) ||
         SOCKET_ERROR == listen(sock, 5))
@@ -122,7 +157,6 @@ char czl_tcp_server(czl_gp *gp, czl_fun *fun)
     #else //CZL_SYSTEM_LINUX
         close(sock);
     #endif
-        fun->ret.val.inum = 0;
         return 1;
     }
 
@@ -366,7 +400,7 @@ char czl_tcp_get_data(czl_gp *gp, czl_var *h, czl_tabkv *q)
     long len;
     char buf[CZL_TCP_BUF_SIZE];
     czl_table *tab = CZL_TAB(h->val.Obj);
-    czl_fun *datasBlock = tab->eles_tail->last->val.ext.v2.ptr;
+    czl_fun *eventDatas = tab->eles_tail->last->val.ext.v2.ptr;
 
     do {
         len = recv(q->key.inum, buf, CZL_TCP_BUF_SIZE, 0);
@@ -434,12 +468,12 @@ char czl_tcp_get_data(czl_gp *gp, czl_var *h, czl_tabkv *q)
 
     if (CZL_INT == q->type)
     {
-        czl_fun *leaveBlock = tab->eles_tail->last->last->val.ext.v2.ptr;
-        if (leaveBlock)
-            return czl_tcp_event_handle(gp, leaveBlock, h, q->key.inum) ? -1 : 0;
+        czl_fun *eventLeave = tab->eles_tail->last->last->val.ext.v2.ptr;
+        if (eventLeave)
+            return czl_tcp_event_handle(gp, eventLeave, h, q->key.inum) ? -1 : 0;
     }
-    else if (datasBlock)
-        return czl_tcp_event_handle(gp, datasBlock, h, q->key.inum) ? -1 : 0;
+    else if (eventDatas)
+        return czl_tcp_event_handle(gp, eventDatas, h, q->key.inum) ? -1 : 0;
 
     if (q->last)
     {
@@ -491,17 +525,33 @@ char czl_tcp_recv_1(czl_gp *gp, czl_fun *fun, czl_var *h)
             czl_tabkv *next, *q = p;
             fd_set fdRead;
             unsigned long j;
+            unsigned char busyFlag = 0;
+            char retFlag = -1;
             FD_ZERO(&fdRead);
             for (j = 0; j < FD_SETSIZE && p; ++j, p = p->next)
             {
                 if (p->key.inum < 0)
                     continue;
-                else if (!p->next && tab->count >= p->val.ext.v2.u32)
-                    break;
+                else if (!p->next)
+                {
+                    if (tab->count >= p->val.ext.v2.u32)
+                        break;
+                    czl_tcp_lock();
+                    if (czl_tcp_busy)
+                    {
+                        czl_tcp_unlock();
+                        if (time && 3 == tab->count)
+                            CZL_SLEEP(1); //避免CPU空转
+                        break;
+                    }
+                    czl_tcp_busy = 1;
+                    czl_tcp_unlock();
+                    busyFlag = 1;
+                }
                 FD_SET(p->key.inum, &fdRead);
             }
             if (select(0, &fdRead, NULL, NULL, &timeout) <= 0)
-                continue;
+                goto CZL_END;
             for (j = 0; j < FD_SETSIZE && q; ++j, q = next)
             {
                 SOCKET sock;
@@ -514,7 +564,10 @@ char czl_tcp_recv_1(czl_gp *gp, czl_fun *fun, czl_var *h)
                     if (1 == ret)
                         ++resCnt;
                     else if (0 == ret)
-                        return 0;
+                    {
+                        retFlag = 0;
+                        goto CZL_END;
+                    }
                 }
                 else if ((sock=accept(q->key.inum, NULL, NULL)) > 0)
                 {
@@ -522,21 +575,30 @@ char czl_tcp_recv_1(czl_gp *gp, czl_fun *fun, czl_var *h)
                     if (!ele || !czl_val_del(gp, (czl_var*)ele))
                     {
                         closesocket(sock);
-                        return 0;
+                        retFlag = 0;
+                        goto CZL_END;
                     }
                     ele->val.inum = 0;
                     if (!eventLogin)
                         ++resCnt;
                     else if (!czl_tcp_event_handle(gp, eventLogin, h, sock))
-                        return 0;
+                    {
+                        retFlag = 0;
+                        goto CZL_END;
+                    }
                 }
             }
             if (resCnt)
             {
                 tab->eles_tail->val.ext.v1.ptr = q;
                 fun->ret.val.inum = resCnt;
-                return 1;
+                retFlag = 1;
             }
+        CZL_END:
+            if (busyFlag)
+                czl_tcp_busy = 0;
+            if (retFlag != -1)
+                return retFlag;
         }
         tab->eles_tail->val.ext.v1.ptr = NULL;
     } while (time < 0 || ++cnt < maxCnt);
@@ -555,6 +617,8 @@ char czl_tcp_recv_1(czl_gp *gp, czl_fun *fun, czl_var *h)
     int kdpfd, lisfd;
     unsigned long maxFd;
     unsigned long size = (tab->count-2)*sizeof(struct epoll_event);
+    unsigned char busyFlag = 0;
+    char retFlag = 1;
 
     if (tab->count < 3)
     {
@@ -573,11 +637,32 @@ char czl_tcp_recv_1(czl_gp *gp, czl_fun *fun, czl_var *h)
     maxFd = tab->eles_tail->val.ext.v2.u32;
     eventLogin = tab->eles_tail->last->last->val.ext.v1.ptr;
 
+    if (CZL_INT == tab->eles_tail->ot && tab->count < maxFd)
+    {
+        czl_tcp_lock();
+        if (czl_tcp_busy)
+        {
+            czl_tcp_unlock();
+            if (time && 3 == tab->count)
+                CZL_SLEEP(1); //避免CPU空转
+            epoll_ctl(kdpfd, EPOLL_CTL_DEL, lisfd, NULL);
+        }
+        else
+        {
+            czl_tcp_busy = 1;
+            czl_tcp_unlock();
+            busyFlag = 1;
+            struct epoll_event ev;
+            ev.events = EPOLLIN | EPOLLET;
+            ev.data.fd = lisfd;
+            epoll_ctl(kdpfd, EPOLL_CTL_ADD, lisfd, &ev);
+        }
+    }
+
     if ((cnt=epoll_wait(kdpfd, events, tab->count-2, time)) <= 0)
     {
-        fun->ret.val.inum = 0;
-        CZL_TMP_FREE(gp, events, size);
-        return 1;
+        retFlag = 1;
+        goto CZL_END;
     }
 
     for (i = 0; i < cnt; ++i)
@@ -593,8 +678,8 @@ char czl_tcp_recv_1(czl_gp *gp, czl_fun *fun, czl_var *h)
                 !czl_val_del(gp, (czl_var*)ele))
             {
                 close(sock);
-                CZL_TMP_FREE(gp, events, size);
-                return 0;
+                retFlag = 0;
+                goto CZL_END;
             }
             ele->val.inum = 0;
             ev.events = EPOLLIN | EPOLLET;
@@ -607,7 +692,10 @@ char czl_tcp_recv_1(czl_gp *gp, czl_fun *fun, czl_var *h)
             if (!eventLogin)
                 ++resCnt;
             else if (!czl_tcp_event_handle(gp, eventLogin, h, sock))
-                return 0;
+            {
+                retFlag = 0;
+                goto CZL_END;
+            }
             //当连接数达到最大时从红黑树删除accept-sock避免“惊群现象”提高服务器性能
             if (tab->count >= maxFd)
                 epoll_ctl(kdpfd, EPOLL_CTL_DEL, lisfd, NULL);
@@ -623,15 +711,18 @@ char czl_tcp_recv_1(czl_gp *gp, czl_fun *fun, czl_var *h)
                 ++resCnt;
             else if (0 == ret)
             {
-                CZL_TMP_FREE(gp, events, size);
-                return 0;
+                retFlag = 0;
+                goto CZL_END;
             }
         }
     }
 
+CZL_END:
+    if (busyFlag)
+        czl_tcp_busy = 0;
     fun->ret.val.inum = resCnt;
     CZL_TMP_FREE(gp, events, size);
-    return 1;
+    return retFlag;
 }
 #endif
 

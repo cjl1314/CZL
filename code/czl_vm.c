@@ -10812,7 +10812,6 @@ char czl_tabkv_delete
 #endif //#ifndef CZL_CONSOLE
 ///////////////////////////////////////////////////////////////
 #if (defined CZL_MULT_THREAD && defined CZL_CONSOLE)
-unsigned char czl_global_lock_init;
 #ifdef CZL_SYSTEM_WINDOWS
     CRITICAL_SECTION czl_global_cs;
 #elif defined CZL_SYSTEM_LINUX

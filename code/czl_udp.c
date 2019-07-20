@@ -32,19 +32,22 @@ char czl_udp_server(czl_gp *gp, czl_fun *fun)
     SOCKET sock;
     unsigned long type = 1; //非阻塞模式
     czl_str str;
+    char *ip = czl_dns(CZL_STR(fun->vars[0].val.str.Obj)->str);
+    unsigned long port = fun->vars[1].val.inum;
+
+    fun->ret.val.inum = 0;
+
+    if (!ip) return 1;
 
 #ifdef CZL_SYSTEM_WINDOWS
     WSADATA wsaData;
     if (SOCKET_ERROR == WSAStartup(MAKEWORD(2, 2), &wsaData))
-    {
-        fun->ret.val.inum = 0;
         return 1;
-    }
 #endif //#ifdef CZL_SYSTEM_WINDOWS
 
     service.sin_family = AF_INET;
-    service.sin_addr.s_addr = inet_addr(CZL_STR(fun->vars[0].val.str.Obj)->str);
-    service.sin_port = htons(fun->vars[1].val.inum);
+    service.sin_addr.s_addr = inet_addr(ip);
+    service.sin_port = htons(port);
 
     if ((sock=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) <= 0 ||
     #ifdef CZL_SYSTEM_WINDOWS
@@ -55,7 +58,6 @@ char czl_udp_server(czl_gp *gp, czl_fun *fun)
         SOCKET_ERROR == bind(sock, (struct sockaddr*)&service, sizeof(service)) ||
         !czl_str_create(gp, &str, 11, 10, NULL))
     {
-        fun->ret.val.inum = 0;
     #ifdef CZL_SYSTEM_WINDOWS
         closesocket(sock);
     #else //CZL_SYSTEM_LINUX

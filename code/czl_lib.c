@@ -122,9 +122,9 @@ char czl_sys_corsta(czl_gp*, czl_fun*);
 char czl_sys_resume(czl_gp*, czl_fun*);
 char czl_sys_kill(czl_gp*, czl_fun*);
 //
-#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP)
+#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
 char czl_sys_dns(czl_gp*, czl_fun*);
-#endif //#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP)
+#endif //#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
 //
 #ifdef CZL_MULT_THREAD
 char czl_sys_thread(czl_gp*, czl_fun*);
@@ -264,10 +264,10 @@ const czl_sys_fun czl_lib_os[] =
     //线程、协程和定时器共用kill函数
     {"resume",    czl_sys_resume,     -1, NULL},
     {"kill",      czl_sys_kill,       1,  "int_v1"},
-#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP)
+#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
     //域名解析函数
     {"dns",       czl_sys_dns,        1,  "str_v1"},
-#endif //#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP)
+#endif //#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
 #ifdef CZL_MULT_THREAD
     //多线程框架接口函数
     #ifdef CZL_CONSOLE
@@ -4501,7 +4501,7 @@ char czl_sys_kill(czl_gp *gp, czl_fun *fun)
     return 1;
 }
 ///////////////////////////////////////////////////////////////
-#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP)
+#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
 char czl_sys_dns(czl_gp *gp, czl_fun *fun)
 {
     char *domain = CZL_STR(fun->vars[0].val.str.Obj)->str;
@@ -4549,12 +4549,29 @@ char czl_sys_dns(czl_gp *gp, czl_fun *fun)
     fun->ret.val.Obj = obj;
     return 1;
 }
-#else
-char czl_sys_dns(czl_gp *gp, czl_fun *fun)
+
+char* czl_dns(char *domain)
 {
-    return 1;
+    struct hostent *host;
+
+    if (!domain)
+        return NULL;
+
+    if (*domain >= '0' && *domain <= '9')
+        return domain;
+
+#ifdef CZL_SYSTEM_WINDOWS
+    WSADATA wsaData;
+    if (SOCKET_ERROR == WSAStartup(MAKEWORD(2, 2), &wsaData))
+        return NULL;
+#endif //#ifdef CZL_SYSTEM_WINDOWS
+
+    if (!(host=gethostbyname(domain)))
+        return NULL;
+
+    return inet_ntoa(*(struct in_addr*)host->h_addr_list[0]);
 }
-#endif
+#endif //#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
 ///////////////////////////////////////////////////////////////
 #ifdef CZL_MULT_THREAD
 void czl_thread_lock

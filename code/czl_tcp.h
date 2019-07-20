@@ -12,6 +12,7 @@
         #include <arpa/inet.h>
         #include <netdb.h>
         #include <sys/epoll.h>
+        #define CZL_TCP_REUSEPORT
         #define SOCKET_ERROR -1
         typedef int SOCKET;
     #else
@@ -22,6 +23,14 @@
 #ifdef CZL_LIB_TCP
     extern const czl_sys_fun czl_lib_tcp[]; //库函数表声明
     #define CZL_LIB_TCP_CNT 10              //库函数个数
+    //
+    #ifdef CZL_SYSTEM_WINDOWS
+        extern CRITICAL_SECTION czl_tcp_cs;
+    #else //CZL_SYSTEM_LINUX
+        extern pthread_mutex_t czl_tcp_mutex;
+    #endif
+    void czl_tcp_lock(void);
+    void czl_tcp_unlock(void);
 #endif //CZL_LIB_TCP
 
 #endif // CZL_TCP_H

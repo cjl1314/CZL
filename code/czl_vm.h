@@ -1905,7 +1905,6 @@ char czl_timer_cb_fun_run(czl_gp*);
 #endif //#ifdef CZL_TIMER
 ///////////////////////////////////////////////////////////////
 #if (defined CZL_MULT_THREAD && defined CZL_CONSOLE)
-    extern unsigned char czl_global_lock_init;
     #ifdef CZL_SYSTEM_WINDOWS
         extern CRITICAL_SECTION czl_global_cs;
     #elif defined CZL_SYSTEM_LINUX

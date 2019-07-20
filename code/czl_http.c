@@ -8,7 +8,7 @@
 char czl_http_req(czl_gp *gp, czl_fun *fun);    //发送http请求
 char czl_http_res(czl_gp *gp, czl_fun *fun);    //发送http响应
 char czl_http_doc(czl_gp *gp, czl_fun *fun);    //解析http请求
-char czl_http_kv(czl_gp *gp, czl_fun *fun);    //解析http请求
+char czl_http_kv(czl_gp *gp, czl_fun *fun);     //解析http请求
 
 //库函数表定义
 const czl_sys_fun czl_lib_http[] =
@@ -93,25 +93,6 @@ unsigned long CZL_HTTP_ENCODE
     len += cnt;
     buf[len++] = sign;
     return len;
-}
-
-char* czl_dns(char *domain)
-{
-    struct hostent *host;
-
-    if (!domain)
-        return NULL;
-
-#ifdef CZL_SYSTEM_WINDOWS
-    WSADATA wsaData;
-    if (SOCKET_ERROR == WSAStartup(MAKEWORD(2, 2), &wsaData))
-        return NULL;
-#endif //#ifdef CZL_SYSTEM_WINDOWS
-
-    if (!(host=gethostbyname(domain)))
-        return NULL;
-
-    return inet_ntoa(*(struct in_addr*)host->h_addr_list[0]);
 }
 
 long czl_send(czl_gp *gp, SOCKET sock, char *buf, long len)
@@ -218,6 +199,9 @@ char czl_http_req(czl_gp *gp, czl_fun *fun)
         if (CZL_STRING == p->kt && CZL_STRING == p->type &&
             czl_strcmp("host", CZL_STR(p->key.str.Obj)->str))
             host = CZL_STR(p->val.str.Obj)->str;
+        else if (CZL_STRING == p->kt && CZL_INT == p->type &&
+                 czl_strcmp("port", CZL_STR(p->key.str.Obj)->str))
+            port = p->val.inum;
     } while ((p=p->next));
 
     buf[len++] = '\r';

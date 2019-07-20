@@ -7,7 +7,7 @@ int main(int argc, char **argv)
     czl_gp gp;
 
 #ifdef CZL_DEBUG
-    char *shell_path = "shell.txt";
+    char *shell_path = "main.czl";
 #else
     char *shell_path;
     if (1 == argc)

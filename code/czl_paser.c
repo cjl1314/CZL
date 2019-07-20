@@ -2,6 +2,10 @@
 #include "czl_opt.h"
 #include "czl_lib.h"
 
+#ifdef CZL_LIB_TCP
+#include "czl_tcp.h" //TCP库
+#endif //CZL_LIB_TCP
+
 ///////////////////////////////////////////////////////////////
 enum czl_keyword_index_enum
 {
@@ -4315,6 +4319,10 @@ char czl_global_paras_init(czl_gp *gp)
     return 1;
 }
 
+#if ((defined CZL_MULT_THREAD && defined CZL_CONSOLE) || defined CZL_LIB_TCP)
+static unsigned char czl_global_lock_init = 0;
+#endif //#if ((defined CZL_MULT_THREAD && defined CZL_CONSOLE) || defined CZL_LIB_TCP)
+
 char czl_sys_init(czl_gp *gp)
 {
 #if defined CZL_SYSTEM_LINUX && (defined CZL_LIB_COM || \
@@ -4338,17 +4346,26 @@ char czl_sys_init(czl_gp *gp)
 
     gp->mm_limit = CZL_MM_3GB;
 
-#if (defined CZL_MULT_THREAD && defined CZL_CONSOLE)
+#if ((defined CZL_MULT_THREAD && defined CZL_CONSOLE) || defined CZL_LIB_TCP)
     if (!czl_global_lock_init)
     {
         czl_global_lock_init = 1;
-    #ifdef CZL_SYSTEM_WINDOWS
-        InitializeCriticalSection(&czl_global_cs);
-    #elif defined CZL_SYSTEM_LINUX
-        pthread_mutex_init(&czl_global_mutex, NULL);
-    #endif
+    #if (defined CZL_MULT_THREAD && defined CZL_CONSOLE)
+        #ifdef CZL_SYSTEM_WINDOWS
+            InitializeCriticalSection(&czl_global_cs);
+        #elif defined CZL_SYSTEM_LINUX
+            pthread_mutex_init(&czl_global_mutex, NULL);
+        #endif
+    #endif //#if (defined CZL_MULT_THREAD && defined CZL_CONSOLE)
+    #ifdef CZL_LIB_TCP
+        #ifdef CZL_SYSTEM_WINDOWS
+            InitializeCriticalSection(&czl_tcp_cs);
+        #elif defined CZL_SYSTEM_LINUX
+            pthread_mutex_init(&czl_tcp_mutex, NULL);
+        #endif
+    #endif //#ifdef CZL_LIB_TCP
     }
-#endif //#if (defined CZL_MULT_THREAD && defined CZL_CONSOLE)
+#endif //#if ((defined CZL_MULT_THREAD && defined CZL_CONSOLE) || defined CZL_LIB_TCP)
 
 #ifdef CZL_TIMER
     #ifdef CZL_SYSTEM_WINDOWS
