@@ -25,7 +25,7 @@ const czl_sys_fun czl_lib_tcp[] =
     {"connect",  czl_tcp_connect,  2,        "str_v1,int_v2"},
     {"close",    czl_tcp_close,    2,        "&v1,int_v2=0"},
     {"recv",     czl_tcp_recv,     2,        "&v1,int_v2=-1"},
-    {"send",     czl_tcp_send,     3,        "int_v1,str_v2,int_v3=-1"},
+    {"send",     czl_tcp_send,     2,        "int_v1,str_v2"},
     {"event",    czl_tcp_event,    3,        "&map_v1,str_v2,fun_v3"},
     {"ip",       czl_tcp_ip,       1,        "int_v1"},
 };
@@ -749,53 +749,7 @@ char czl_tcp_send(czl_gp *gp, czl_fun *fun)
 {
     SOCKET sock = fun->vars[0].val.inum;
     czl_string *buf = CZL_STR(fun->vars[1].val.str.Obj);
-    long time = fun->vars[2].val.inum;
-#ifdef CZL_SYSTEM_WINDOWS
-    fd_set fdWrite;
-    struct timeval timeout, *pTime = NULL;
-#endif
-
-    if ((fun->ret.val.inum=send(sock, buf->str, buf->len, 0)) >= 0)
-        return 1;
-
-#ifdef CZL_SYSTEM_WINDOWS
-    if (time >= 0) { timeout.tv_sec = 0; timeout.tv_usec = time*1000; pTime = &timeout; }
-    FD_ZERO(&fdWrite); FD_SET(sock, &fdWrite);
-    if (select(0, NULL, &fdWrite, NULL, pTime) <= 0)
-    {
-        fun->ret.val.inum = 0;
-        return 1;
-    }
-#else //CZL_SYSTEM_LINUX
-    struct epoll_event ev, events[1];
-    ev.events = EPOLLOUT;
-    ev.data.fd = sock;
-    if (epoll_ctl(gp->kdpfd, EPOLL_CTL_ADD, sock, &ev) < 0 ||
-        epoll_wait(gp->kdpfd, events, 1, time) <= 0)
-    {
-        fun->ret.val.inum = 0;
-        epoll_ctl(gp->kdpfd, EPOLL_CTL_DEL, sock, NULL);
-        return 1;
-    }
-    epoll_ctl(gp->kdpfd, EPOLL_CTL_DEL, sock, NULL);
-#endif
-
-    if (SOCKET_ERROR == (fun->ret.val.inum=send(sock, buf->str, buf->len, 0)))
-    {
-    #ifdef CZL_SYSTEM_WINDOWS
-        if (WSAGetLastError() == WSAEWOULDBLOCK)
-            fun->ret.val.inum = 0;
-        else
-            closesocket(sock);
-    #else //CZL_SYSTEM_LINUX
-        extern int errno;
-        if (EWOULDBLOCK == errno || EAGAIN == errno)
-            fun->ret.val.inum = 0;
-        else
-            close(sock);
-    #endif
-    }
-
+    fun->ret.val.inum = czl_net_send(gp, sock, buf->str, buf->len);
     return 1;
 }
 

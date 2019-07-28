@@ -33,6 +33,8 @@ char czl_sys_rand(czl_gp*, czl_fun*);
 char czl_sys_rands(czl_gp*, czl_fun*);
 //
 char czl_sys_Hash(czl_gp*, czl_fun*);
+char czl_sys_sha1(czl_gp*, czl_fun*);
+char czl_sys_base64(czl_gp*, czl_fun*);
 //
 char czl_sys_int(czl_gp*, czl_fun*);
 char czl_sys_float(czl_gp*, czl_fun*);
@@ -172,8 +174,10 @@ const czl_sys_fun czl_lib_os[] =
     {"srand",     czl_sys_srand,      1,  "int_v1"},
     {"rand",      czl_sys_rand,       0,  NULL},
     {"rands",     czl_sys_rands,      0,  NULL},
-    //哈希函数
+    //哈希、编码函数
     {"hash",      czl_sys_Hash,       2,  "str_v1,int_v2=0"},
+    {"sha1",      czl_sys_sha1,       1,  "str_v1"},
+    {"base64",    czl_sys_base64,     1,  "str_v1"},
     //数值处理函数
     {"int",       czl_sys_int,        1,  NULL},
     {"float",     czl_sys_float,      1,  NULL},
@@ -313,6 +317,10 @@ const czl_sys_fun czl_lib_os[] =
 #include "czl_http.h" //HTTP库
 #endif //CZL_LIB_HTTP
 
+#ifdef CZL_LIB_WS
+#include "czl_ws.h" //WS库
+#endif //CZL_LIB_WS
+
 #ifdef CZL_LIB_REG
 #include "czl_pcre.h" //PCRE库
 #endif //CZL_LIB_REG
@@ -337,6 +345,10 @@ const czl_sys_lib czl_syslibs[] =
 #ifdef CZL_LIB_HTTP
     {"http",           czl_lib_http,    CZL_LIB_HTTP_CNT}, //HTTP库
 #endif //CZL_LIB_HTTP
+
+#ifdef CZL_LIB_WS
+    {"ws",             czl_lib_ws,    CZL_LIB_WS_CNT}, //WS库
+#endif //CZL_LIB_WS
 
 #ifdef CZL_LIB_REG
     {"reg",           czl_lib_reg,    CZL_LIB_REG_CNT}, //PCRE库
@@ -379,7 +391,6 @@ char czl_set_ret_str
     if (!czl_str_create(gp, &ret->val.str, len+1, len, str))
         return 0;
     ret->type = CZL_STRING;
-
     return 1;
 }
 
@@ -2290,6 +2301,235 @@ char czl_sys_Hash(czl_gp *gp, czl_fun *fun)
     fun->ret.val.inum = czl_bkdr_hash(s->str, s->len);
     fun->ret.val.inum ^= fun->vars[1].val.inum;
 
+    return 1;
+}
+///////////////////////////////////////////////////////////////
+#define CZL_SHA1_HASH_SIZE 20
+
+typedef struct czl_sha1
+{
+    unsigned long Intermediate_Hash[CZL_SHA1_HASH_SIZE/4];
+    unsigned long Length_Low;
+    unsigned long Length_High;
+    unsigned long Message_Block_Index;
+    unsigned char Message_Block[64];
+} czl_sha1;
+
+#define CZL_SHA1_SHIFT(bits, word) (((word) << (bits)) | ((word) >> (32-(bits))))
+
+void czl_sha1_process_message_block(czl_sha1 *context)
+{
+    const unsigned long K[] =
+    {
+        0x5A827999,
+        0x6ED9EBA1,
+        0x8F1BBCDC,
+        0xCA62C1D6
+    };
+    int t;
+    unsigned long temp;
+    unsigned long W[80];
+    unsigned long A, B, C, D, E;
+
+    for(t = 0; t < 16; t++)
+    {
+        W[t] = context->Message_Block[t * 4] << 24;
+        W[t] |= context->Message_Block[t * 4 + 1] << 16;
+        W[t] |= context->Message_Block[t * 4 + 2] << 8;
+        W[t] |= context->Message_Block[t * 4 + 3];
+    }
+    for(t = 16; t < 80; t++)
+    {
+        W[t] = CZL_SHA1_SHIFT(1,W[t-3] ^ W[t-8] ^ W[t-14] ^ W[t-16]);
+    }
+    A = context->Intermediate_Hash[0];
+    B = context->Intermediate_Hash[1];
+    C = context->Intermediate_Hash[2];
+    D = context->Intermediate_Hash[3];
+    E = context->Intermediate_Hash[4];
+    for(t = 0; t < 20; t++)
+    {
+                temp = CZL_SHA1_SHIFT(5,A) +
+                        ((B & C) | ((~B) & D)) + E + W[t] + K[0];
+        E = D;
+        D = C;
+        C = CZL_SHA1_SHIFT(30,B);
+        B = A;
+        A = temp;
+    }
+    for(t = 20; t < 40; t++)
+    {
+        temp = CZL_SHA1_SHIFT(5,A) + (B ^ C ^ D) + E + W[t] + K[1];
+        E = D;
+        D = C;
+        C = CZL_SHA1_SHIFT(30,B);
+        B = A;
+        A = temp;
+    }
+    for(t = 40; t < 60; t++)
+    {
+        temp = CZL_SHA1_SHIFT(5,A) +
+            ((B & C) | (B & D) | (C & D)) + E + W[t] + K[2];
+        E = D;
+        D = C;
+        C = CZL_SHA1_SHIFT(30,B);
+        B = A;
+        A = temp;
+    }
+    for(t = 60; t < 80; t++)
+    {
+        temp = CZL_SHA1_SHIFT(5,A) + (B ^ C ^ D) + E + W[t] + K[3];
+        E = D;
+        D = C;
+        C = CZL_SHA1_SHIFT(30,B);
+        B = A;
+        A = temp;
+    }
+    context->Intermediate_Hash[0] += A;
+    context->Intermediate_Hash[1] += B;
+    context->Intermediate_Hash[2] += C;
+    context->Intermediate_Hash[3] += D;
+    context->Intermediate_Hash[4] += E;
+    context->Message_Block_Index = 0;
+}
+
+void czl_sha1_pad_message(czl_sha1 *context)
+{
+    if (context->Message_Block_Index > 55)
+    {
+        context->Message_Block[context->Message_Block_Index++] = 0x80;
+        while(context->Message_Block_Index < 64)
+            context->Message_Block[context->Message_Block_Index++] = 0;
+        czl_sha1_process_message_block(context);
+        while(context->Message_Block_Index < 56)
+            context->Message_Block[context->Message_Block_Index++] = 0;
+    }
+    else
+    {
+        context->Message_Block[context->Message_Block_Index++] = 0x80;
+        while(context->Message_Block_Index < 56)
+            context->Message_Block[context->Message_Block_Index++] = 0;
+    }
+
+    context->Message_Block[56] = context->Length_High >> 24;
+    context->Message_Block[57] = context->Length_High >> 16;
+    context->Message_Block[58] = context->Length_High >> 8;
+    context->Message_Block[59] = context->Length_High;
+    context->Message_Block[60] = context->Length_Low >> 24;
+    context->Message_Block[61] = context->Length_Low >> 16;
+    context->Message_Block[62] = context->Length_Low >> 8;
+    context->Message_Block[63] = context->Length_Low;
+    czl_sha1_process_message_block(context);
+}
+
+void czl_sha1_reset(czl_sha1 *context)
+{
+    context->Length_Low = 0;
+    context->Length_High = 0;
+    context->Message_Block_Index = 0;
+    context->Intermediate_Hash[0] = 0x67452301;
+    context->Intermediate_Hash[1] = 0xEFCDAB89;
+    context->Intermediate_Hash[2] = 0x98BADCFE;
+    context->Intermediate_Hash[3] = 0x10325476;
+    context->Intermediate_Hash[4] = 0xC3D2E1F0;
+}
+
+void czl_sha1_result(czl_sha1 *context, unsigned char Message_Digest[CZL_SHA1_HASH_SIZE])
+{
+    int i;
+
+    czl_sha1_pad_message(context);
+    for(i=0; i<64; ++i)
+        context->Message_Block[i] = 0;
+    context->Length_Low = 0;
+    context->Length_High = 0;
+
+    for(i = 0; i < CZL_SHA1_HASH_SIZE; ++i)
+        Message_Digest[i] = context->Intermediate_Hash[i>>2] >> 8 * ( 3 - ( i & 0x03 ) );
+}
+
+void czl_sha1_compute(czl_sha1 *context, const unsigned char *message_array, unsigned length)
+{
+    unsigned char corrupted = 0;
+
+    if (!length)
+        return;
+
+    while(length-- && !corrupted)
+    {
+        context->Message_Block[context->Message_Block_Index++] = (*message_array & 0xFF);
+        context->Length_Low += 8;
+        if (context->Length_Low == 0)
+        {
+            context->Length_High++;
+            if (context->Length_High == 0)
+                corrupted = 1;
+        }
+        if (context->Message_Block_Index == 64)
+            czl_sha1_process_message_block(context);
+        message_array++;
+    }
+}
+
+char czl_sys_sha1(czl_gp *gp, czl_fun *fun)
+{
+    czl_string *s = CZL_STR(fun->vars->val.str.Obj);
+    czl_sha1 sha;
+    unsigned char message_digest[CZL_SHA1_HASH_SIZE];
+
+    czl_sha1_reset(&sha);
+    czl_sha1_compute(&sha, (unsigned char*)s->str, s->len);
+    czl_sha1_result(&sha, message_digest);
+
+    return czl_set_ret_str(gp, &fun->ret, (char*)message_digest, CZL_SHA1_HASH_SIZE);
+}
+///////////////////////////////////////////////////////////////
+void czl_base64(const unsigned char *a, unsigned long len, char *b)
+{
+    static const char base64[64] =
+    {
+        'A','B','C','D','E','F','G','H','I','J','K','L','M',
+        'N','O','P','Q','R','S','T','U','V','W','X','Y','Z',
+        'a','b','c','d','e','f','g','h','i','j','k','l','m',
+        'n','o','p','q','r','s','t','u','v','w','x','y','z',
+        '0','1','2','3','4','5','6','7','8','9','+','/'
+    };
+    unsigned long i, j = len/3*3, k = len-j;
+
+    for (i = 0; i < j; i += 3)
+    {
+        *(b++) = base64[*a>>2];
+        *(b++) = base64[((*(a++)&0x03)<<4) | (*a>>4)];
+        *(b++) = base64[((*(a++)&0x0f)<<2) | (*a&0xc0)>>6];
+        *(b++) = base64[*(a++)&0x3f];
+    }
+
+    if (1 == k)
+    {
+        *(b++) = base64[*a>>2];
+        *(b++) = base64[(*a&0x03)<<4];
+        *(b++) = *(b++) = '=';
+    }
+    else if (2 == k)
+    {
+        *(b++) = base64[*a>>2];
+        *(b++) = base64[((*(a++)&0x03)<<4) | (*a>>4)];
+        *(b++) = base64[(*a&0x0f)<<2];
+        *(b++) = '=';
+    }
+
+    *b = '\0';
+}
+
+char czl_sys_base64(czl_gp *gp, czl_fun *fun)
+{
+    czl_string *s = CZL_STR(fun->vars->val.str.Obj);
+    unsigned long len = s->len/3*4 + (s->len%3 ? 4 : 0);
+
+    if (!czl_set_ret_str(gp, &fun->ret, NULL, len))
+        return 0;
+
+    czl_base64((unsigned char*)s->str, s->len, CZL_STR(fun->ret.val.str.Obj)->str);
     return 1;
 }
 ///////////////////////////////////////////////////////////////
@@ -4572,6 +4812,74 @@ char* czl_dns(char *domain)
     return inet_ntoa(*(struct in_addr*)host->h_addr_list[0]);
 }
 #endif //#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
+
+#if (defined CZL_LIB_TCP || defined CZL_LIB_HTTP || defined CZL_LIB_WS)
+long czl_net_send(czl_gp *gp, SOCKET sock, char *buf, long len)
+{
+    long cnt = 0;
+    long ret = send(sock, buf, len, 0);
+
+    if (ret == len)
+        return ret;
+    else if (ret > 0)
+    {
+        cnt += ret;
+        len -= ret;
+    }
+
+#ifdef CZL_SYSTEM_LINUX
+    struct epoll_event ev, events[1];
+    ev.events = EPOLLOUT;
+    ev.data.fd = sock;
+    if (epoll_ctl(gp->kdpfd, EPOLL_CTL_ADD, sock, &ev) < 0)
+        return cnt;
+#endif
+
+    do {
+    #ifdef CZL_SYSTEM_WINDOWS
+        fd_set fdWrite;
+        FD_ZERO(&fdWrite); FD_SET(sock, &fdWrite);
+        if (select(0, NULL, &fdWrite, NULL, NULL) < 0)
+            break;
+    #else //CZL_SYSTEM_LINUX
+        if (epoll_wait(gp->kdpfd, events, 1, -1) < 0)
+            break;
+    #endif
+        ret = send(sock, buf+cnt, len, 0);
+        if (SOCKET_ERROR == ret)
+        {
+        #ifdef CZL_SYSTEM_WINDOWS
+            if (WSAGetLastError() == WSAEWOULDBLOCK)
+                break;
+            else
+            {
+                closesocket(sock);
+                return -1;
+            }
+        #else //CZL_SYSTEM_LINUX
+            extern int errno;
+            if (EWOULDBLOCK == errno || EAGAIN == errno)
+                break;
+            else
+            {
+                cnt = -1;
+                break;
+            }
+        #endif
+        }
+        cnt += ret;
+        len -= ret;
+    } while (len);
+
+#ifdef CZL_SYSTEM_LINUX
+    epoll_ctl(gp->kdpfd, EPOLL_CTL_DEL, sock, NULL);
+    if (-1 == cnt)
+        close(sock);
+#endif
+
+    return cnt;
+}
+#endif //#if (defined CZL_LIB_TCP || defined CZL_LIB_HTTP || defined CZL_LIB_WS)
 ///////////////////////////////////////////////////////////////
 #ifdef CZL_MULT_THREAD
 void czl_thread_lock

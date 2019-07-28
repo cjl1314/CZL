@@ -6,6 +6,7 @@
 #define CZL_LIB_TCP
 #define CZL_LIB_UDP
 #define CZL_LIB_HTTP
+#define CZL_LIB_WS
 #define CZL_LIB_REG
 ///////////////////////////////////////////////////////////////
 #include "czl_vm.h"
@@ -38,6 +39,9 @@ char czl_bytes_read(czl_gp*, FILE*, czl_var*, long);
 #if (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
 char* czl_dns(char*);
 #endif //#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
+#if (defined CZL_LIB_TCP || defined CZL_LIB_HTTP || defined CZL_LIB_WS)
+long czl_net_send(czl_gp*, SOCKET, char*, long);
+#endif //#if (defined CZL_LIB_TCP || defined CZL_LIB_HTTP || defined CZL_LIB_WS)
 ///////////////////////////////////////////////////////////////
 #ifdef CZL_MULT_THREAD
 void czl_thread_lock

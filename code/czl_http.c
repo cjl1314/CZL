@@ -8,7 +8,8 @@
 char czl_http_req(czl_gp *gp, czl_fun *fun);    //发送http请求
 char czl_http_res(czl_gp *gp, czl_fun *fun);    //发送http响应
 char czl_http_doc(czl_gp *gp, czl_fun *fun);    //解析http请求
-char czl_http_kv(czl_gp *gp, czl_fun *fun);     //解析http请求
+char czl_http_form(czl_gp *gp, czl_fun *fun);   //解析http表单数据键值对
+char czl_http_kv(czl_gp *gp, czl_fun *fun);     //解析http头部声明键值对
 
 //库函数表定义
 const czl_sys_fun czl_lib_http[] =
@@ -17,6 +18,7 @@ const czl_sys_fun czl_lib_http[] =
     {"req",      czl_http_req,     3,        "int_v1,map_v2,str_v3=\"\""},
     {"res",      czl_http_res,     3,        "int_v1,map_v2,str_v3=\"\""},
     {"doc",      czl_http_doc,     1,        "&str_v1"},
+    {"form",     czl_http_form,    1,        "str_v1"},
     {"kv",       czl_http_kv,      1,        "str_v1"},
 };
 
@@ -95,72 +97,6 @@ unsigned long CZL_HTTP_ENCODE
     return len;
 }
 
-long czl_send(czl_gp *gp, SOCKET sock, char *buf, long len)
-{
-    long cnt = 0;
-    long ret = send(sock, buf, len, 0);
-
-    if (ret == len)
-        return ret;
-    else if (ret > 0)
-    {
-        cnt += ret;
-        len -= ret;
-    }
-
-#ifdef CZL_SYSTEM_LINUX
-    struct epoll_event ev, events[1];
-    ev.events = EPOLLOUT;
-    ev.data.fd = sock;
-    if (epoll_ctl(gp->kdpfd, EPOLL_CTL_ADD, sock, &ev) < 0)
-        return cnt;
-#endif
-
-    do {
-    #ifdef CZL_SYSTEM_WINDOWS
-        fd_set fdWrite;
-        FD_ZERO(&fdWrite); FD_SET(sock, &fdWrite);
-        if (select(0, NULL, &fdWrite, NULL, NULL) < 0)
-            break;
-    #else //CZL_SYSTEM_LINUX
-        if (epoll_wait(gp->kdpfd, events, 1, -1) < 0)
-            break;
-    #endif
-        ret = send(sock, buf+cnt, len, 0);
-        if (SOCKET_ERROR == ret)
-        {
-        #ifdef CZL_SYSTEM_WINDOWS
-            if (WSAGetLastError() == WSAEWOULDBLOCK)
-                break;
-            else
-            {
-                closesocket(sock);
-                return -1;
-            }
-        #else //CZL_SYSTEM_LINUX
-            extern int errno;
-            if (EWOULDBLOCK == errno || EAGAIN == errno)
-                break;
-            else
-            {
-                cnt = -1;
-                break;
-            }
-        #endif
-        }
-        cnt += ret;
-        len -= ret;
-    } while (len);
-
-#ifdef CZL_SYSTEM_LINUX
-    epoll_ctl(gp->kdpfd, EPOLL_CTL_DEL, sock, NULL);
-    if (-1 == cnt)
-        close(sock);
-#endif
-
-    return cnt;
-}
-
 char czl_http_req(czl_gp *gp, czl_fun *fun)
 {
     SOCKET sock = fun->vars[0].val.inum;
@@ -231,9 +167,9 @@ char czl_http_req(czl_gp *gp, czl_fun *fun)
         sockFlag = 1;
 
     //发送请求
-    if ((len=czl_send(gp, sock, buf, len)) < 0)
+    if ((len=czl_net_send(gp, sock, buf, len)) < 0)
         fun->ret.val.inum = -1;
-    else if (datas->len && (len=czl_send(gp, sock, datas->str, datas->len)) < 0)
+    else if (datas->len && (len=czl_net_send(gp, sock, datas->str, datas->len)) < 0)
         fun->ret.val.inum = -1;
     else if (sockFlag)
         fun->ret.val.inum = len;
@@ -282,9 +218,9 @@ char czl_http_res(czl_gp *gp, czl_fun *fun)
     buf[len++] = '\n';
 
     //发送响应
-    if ((len=czl_send(gp, sock, buf, len)) < 0)
+    if ((len=czl_net_send(gp, sock, buf, len)) < 0)
         fun->ret.val.inum = -1;
-    else if (datas->len && (len=czl_send(gp, sock, datas->str, datas->len)) < 0)
+    else if (datas->len && (len=czl_net_send(gp, sock, datas->str, datas->len)) < 0)
         fun->ret.val.inum = -1;
     else
         fun->ret.val.inum = len;
@@ -442,6 +378,7 @@ char czl_http_doc(czl_gp *gp, czl_fun *fun)
             //解析键
             if (tab->count <= 1) ch = ('H' == s[0] ? '/' : ' ');
             else ch = ':';
+            while (' ' == *s) ++s; //过滤空格
             if (!(t=strchr(s, ch)))
                 goto CZL_HTML;
             key.quality = CZL_ARRBUF_VAR;
@@ -459,6 +396,7 @@ char czl_http_doc(czl_gp *gp, czl_fun *fun)
             s = t+1;
             //解析值
             ch = (1 == tab->count ? ' ' : '\r');
+            while (' ' == *s) ++s; //过滤空格
             if (!(t=strchr(s, ch)))
                 goto CZL_HTML;
             if (0 == content_length && //获取请求数据长度
@@ -559,29 +497,27 @@ void czl_strcpy(unsigned char *a, const unsigned char *s, const unsigned char *e
     }
 }
 
-char czl_http_kv(czl_gp *gp, czl_fun *fun)
+char czl_http_form(czl_gp *gp, czl_fun *fun)
 {
     czl_string *str = CZL_STR(fun->vars->val.Obj);
     char *s = str->str, *e = str->str + str->len;
-    char type = (' ' == *s ? 1 : 0); //1: cookie, 0: post
     void **obj;
     czl_table *tab;
 
-    //申请一张哈希表格式化存储post/cookie键值对
+    //申请一张哈希表格式化存储表单键值对
     if (!(obj=czl_table_create(gp, 12, 0, 0)))
         return 0;
     tab = CZL_TAB(obj);
 
-    //解析post/cookie键值对
+    //解析表单键值对
     do {
-        // uid=czl; sid=123
         //usr=czl&pwd=czl&text=hello%2C%5B3
         char *t;
         czl_var key;
         czl_tabkv *ele;
+        unsigned long len;
         unsigned long count = tab->count;
         //解析键
-        if (type) ++s;
         if (!(t=strchr(s, '=')))
             goto CZL_END;
         key.quality = CZL_ARRBUF_VAR;
@@ -591,30 +527,79 @@ char czl_http_kv(czl_gp *gp, czl_fun *fun)
             CZL_SF(gp, key.val.str);
             goto CZL_OOM;
         }
-        if (tab->count == count) //字段重复认为不是post数据丢弃
+        if (tab->count == count) //字段重复认为不是表单数据丢弃
         {
             CZL_SF(gp, key.val.str);
             goto CZL_END;
         }
         s = t+1;
         //解析值
-        if (type)
+        if (!(t=strchr(s, '&')))
+            t = e;
+        len = t-s-2*czl_strchr(s, t, '%');
+        if (!czl_str_create(gp, &ele->val.str, len+1, len, NULL))
+            goto CZL_OOM;
+        czl_strcpy(CZL_STR(ele->val.str.Obj)->str, s, t);
+        ele->type = CZL_STRING;
+        s = t+1;
+    } while (s < e);
+
+    fun->ret.val.Obj = obj;
+    fun->ret.type = CZL_TABLE;
+    return 1;
+
+CZL_END:
+    fun->ret.val.inum = 0;
+    czl_table_delete(gp, obj);
+    return 1;
+
+CZL_OOM:
+    czl_table_delete(gp, obj);
+    return 0;
+}
+
+char czl_http_kv(czl_gp *gp, czl_fun *fun)
+{
+    czl_string *str = CZL_STR(fun->vars->val.Obj);
+    char *s = str->str, *e = str->str + str->len;
+    void **obj;
+    czl_table *tab;
+
+    //申请一张哈希表格式化存储键值对
+    if (!(obj=czl_table_create(gp, 12, 0, 0)))
+        return 0;
+    tab = CZL_TAB(obj);
+
+    //解析键值对
+    do {
+        // uid=czl; sid=123
+        char *t;
+        czl_var key;
+        czl_tabkv *ele;
+        unsigned long count = tab->count;
+        //解析键
+        while (' ' == *s) ++s; //过滤空格
+        if (!(t=strchr(s, '=')))
+            goto CZL_END;
+        key.quality = CZL_ARRBUF_VAR;
+        if (!czl_str_create(gp, &key.val.str, t-s+1, t-s, s) ||
+            !(ele=czl_create_key_str_tabkv(gp, tab, &key, NULL, 1)))
         {
-            if (!(t=strchr(s, ';')))
-                t = e;
-            if (!czl_str_create(gp, &ele->val.str, t-s+1, t-s, s))
-                goto CZL_OOM;
+            CZL_SF(gp, key.val.str);
+            goto CZL_OOM;
         }
-        else
+        if (tab->count == count) //字段重复认为不是有效数据丢弃
         {
-            unsigned long len;
-            if (!(t=strchr(s, '&')))
-                t = e;
-            len = t-s-2*czl_strchr(s, t, '%');
-            if (!czl_str_create(gp, &ele->val.str, len+1, len, NULL))
-                goto CZL_OOM;
-            czl_strcpy(CZL_STR(ele->val.str.Obj)->str, s, t);
+            CZL_SF(gp, key.val.str);
+            goto CZL_END;
         }
+        s = t+1;
+        //解析值
+        while (' ' == *s) ++s; //过滤空格
+        if (!(t=strchr(s, ';')))
+            t = e;
+        if (!czl_str_create(gp, &ele->val.str, t-s+1, t-s, s))
+            goto CZL_OOM;
         ele->type = CZL_STRING;
         s = t+1;
     } while (s < e);
