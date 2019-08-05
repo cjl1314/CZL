@@ -508,19 +508,18 @@ typedef enum czl_try_type_enum
     CZL_TRY_GOTO
 } czl_try_type_enum;
 
-//程序退出原因码
+//修改程序退出原因码后需要同步更新 czl_exit_code_table
 typedef enum czl_exit_code_enum
 {
     CZL_EXIT_ABNORMAL,
-    CZL_EXIT_ASSERT,
-    CZL_EXIT_ABORT,
     CZL_EXIT_TRY,
+    CZL_EXIT_ASSERT,
 #ifdef CZL_MULT_THREAD
     CZL_EXIT_KILL,
 #endif //#ifdef CZL_MULT_THREAD
 } czl_exit_code_enum;
 
-//增删异常码后需要同步更新 CZL_EXCEPTION_CODE_NUM
+//修改异常码后需要同步更新 CZL_EXCEPTION_CODE_NUM 和 czl_exception_code_table
 enum czl_exception_code_enum
 {
     CZL_EXCEPTION_NO = 0,
@@ -1051,6 +1050,7 @@ typedef struct czl_extsrc
 {
     void *src;
     void (*src_free)(void*);
+    const struct czl_sys_fun *lib;
     struct czl_extsrc *next;
     struct czl_extsrc *last;
 } czl_extsrc;
@@ -1670,7 +1670,7 @@ typedef struct czl_gp
     char error_flag;            //运行时错误标记
     //
     char exit_flag;             //脚本中断退出标志位
-    char exit_code;             //脚本中断退出方式码
+    char exit_code;             //脚本中断退出方式码: czl_exit_code_enum
     //
     char yeild_end;             //用于foreach协程标记其是否结束
     czl_exp_ele *yeild_pc;      //用于栈空间上函数yeild返回PC地址
@@ -1883,9 +1883,9 @@ czl_usrlib* czl_usrlib_create(czl_gp*, char*);
 char czl_sort_cmp_fun_ret(czl_gp*, czl_var*, czl_var*);
 void czl_buf_file_delete(czl_gp*, czl_buf_file*);
 unsigned long czl_bkdr_hash(char*, unsigned long);
-unsigned long czl_extsrc_create(czl_gp*, void*, void (*)(void*));
+unsigned long czl_extsrc_create(czl_gp*, void*, void*, const czl_sys_fun*);
 char czl_extsrc_free(czl_gp*, unsigned long);
-void* czl_extsrc_get(czl_gp*, unsigned long);
+void* czl_extsrc_get(czl_gp*, unsigned long, const czl_sys_fun*);
 char czl_tcp_event_handle(czl_gp*, czl_fun*, czl_var*, unsigned long);
 ///////////////////////////////////////////////////////////////
 #ifdef CZL_TIMER

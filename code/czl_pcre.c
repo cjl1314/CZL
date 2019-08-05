@@ -31,7 +31,7 @@ char czl_reg_mode(czl_gp *gp, czl_fun *fun)
 
     if (!re)
         fun->ret.val.inum = 0;
-    else if (!(fun->ret.val.inum=czl_extsrc_create(gp, re, pcre_free)))
+    else if (!(fun->ret.val.inum=czl_extsrc_create(gp, re, pcre_free, czl_lib_reg)))
         return 0;
 
     return 1;
@@ -45,7 +45,7 @@ char czl_reg_free(czl_gp *gp, czl_fun *fun)
 
 char czl_reg_match(czl_gp *gp, czl_fun *fun)
 {
-    pcre16 *re = czl_extsrc_get(gp, fun->vars->val.inum);
+    pcre16 *re = czl_extsrc_get(gp, fun->vars->val.inum, czl_lib_reg);
     czl_string *text = CZL_STR(fun->vars[1].val.str.Obj);
     int ovector[CZL_REG_BUF_SIZE];
 
@@ -61,7 +61,7 @@ char czl_reg_match(czl_gp *gp, czl_fun *fun)
 
 char czl_reg_collect(czl_gp *gp, czl_fun *fun)
 {
-    pcre16 *re = czl_extsrc_get(gp, fun->vars->val.inum);
+    pcre16 *re = czl_extsrc_get(gp, fun->vars->val.inum, czl_lib_reg);
     czl_string *text = CZL_STR(fun->vars[1].val.str.Obj);
     int offset = 0;
     czl_array *arr = NULL;
@@ -106,7 +106,7 @@ char czl_reg_collect(czl_gp *gp, czl_fun *fun)
 
 char czl_reg_replace(czl_gp *gp, czl_fun *fun)
 {
-    pcre16 *re = czl_extsrc_get(gp, fun->vars->val.inum);
+    pcre16 *re = czl_extsrc_get(gp, fun->vars->val.inum, czl_lib_reg);
     czl_string *text = CZL_STR(fun->vars[1].val.str.Obj);
     czl_string *str = CZL_STR(fun->vars[2].val.str.Obj);
     int inx = 0;

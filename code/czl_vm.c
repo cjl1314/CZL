@@ -71,6 +71,32 @@ const czl_binary_operator czl_binary_opt_table[] =
 const unsigned long czl_binary_opt_table_num =
         sizeof(czl_binary_opt_table) / sizeof(czl_binary_operator);
 ///////////////////////////////////////////////////////////////
+const char *czl_exit_code_table[] =
+{
+    "ABNORMAL",
+    "TRY",
+    "ASSERT",
+    "KILL"
+};
+
+const char *czl_exception_code_table[] =
+{
+    "OBJECT_LOCK",
+    "OUT_OF_MEMORY",
+    "STACK_OVERFLOW",
+    "SYSFUN_RUN_ERROR",
+    "CLASS_FUNCTION_GRAB",
+    "YEILD_FUNCTION_GRAB",
+    "COPY_TYPE_NOT_MATCH",
+    "ORDER_TYPE_NOT_MATCH",
+    "OBJECT_TYPE_NOT_MATCH",
+    "OBJECT_MEMBER_NOT_FIND",
+    "ARRAY_LENGTH_LESS_ZERO",
+    "FUNCTION_CALL_NO_FUN_PTR",
+    "FUNCTION_CALL_NO_INSTANCE",
+    "FUNCTION_CALL_PARAS_NOT_MATCH"
+};
+///////////////////////////////////////////////////////////////
 static void czl_set_array_list_reg(czl_gp*, czl_array_list*);
 static void czl_set_table_list_reg(czl_gp*, czl_table_list*);
 static void czl_set_new_reg(czl_gp*, czl_new_sentence*);
@@ -10731,11 +10757,15 @@ char czl_run(czl_gp *gp)
 
     if (gp->exit_flag)
     {
-        sprintf(gp->log_buf, "exit(%d-%d), %s: %ld\n",
-                              gp->exit_code,
-                              gp->exceptionCode,
-                              gp->error_file,
-                              gp->error_line);
+        if (CZL_EXIT_ABNORMAL == gp->exit_code || CZL_EXIT_TRY == gp->exit_code)
+            sprintf(gp->log_buf, "exit(%s, %s), %s: %ld\n",
+                                  czl_exit_code_table[gp->exit_code],
+                                  czl_exception_code_table[gp->exceptionCode-1],
+                                  gp->error_file, gp->error_line);
+        else //CZL_EXIT_ASSERT/CZL_EXIT_KILL
+            sprintf(gp->log_buf, "exit(%s), %s: %ld\n",
+                                  czl_exit_code_table[gp->exit_code],
+                                  gp->error_file, gp->error_line);
         czl_log(gp, gp->log_buf);
     }
 
@@ -10757,11 +10787,15 @@ char czl_resume_shell(czl_gp *gp, czl_fun *fun)
 
     if (gp->exit_flag)
     {
-        sprintf(gp->log_buf, "exit(%d-%d), %s: %ld\n",
-                              gp->exit_code,
-                              gp->exceptionCode,
-                              gp->error_file,
-                              gp->error_line);
+        if (CZL_EXIT_ABNORMAL == gp->exit_code || CZL_EXIT_TRY == gp->exit_code)
+            sprintf(gp->log_buf, "exit(%s, %s), %s: %ld\n",
+                                  czl_exit_code_table[gp->exit_code],
+                                  czl_exception_code_table[gp->exceptionCode-1],
+                                  gp->error_file, gp->error_line);
+        else //CZL_EXIT_ASSERT/CZL_EXIT_KILL
+            sprintf(gp->log_buf, "exit(%s), %s: %ld\n",
+                                  czl_exit_code_table[gp->exit_code],
+                                  gp->error_file, gp->error_line);
         czl_log(gp, gp->log_buf);
     }
 
@@ -11169,7 +11203,8 @@ unsigned long czl_extsrc_create
 (
     czl_gp *gp,
     void *src,
-    void (*src_free)(void*)
+    void *src_free,
+    const czl_sys_fun *lib
 )
 {
     czl_extsrc *p = CZL_EXTSRC_MALLOC(gp);
@@ -11180,12 +11215,13 @@ unsigned long czl_extsrc_create
     {
         CZL_EXTSRC_FREE(gp, p);
         if (src_free)
-            src_free(src);
+            ((void(*)(void*))src_free)(src);
         return 0;
     }
 
     p->src = src;
     p->src_free = src_free;
+    p->lib = lib;
 
     p->last = NULL;
     p->next = gp->extsrc_head;
@@ -11217,10 +11253,10 @@ char czl_extsrc_free(czl_gp *gp, unsigned long src)
     return 1;
 }
 
-void* czl_extsrc_get(czl_gp *gp, unsigned long src)
+void* czl_extsrc_get(czl_gp *gp, unsigned long src, const czl_sys_fun *lib)
 {
     czl_extsrc *p = czl_sys_hash_find(CZL_INT, CZL_NIL, (void*)src, &gp->extsrc_hash);
-    return (p ? p->src : NULL);
+    return (p && p->lib == lib ? p->src : NULL);
 }
 
 void czl_extsrc_list_delete(czl_gp *gp, czl_extsrc *p)

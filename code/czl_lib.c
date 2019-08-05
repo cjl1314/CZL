@@ -325,6 +325,10 @@ const czl_sys_fun czl_lib_os[] =
 #include "czl_pcre.h" //PCRE库
 #endif //CZL_LIB_REG
 
+#ifdef CZL_LIB_SQL
+#include "czl_sqlite3.h" //SQLITE3库
+#endif //CZL_LIB_SQL
+
 const czl_sys_lib czl_syslibs[] =
 {
     //库名,             库指针,           库函数个数
@@ -353,6 +357,10 @@ const czl_sys_lib czl_syslibs[] =
 #ifdef CZL_LIB_REG
     {"reg",           czl_lib_reg,    CZL_LIB_REG_CNT}, //PCRE库
 #endif //CZL_LIB_REG
+
+#ifdef CZL_LIB_SQL
+    {"sql",           czl_lib_sql,    CZL_LIB_SQL_CNT}, //SQL库
+#endif //CZL_LIB_SQL
 };
 const unsigned long czl_syslibs_num = sizeof(czl_syslibs)/sizeof(czl_sys_lib);
 ///////////////////////////////////////////////////////////////
@@ -4814,7 +4822,7 @@ char* czl_dns(char *domain)
 #endif //#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
 
 #if (defined CZL_LIB_TCP || defined CZL_LIB_HTTP || defined CZL_LIB_WS)
-long czl_net_send(czl_gp *gp, SOCKET sock, char *buf, long len)
+long czl_net_send(czl_gp *gp, int sock, char *buf, long len)
 {
     long cnt = 0;
     long ret = send(sock, buf, len, 0);
