@@ -2751,7 +2751,7 @@ unsigned long czl_num_hash
 {
     if (0 == attack_cnt)
     {
-    #ifdef CZL_SYSTEM_64bit
+    #ifdef CZL_NUMBER_64bit
         if (num <= 4294967295UL)
             return num;
         //以下算法能解决64位数据顺序插入时全部落入固定槽问题
@@ -3028,6 +3028,8 @@ void* czl_sys_hash_delete
     czl_bucket *p, *q = NULL;
     long index;
     void *ret;
+
+    if (0 == table->count) return NULL;
 
     if (CZL_NIL == type)
         index = CZL_INDEX_CAC(index, (unsigned long)key, table->mask);
@@ -11223,6 +11225,10 @@ unsigned long czl_extsrc_create
     p->src_free = src_free;
     p->lib = lib;
 
+#ifdef CZL_SYSTEM_WINDOWS
+    p->stdcall_flag = 0;
+#endif
+
     p->last = NULL;
     p->next = gp->extsrc_head;
     if (gp->extsrc_head)
@@ -11232,7 +11238,21 @@ unsigned long czl_extsrc_create
     return (unsigned long)p;
 }
 
-char czl_extsrc_free(czl_gp *gp, unsigned long src)
+void czl_extsrc_free(czl_extsrc *p)
+{
+    if (!p->src_free) return;
+
+#if defined CZL_SYSTEM_WINDOWS
+    if (p->stdcall_flag)
+        ((void __stdcall (*)(void*))p->src_free)(p->src);
+    else
+        p->src_free(p->src);
+#else
+    p->src_free(p->src);
+#endif
+}
+
+char czl_extsrc_delete(czl_gp *gp, unsigned long src)
 {
     czl_extsrc *p = (czl_extsrc*)czl_sys_hash_delete(gp, CZL_INT,
                                                      (void*)src, &gp->extsrc_hash);
@@ -11246,17 +11266,15 @@ char czl_extsrc_free(czl_gp *gp, unsigned long src)
     if (p->next)
         p->next->last = p->last;
 
-    if (p->src_free)
-        p->src_free(p->src);
-
+    czl_extsrc_free(p);
     CZL_EXTSRC_FREE(gp, p);
     return 1;
 }
 
-void* czl_extsrc_get(czl_gp *gp, unsigned long src, const czl_sys_fun *lib)
+czl_extsrc* czl_extsrc_get(czl_gp *gp, unsigned long src, const czl_sys_fun *lib)
 {
     czl_extsrc *p = czl_sys_hash_find(CZL_INT, CZL_NIL, (void*)src, &gp->extsrc_hash);
-    return (p && p->lib == lib ? p->src : NULL);
+    return (p && p->lib == lib ? p : NULL);
 }
 
 void czl_extsrc_list_delete(czl_gp *gp, czl_extsrc *p)
@@ -11266,8 +11284,7 @@ void czl_extsrc_list_delete(czl_gp *gp, czl_extsrc *p)
     while (p)
     {
         q = p->next;
-        if (p->src_free)
-            p->src_free(p->src);
+        czl_extsrc_free(p);
         CZL_EXTSRC_FREE(gp, p);
         p = q;
     }
@@ -11523,8 +11540,7 @@ void czl_mm_free(czl_gp *gp)
         fclose(f->fp);
 
     for (e = gp->extsrc_head; e; e = e->next)
-        if (e->src_free)
-            e->src_free(e->src);
+        czl_extsrc_free(e);
 
     for (c = gp->class_head; c; c = c->next)
         czl_mm_sp_destroy(gp, &c->pool);

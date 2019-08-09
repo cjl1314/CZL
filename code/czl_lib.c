@@ -322,11 +322,11 @@ const czl_sys_fun czl_lib_os[] =
 #endif //CZL_LIB_WS
 
 #ifdef CZL_LIB_REG
-#include "czl_pcre.h" //PCRE库
+#include "czl_reg.h" //REG库
 #endif //CZL_LIB_REG
 
 #ifdef CZL_LIB_SQL
-#include "czl_sqlite3.h" //SQLITE3库
+#include "czl_sql.h" //SQL库
 #endif //CZL_LIB_SQL
 
 const czl_sys_lib czl_syslibs[] =
@@ -355,7 +355,7 @@ const czl_sys_lib czl_syslibs[] =
 #endif //CZL_LIB_WS
 
 #ifdef CZL_LIB_REG
-    {"reg",           czl_lib_reg,    CZL_LIB_REG_CNT}, //PCRE库
+    {"reg",           czl_lib_reg,    CZL_LIB_REG_CNT}, //REG库
 #endif //CZL_LIB_REG
 
 #ifdef CZL_LIB_SQL
@@ -364,12 +364,9 @@ const czl_sys_lib czl_syslibs[] =
 };
 const unsigned long czl_syslibs_num = sizeof(czl_syslibs)/sizeof(czl_sys_lib);
 ///////////////////////////////////////////////////////////////
-#define CZL_FILE_BUF_SIZE   10*1024
-static const unsigned long CZL_CHECK_SUM = 0xF1E2C3B4;
+const unsigned long CZL_CHECK_SUM = 0xF1E2C3B4;
 ///////////////////////////////////////////////////////////////
 char czl_print_obj(czl_gp *gp, const czl_var*, FILE*);
-char czl_sizeof_obj(czl_gp*, char, const czl_var*, unsigned long*);
-char* czl_get_obj_buf(czl_gp*, const czl_var*, char*);
 char* czl_analysis_ele_buf(czl_gp*, char*, czl_var*);
 ///////////////////////////////////////////////////////////////
 czl_var* CZL_GCRV(czl_var *ref)
@@ -416,7 +413,7 @@ int czl_get_int_mode(char *mode)
     while (*(++mode) != 'd') ;
 
 #ifdef CZL_SYSTEM_LINUX
-    #ifdef CZL_SYSTEM_64bit
+    #ifdef CZL_NUMBER_64bit
         strcpy(mode, "lld");
         return 4;
     #else
@@ -424,7 +421,7 @@ int czl_get_int_mode(char *mode)
         return 3;
     #endif
 #elif defined CZL_SYSTEM_WINDOWS
-    #ifdef CZL_SYSTEM_64bit
+    #ifdef CZL_NUMBER_64bit
         strcpy(mode, "I64d");
         return 5;
     #else
@@ -916,10 +913,10 @@ char czl_sys_print(czl_gp *gp, czl_fun *fun)
 #ifdef CZL_CONSOLE
 char czl_sys_input(czl_gp *gp, czl_fun *fun)
 {
-    char buf[CZL_FILE_BUF_SIZE];
+    char buf[CZL_BUF_SIZE];
 	unsigned long len;
 
-    if (!fgets(buf, CZL_FILE_BUF_SIZE, stdin))
+    if (!fgets(buf, CZL_BUF_SIZE, stdin))
         return 0;
     len = strlen(buf) - 1;
     buf[len] = '\0';
@@ -1444,20 +1441,20 @@ char czl_struct_write(czl_gp *gp, FILE *fp, czl_para *p)
     {
         czl_var *res;
         unsigned long obj_size = 4;
-        char buf[CZL_FILE_BUF_SIZE];
+        char buf[CZL_BUF_SIZE];
         char *tmp = buf;
         if (!(res=czl_exp_cac(gp, p->para)) || !czl_sizeof_obj(gp, 1, res, &obj_size) ||
-            (obj_size > CZL_FILE_BUF_SIZE && !(tmp=(char*)CZL_TMP_MALLOC(gp, obj_size))))
+            (obj_size > CZL_BUF_SIZE && !(tmp=(char*)CZL_TMP_MALLOC(gp, obj_size))))
             return 0;
         *((unsigned long*)tmp) = obj_size-4;
         czl_get_obj_buf(gp, res, tmp+4);
         if (!fwrite(tmp, obj_size, 1, fp))
         {
-            if (obj_size > CZL_FILE_BUF_SIZE)
+            if (obj_size > CZL_BUF_SIZE)
                 CZL_TMP_FREE(gp, buf, obj_size);
             return 0;
         }
-        if (obj_size > CZL_FILE_BUF_SIZE)
+        if (obj_size > CZL_BUF_SIZE)
             CZL_TMP_FREE(gp, buf, obj_size);
         p = p->next;
     }
@@ -1788,7 +1785,7 @@ void** czl_analysis_obj_buf(czl_gp *gp, char *buf)
 char czl_obj_read(czl_gp *gp, FILE *fp, czl_var *ret)
 {
     unsigned long size;
-    char buf[CZL_FILE_BUF_SIZE];
+    char buf[CZL_BUF_SIZE];
     char *tmp = buf;
 
     if (!ftell(fp))
@@ -1801,17 +1798,17 @@ char czl_obj_read(czl_gp *gp, FILE *fp, czl_var *ret)
     if (!fread(&size, 4, 1, fp))
         return 0;
 
-    if (size > CZL_FILE_BUF_SIZE && !(tmp=(char*)CZL_TMP_MALLOC(gp, size)))
+    if (size > CZL_BUF_SIZE && !(tmp=(char*)CZL_TMP_MALLOC(gp, size)))
         return 0;
 
     if (!fread(tmp, size, 1, fp) || !czl_analysis_ele_buf(gp, tmp, ret))
     {
-        if (size > CZL_FILE_BUF_SIZE)
+        if (size > CZL_BUF_SIZE)
             CZL_TMP_FREE(gp, buf, size);
         return 0;
     }
 
-    if (size > CZL_FILE_BUF_SIZE)
+    if (size > CZL_BUF_SIZE)
         CZL_TMP_FREE(gp, buf, size);
 
     return 1;
@@ -1835,23 +1832,23 @@ char czl_objs_read(czl_gp *gp, FILE *fp, czl_var *ret, unsigned long sum)
 
     do {
         unsigned long size;
-        char buf[CZL_FILE_BUF_SIZE];
+        char buf[CZL_BUF_SIZE];
         char *tmp = buf;
         if (!fread(&size, 4, 1, fp))
             break;
         if (arr->cnt == arr->sum && !czl_array_resize(gp, arr, arr->cnt))
             goto CZL_OOM;
-        if (size > CZL_FILE_BUF_SIZE && !(tmp=(char*)CZL_TMP_MALLOC(gp, size)))
+        if (size > CZL_BUF_SIZE && !(tmp=(char*)CZL_TMP_MALLOC(gp, size)))
             goto CZL_OOM;
         if (!fread(tmp, size, 1, fp))
             break;
         if (!czl_analysis_ele_buf(gp, tmp, arr->vars+arr->cnt))
         {
-            if (size > CZL_FILE_BUF_SIZE)
+            if (size > CZL_BUF_SIZE)
                 CZL_TMP_FREE(gp, buf, size);
             goto CZL_OOM;
         }
-        if (size > CZL_FILE_BUF_SIZE)
+        if (size > CZL_BUF_SIZE)
             CZL_TMP_FREE(gp, buf, size);
     } while (++arr->cnt < sum);
 
@@ -1867,7 +1864,7 @@ char czl_struct_read(czl_gp *gp, FILE *fp, czl_var *ret, long sum)
 {
     unsigned long len;
     unsigned long file_size;
-    char buf[CZL_FILE_BUF_SIZE];
+    char buf[CZL_BUF_SIZE];
     char *tmp = buf;
 
     if (1 == sum)
@@ -1883,12 +1880,12 @@ char czl_struct_read(czl_gp *gp, FILE *fp, czl_var *ret, long sum)
     }
 
     file_size = czl_get_file_size(fp) - ftell(fp);
-    if (file_size+2 > CZL_FILE_BUF_SIZE && !(tmp=(char*)CZL_TMP_MALLOC(gp, file_size+2)))
+    if (file_size+2 > CZL_BUF_SIZE && !(tmp=(char*)CZL_TMP_MALLOC(gp, file_size+2)))
         return 0;
 
     if ((len=fread(tmp, 1, file_size, fp)) <= 4)
     {
-        if (file_size+2 > CZL_FILE_BUF_SIZE)
+        if (file_size+2 > CZL_BUF_SIZE)
             CZL_TMP_FREE(gp, buf, file_size+2);
         return 0;
     }
@@ -1896,12 +1893,12 @@ char czl_struct_read(czl_gp *gp, FILE *fp, czl_var *ret, long sum)
 
     if (!(ret->val.Obj=czl_analysis_obj_buf(gp, tmp)))
     {
-        if (file_size+2 > CZL_FILE_BUF_SIZE)
+        if (file_size+2 > CZL_BUF_SIZE)
             CZL_TMP_FREE(gp, buf, file_size+2);
         return 0;
     }
 
-    if (file_size+2 > CZL_FILE_BUF_SIZE)
+    if (file_size+2 > CZL_BUF_SIZE)
         CZL_TMP_FREE(gp, buf, file_size+2);
     ret->type = CZL_ARRAY;
     return 1;
@@ -1914,8 +1911,8 @@ char czl_line_read(czl_gp *gp, FILE *fp, czl_var *ret)
 
     do {
         unsigned long len;
-        char buf[CZL_FILE_BUF_SIZE];
-        if (!fgets(buf, CZL_FILE_BUF_SIZE, fp))
+        char buf[CZL_BUF_SIZE];
+        if (!fgets(buf, CZL_BUF_SIZE, fp))
         {
             if (str.Obj)
                 CZL_SF(gp, str);

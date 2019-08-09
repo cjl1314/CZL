@@ -19,6 +19,11 @@ extern const unsigned long czl_syslibs_num;
 ((p)->val.ref.inx < 0 ? (p)->val.ref.var : \
  (czl_var*)(((czl_array*)(p)->val.ref.var)->vars + (p)->val.ref.inx))
 ///////////////////////////////////////////////////////////////
+#define CZL_BUF_SIZE 10*1024
+extern const unsigned long CZL_CHECK_SUM;
+char czl_sizeof_obj(czl_gp*, char, const czl_var*, unsigned long*);
+char* czl_get_obj_buf(czl_gp*, const czl_var*, char*);
+///////////////////////////////////////////////////////////////
 czl_var* CZL_GCRV(czl_var*);
 char czl_ret_clean(czl_gp*, czl_var*);
 char czl_set_ret_str(czl_gp*, czl_var*, const char*, unsigned long);

@@ -1025,7 +1025,6 @@ char* czl_paras_match
             break;
         else
         {
-            printf("debug: %c%c\n", *(code-1), *code);
             sprintf(gp->log_buf, "missed '%c' for end a paras-list, ", end_sign);
             return NULL;
         }

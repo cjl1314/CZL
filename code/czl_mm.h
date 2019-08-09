@@ -1,13 +1,7 @@
 #ifndef CZL_MM_H
 #define CZL_MM_H
 
-#ifdef _WIN32
-    #define CZL_SYSTEM_WINDOWS  //运行在windows系统宏
-#elif defined __linux
-    #define CZL_SYSTEM_LINUX    //运行在linux系统宏
-#endif
-
-#define CZL_SYSTEM_64bit    //64位数值类型支持宏
+#define CZL_NUMBER_64bit    //64位数值类型支持宏
 #define CZL_MULT_THREAD     //多线程支持宏
 #define CZL_TIMER           //定时器支持宏
 
@@ -16,10 +10,16 @@
 //#define CZL_DEBUG           //调试模式
 
 ///////////////////////////////////////////////////////////////
+#ifdef _WIN32
+    #define CZL_SYSTEM_WINDOWS  //运行在windows系统宏
+#elif defined __linux
+    #define CZL_SYSTEM_LINUX    //运行在linux系统宏
+#endif
+
 #ifdef CZL_SYSTEM_WINDOWS
     #include <windows.h>
     #include <sys\stat.h>
-    #ifdef CZL_SYSTEM_64bit
+    #ifdef CZL_NUMBER_64bit
         typedef __int64 czl_long;
         typedef unsigned long czl_ulong;
         typedef double czl_float;
@@ -38,7 +38,7 @@
         #include <signal.h>
         #include <time.h>
     #endif
-    #ifdef CZL_SYSTEM_64bit
+    #ifdef CZL_NUMBER_64bit
         typedef long long czl_long;
         typedef unsigned long czl_ulong;
         typedef double czl_float;
@@ -47,17 +47,6 @@
         typedef unsigned long czl_ulong;
         typedef float czl_float;
     #endif
-#else
-    typedef long czl_long;
-    typedef unsigned long czl_ulong;
-    #ifdef CZL_SYSTEM_64bit
-        typedef double czl_float;
-    #else
-        typedef float czl_float;
-    #endif
-    #undef CZL_SYSTEM_64bit
-    #undef CZL_MULT_THREAD
-    #undef CZL_TIMER
 #endif
 ///////////////////////////////////////////////////////////////
 #define CZL_MM_4GB   0xFFFFFFFFUL

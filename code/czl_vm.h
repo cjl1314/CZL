@@ -566,6 +566,7 @@ typedef struct czl_ext
     union czl_ext_v1
     {
         int i32;
+        float f32;
         void *ptr;
     } v1;
     union czl_ext_v2
@@ -1051,6 +1052,12 @@ typedef struct czl_extsrc
     void *src;
     void (*src_free)(void*);
     const struct czl_sys_fun *lib;
+    unsigned char engine;
+    unsigned char type;
+    unsigned char state;
+#ifdef CZL_SYSTEM_WINDOWS
+    unsigned char stdcall_flag;
+#endif
     struct czl_extsrc *next;
     struct czl_extsrc *last;
 } czl_extsrc;
@@ -1884,8 +1891,8 @@ char czl_sort_cmp_fun_ret(czl_gp*, czl_var*, czl_var*);
 void czl_buf_file_delete(czl_gp*, czl_buf_file*);
 unsigned long czl_bkdr_hash(char*, unsigned long);
 unsigned long czl_extsrc_create(czl_gp*, void*, void*, const czl_sys_fun*);
-char czl_extsrc_free(czl_gp*, unsigned long);
-void* czl_extsrc_get(czl_gp*, unsigned long, const czl_sys_fun*);
+char czl_extsrc_delete(czl_gp*, unsigned long);
+czl_extsrc* czl_extsrc_get(czl_gp*, unsigned long, const czl_sys_fun*);
 char czl_tcp_event_handle(czl_gp*, czl_fun*, czl_var*, unsigned long);
 ///////////////////////////////////////////////////////////////
 #ifdef CZL_TIMER
