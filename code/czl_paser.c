@@ -36,6 +36,7 @@ enum czl_keyword_index_enum
     CZL_NUM_INDEX,
     CZL_STR_INDEX,
     CZL_FILE_INDEX,
+    CZL_SOURCE_INDEX,
     CZL_ARR_INDEX,
     CZL_TABLE_INDEX,
     CZL_STACK_INDEX,
@@ -91,6 +92,7 @@ const czl_keyword czl_keyword_table[] =
     {"num",         CZL_NUM_INDEX},
     {"str",         CZL_STR_INDEX},
     {"file",        CZL_FILE_INDEX},
+    {"src",         CZL_SOURCE_INDEX},
     {"arr",         CZL_ARR_INDEX},
     {"map",         CZL_TABLE_INDEX},
     {"stack",       CZL_STACK_INDEX},
@@ -140,7 +142,8 @@ czl_var czl_type_ins =      {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {5}};
 czl_var czl_type_stack =    {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {6}};
 czl_var czl_type_queue =    {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {7}};
 czl_var czl_type_file =     {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {8}};
-czl_var czl_type_fun =      {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {9}};
+czl_var czl_type_source =   {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {9}};
+czl_var czl_type_fun =      {NULL, CZL_INT, CZL_CONST_VAR, 0, CZL_INT, {10}};
 ///////////////////////////////////////////////////////////////
 char* czl_exp_analysis(czl_gp*, char*, czl_exp_handle*);
 char* czl_expression_analysis(czl_gp*, char*);
@@ -204,7 +207,7 @@ char* czl_ignore_sign_filt(czl_gp *gp, char *code)
 int czl_is_keyword(czl_gp *gp, char *name)
 {
     czl_keyword *key = (czl_keyword*)czl_sys_hash_find(CZL_STRING, CZL_NIL,
-													   name, &gp->tmp->keyword_hash);
+                                                       name, &gp->keyword_hash);
     if (!key)
         return 0;
 
@@ -1212,7 +1215,7 @@ char* czl_fun_match
     {
         //静态系统函数查询
         if (!gp->tmp->osfun_hash &&
-            !(gp->tmp->osfun_hash=czl_sys_fun_hash_create(gp, "os")))
+            !(gp->tmp->osfun_hash=czl_sys_fun_hash_create(gp, CZL_LIB_OS_NAME)))
             return NULL;
         if ((sys_fun=czl_sys_fun_find(name, gp->tmp->osfun_hash)))
         {
@@ -1550,6 +1553,7 @@ char* czl_var_match
         else if (strcmp("TP_STACK", name) == 0) var = &czl_type_stack;
         else if (strcmp("TP_QUEUE", name) == 0) var = &czl_type_queue;
         else if (strcmp("TP_FILE", name) == 0) var = &czl_type_file;
+        else if (strcmp("TP_SRC", name) == 0) var = &czl_type_source;
         else if (strcmp("TP_FUN", name) == 0) var = &czl_type_fun;
         else
         {
@@ -1925,7 +1929,7 @@ char* czl_fun_addr_match(czl_gp *gp, char *code, czl_exp_node **node)
     else if (!(fun=czl_fun_find(gp, name, CZL_GLOBAL_FIND)))
     {
         if (!gp->tmp->osfun_hash &&
-            !(gp->tmp->osfun_hash=czl_sys_fun_hash_create(gp, "os")))
+            !(gp->tmp->osfun_hash=czl_sys_fun_hash_create(gp, CZL_LIB_OS_NAME)))
             return NULL;
         if ((sys_fun=czl_sys_fun_find(name, gp->tmp->osfun_hash)))
         {
@@ -2593,6 +2597,8 @@ char* czl_obj_def(czl_gp *gp, char *code, int index, char quality)
         return czl_var_def(gp, code, quality, CZL_NUM);
     case CZL_FILE_INDEX:
         return czl_var_def(gp, code, quality, CZL_FILE);
+    case CZL_SOURCE_INDEX:
+        return czl_var_def(gp, code, quality, CZL_SOURCE);
     case CZL_FUN_INDEX:
         return czl_var_def(gp, code, quality, CZL_FUN_REF);
     case CZL_INS_INDEX:
@@ -3040,17 +3046,6 @@ char* czl_goto_flag_match(czl_gp *gp, char *code)
     return code;
 }
 
-char* czl_return_yeild_match(czl_gp *gp, char *code)
-{
-    char name[CZL_NAME_MAX_SIZE];
-    char *tmp = code = czl_ignore_sign_filt(gp, code);
-
-    if ((code=czl_name_match(gp, code, name)) && czl_is_keyword(gp, name))
-        return tmp;
-
-    return czl_exp_sentence_match(gp, tmp);
-}
-
 char czl_code_block_create(czl_gp *gp, int index)
 {
     char block_type;
@@ -3253,7 +3248,7 @@ char* czl_context_analysis(czl_gp *gp, char *code, int index)
             return NULL;
         break;
     case CZL_RETURN_INDEX: case CZL_YEILD_INDEX:
-        if (!(code=czl_return_yeild_match(gp, code)))
+        if (!(code=czl_exp_sentence_match(gp, code)))
             return NULL;
         if (!czl_code_block_create(gp, index))
             return NULL;
@@ -3335,6 +3330,7 @@ char czl_get_para_ot(czl_gp *gp, char *name)
     case CZL_STACK_INDEX: return CZL_STACK;
     case CZL_QUEUE_INDEX: return CZL_QUEUE;
     case CZL_FILE_INDEX: return CZL_FILE;
+    case CZL_SOURCE_INDEX: return CZL_SOURCE;
     case CZL_FUN_INDEX: return CZL_FUN_REF;
     default: return CZL_NIL;
     }
@@ -3450,10 +3446,11 @@ char* czl_fun_paras_match(czl_gp *gp, char *code, czl_fun *fun)
 
             if (ref_flag || gp->tmp->exp_head)
             {
-                if (!(para=czl_para_explain_create(gp, paras_count, ref_flag)))
+                if (!(para=czl_para_explain_create(gp, paras_count,
+                                                   ref_flag, gp->tmp->exp_head)))
                     return NULL;
-                czl_para_explain_insert(&fun->para_explain,
-                                        &para_explain_tail, para);
+                czl_para_explain_insert(&fun->para_explain, &para_explain_tail, para);
+                gp->tmp->exp_head = NULL;
             }
 
             paras_count++;
@@ -3488,7 +3485,6 @@ CZL_SYNTAX_ERROR:
             return NULL;
         }
         gp->main_err_line = gp->error_line;
-        gp->main_err_file = gp->error_file;
     }
 
     code = czl_ignore_sign_filt(gp, code);
@@ -3707,7 +3703,7 @@ char* czl_load_shell(czl_gp *gp, char *old_code)
     error_file_backup = gp->error_file;
     usrlib_backup = gp->tmp->cur_usrlib;
     gp->error_line = 1;
-    gp->error_file = gp->sn_head->name;
+    gp->error_file = gp->huds.sn_head->name;
 
     if (!czl_shell_analysis(gp, new_code))
         old_code = NULL;
@@ -3861,6 +3857,7 @@ char* czl_is_fun_or_obj_def(czl_gp *gp, char *code, int index)
     case CZL_FLOAT_INDEX: ot = CZL_FLOAT; break;
     case CZL_NUM_INDEX: ot = CZL_NUM; break;
     case CZL_FILE_INDEX: ot = CZL_FILE; break;
+    case CZL_SOURCE_INDEX: ot = CZL_SOURCE; break;
     case CZL_FUN_INDEX: ot = CZL_FUN_REF; break;
     case CZL_INS_INDEX: ot = CZL_INSTANCE; break;
     case CZL_TABLE_INDEX: ot = CZL_TABLE; break;
@@ -3886,6 +3883,8 @@ char* czl_is_fun_or_obj_def(czl_gp *gp, char *code, int index)
         return czl_var_def(gp, code, CZL_DYNAMIC_VAR, CZL_NUM);
     case CZL_FILE_INDEX:
         return czl_var_def(gp, code, CZL_DYNAMIC_VAR, CZL_FILE);
+    case CZL_SOURCE_INDEX:
+        return czl_var_def(gp, code, CZL_DYNAMIC_VAR, CZL_SOURCE);
     case CZL_FUN_INDEX:
         return czl_var_def(gp, code, CZL_DYNAMIC_VAR, CZL_FUN_REF);
     case CZL_TABLE_INDEX:
@@ -4172,7 +4171,7 @@ char czl_exec_shell_prepare(czl_gp *gp, char *path, char flag)
     //解析脚本
     if (ret && czl_shell_name_save(gp, path, 0))
     {
-        gp->error_file = gp->sn_head->name;
+        gp->error_file = gp->huds.sn_head->name;
         ret = czl_shell_analysis(gp, code);
     }
     else
@@ -4191,9 +4190,11 @@ char czl_exec_shell_prepare(czl_gp *gp, char *path, char flag)
     return ret;
 }
 
-char czl_exec_shell(czl_gp *gp, char *path, char flag)
+czl_fun* czl_exec_shell(czl_gp *gp, char *path, char flag)
 {
-    return czl_exec_shell_prepare(gp, path, flag) ? czl_run(gp) : 0;
+    if (!czl_exec_shell_prepare(gp, path, flag))
+        return NULL;
+    return czl_run(gp);
 }
 
 #ifndef CZL_CONSOLE
@@ -4203,7 +4204,7 @@ char czl_exec_prepare(czl_gp *gp)
     {
         if (gp->class_name && !(gp->pclass=czl_class_find(gp, gp->class_name, 1)))
             return 0;
-        gp->cur_fun->pc = gp->cur_fun->opcode;
+        gp->main_fun = gp->cur_fun;
         return 1;
     }
     return 0;
@@ -4214,13 +4215,6 @@ void czl_mm_print(czl_gp *gp)
 {
     char mode[8] = "%d";
     char modify[64];
-
-//    czl_get_int_mode(mode);
-//    strcpy(modify, "gp->mm_max: ");
-//    strcat(modify, mode);
-//    strcat(modify, "\n");
-//    sprintf(gp->log_buf, modify, gp->mm_max);
-//    czl_log(gp, gp->log_buf);
 
     if (gp->mm_cnt != 0)
     {
@@ -4236,6 +4230,10 @@ void czl_mm_print(czl_gp *gp)
 
 char czl_global_paras_init(czl_gp *gp)
 {
+    //全局域创建
+    if (!(gp->tmp->glo_lib = gp->tmp->cur_usrlib = czl_usrlib_create(gp, "g")))
+        return 0;
+
     //初始化log缓存
     strcpy(gp->log_buf, "syntax error, ");
 
@@ -4253,18 +4251,6 @@ char czl_global_paras_init(czl_gp *gp)
 
     //初始化类强类型声明编号
     gp->tmp->class_ot_num = CZL_NIL;
-
-    //系统关键字哈希表创建
-    if (!czl_sys_keyword_hash_create(gp, czl_keyword_table, czl_keyword_table_num))
-        return 0;
-
-    //系统函数哈希表创建
-    if (!czl_sys_lib_hash_create(gp))
-        return 0;
-
-    //全局域创建
-    if (!(gp->tmp->glo_lib = gp->tmp->cur_usrlib = czl_usrlib_create(gp, "g")))
-        return 0;
 
     //初始化运行时构造函数
     gp->ef0.paras = NULL;
@@ -4385,6 +4371,14 @@ char czl_sys_init(czl_gp *gp)
     gp->ch_head->type = gp->ch_head->ot = CZL_INT;
     gp->ch_head->quality = CZL_DYNAMIC_VAR;
     gp->ch_head->next = NULL;
+
+    //系统函数哈希表创建
+    if (!czl_sys_lib_hash_create(gp))
+        return 0;
+
+    //系统关键字哈希表创建
+    if (!czl_sys_keyword_hash_create(gp, czl_keyword_table, czl_keyword_table_num))
+        return 0;
 
     //初始化czl_global_paras结构
     if (!czl_global_paras_init(gp))

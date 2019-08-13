@@ -18,7 +18,6 @@ char czl_sys_input(czl_gp*, czl_fun*);
 #endif //CZL_CONSOLE
 //
 char czl_sys_fopen(czl_gp*, czl_fun*);
-char czl_sys_fclose(czl_gp*, czl_fun*);
 char czl_sys_fwrite(czl_gp*, czl_fun*);
 char czl_sys_fread(czl_gp*, czl_fun*);
 char czl_sys_fseek(czl_gp*, czl_fun*);
@@ -33,8 +32,6 @@ char czl_sys_rand(czl_gp*, czl_fun*);
 char czl_sys_rands(czl_gp*, czl_fun*);
 //
 char czl_sys_Hash(czl_gp*, czl_fun*);
-char czl_sys_sha1(czl_gp*, czl_fun*);
-char czl_sys_base64(czl_gp*, czl_fun*);
 //
 char czl_sys_int(czl_gp*, czl_fun*);
 char czl_sys_float(czl_gp*, czl_fun*);
@@ -97,7 +94,7 @@ char czl_sys_setSa(czl_gp*, czl_fun*);
 char czl_sys_setGc(czl_gp*, czl_fun*);
 char czl_sys_gc(czl_gp*, czl_fun*);
 #endif //#ifdef CZL_MM_MODULE
-char czl_sys_runShell(czl_gp*, czl_fun*);
+char czl_sys_run(czl_gp*, czl_fun*);
 //
 char czl_sys_sort(czl_gp*, czl_fun*);
 //
@@ -161,7 +158,6 @@ const czl_sys_fun czl_lib_os[] =
 #endif //CZL_CONSOLE
     //文件操作函数
     {"fopen",     czl_sys_fopen,      2,  "str_v1,str_v2=\"1r\""},
-    {"fclose",    czl_sys_fclose,     1,  "&file_v1"},
     {"fwrite",    czl_sys_fwrite,     -2, NULL},
     {"fread",     czl_sys_fread,      2,  "file_v1,int_v2=0"},
     {"fseek",     czl_sys_fseek,      2,  "&file_v1,int_v2"},
@@ -174,10 +170,8 @@ const czl_sys_fun czl_lib_os[] =
     {"srand",     czl_sys_srand,      1,  "int_v1"},
     {"rand",      czl_sys_rand,       0,  NULL},
     {"rands",     czl_sys_rands,      0,  NULL},
-    //哈希、编码函数
+    //哈希函数
     {"hash",      czl_sys_Hash,       2,  "str_v1,int_v2=0"},
-    {"sha1",      czl_sys_sha1,       1,  "str_v1"},
-    {"base64",    czl_sys_base64,     1,  "str_v1"},
     //数值处理函数
     {"int",       czl_sys_int,        1,  NULL},
     {"float",     czl_sys_float,      1,  NULL},
@@ -240,7 +234,7 @@ const czl_sys_fun czl_lib_os[] =
     {"setGc",     czl_sys_setGc,      1,  "int_v1"},
     {"gc",        czl_sys_gc,         0,  NULL},
 #endif //#ifdef CZL_MM_MODULE
-    {"runShell",  czl_sys_runShell,   3,  "str_v1,&v2,v3=0"},
+    {"run",       czl_sys_run,        2,  "str_v1,v2=0"},
     //排序函数
     {"sort",      czl_sys_sort,       3,  "&v1,str_v2=\"asc\",v3=0"},
     //序列化、反序列化函数
@@ -331,35 +325,35 @@ const czl_sys_fun czl_lib_os[] =
 
 const czl_sys_lib czl_syslibs[] =
 {
-    //库名,             库指针,           库函数个数
-    {"os",             czl_lib_os,      sizeof(czl_lib_os)/sizeof(czl_sys_fun)},
+    //库名,                 库指针,           库函数个数
+    {CZL_LIB_OS_NAME,      czl_lib_os,      sizeof(czl_lib_os)/sizeof(czl_sys_fun)}, //OS库
 
 #ifdef CZL_LIB_COM
-    {"com",            czl_lib_com,     CZL_LIB_COM_CNT}, //COM库
+    {CZL_LIB_COM_NAME,     czl_lib_com,     CZL_LIB_COM_CNT}, //COM库
 #endif //CZL_LIB_COM
 
 #ifdef CZL_LIB_TCP
-    {"tcp",            czl_lib_tcp,     CZL_LIB_TCP_CNT}, //TCP库
+    {CZL_LIB_TCP_NAME,     czl_lib_tcp,     CZL_LIB_TCP_CNT}, //TCP库
 #endif //CZL_LIB_TCP
 
 #ifdef CZL_LIB_UDP
-    {"udp",            czl_lib_udp,     CZL_LIB_UDP_CNT}, //UDP库
+    {CZL_LIB_UDP_NAME,     czl_lib_udp,     CZL_LIB_UDP_CNT}, //UDP库
 #endif //CZL_LIB_UDP
 
 #ifdef CZL_LIB_HTTP
-    {"http",           czl_lib_http,    CZL_LIB_HTTP_CNT}, //HTTP库
+    {CZL_LIB_HTTP_NAME,    czl_lib_http,    CZL_LIB_HTTP_CNT}, //HTTP库
 #endif //CZL_LIB_HTTP
 
 #ifdef CZL_LIB_WS
-    {"ws",             czl_lib_ws,    CZL_LIB_WS_CNT}, //WS库
+    {CZL_LIB_WS_NAME,      czl_lib_ws,      CZL_LIB_WS_CNT}, //WS库
 #endif //CZL_LIB_WS
 
 #ifdef CZL_LIB_REG
-    {"reg",           czl_lib_reg,    CZL_LIB_REG_CNT}, //REG库
+    {CZL_LIB_REG_NAME,     czl_lib_reg,     CZL_LIB_REG_CNT}, //REG库
 #endif //CZL_LIB_REG
 
 #ifdef CZL_LIB_SQL
-    {"sql",           czl_lib_sql,    CZL_LIB_SQL_CNT}, //SQL库
+    {CZL_LIB_SQL_NAME,     czl_lib_sql,     CZL_LIB_SQL_CNT}, //SQL库
 #endif //CZL_LIB_SQL
 };
 const unsigned long czl_syslibs_num = sizeof(czl_syslibs)/sizeof(czl_sys_lib);
@@ -679,7 +673,7 @@ char czl_print_obj(czl_gp *gp, const czl_var *obj, FILE *fout)
     case CZL_STACK: case CZL_QUEUE:
         czl_print_sq(gp, CZL_SQ(obj->val.Obj), fout);
         break;
-    case CZL_FUN_REF:
+    case CZL_FUN_REF: case CZL_SOURCE:
         fprintf(fout, "%d", (int)obj->val.fun);
         break;
     case CZL_FILE:
@@ -1095,7 +1089,7 @@ char czl_sizeof_obj
         *sum += flag ?
          czl_sizeof_int(czl_get_file_size(CZL_FIL(obj->val.Obj)->fp))+1 : 4;
         return 1;
-    case CZL_FUN_REF:
+    case CZL_FUN_REF: case CZL_SOURCE:
         *sum += flag ? 5 : 4;
         return 1;
     case CZL_INSTANCE:
@@ -1169,21 +1163,6 @@ CZL_END:
     fun->ret.type = CZL_INT;
     fun->ret.val.inum = 0;
     CZL_FILE_FREE(gp, obj);
-    return 1;
-}
-
-char czl_sys_fclose(czl_gp *gp, czl_fun *fun)
-{
-    czl_var *var = CZL_GRV(fun->vars);
-
-    if (0 == CZL_ORCD1(var->val.Obj))
-        fun->ret.val.inum = czl_file_delete(gp, var->val.Obj);
-    else
-        fun->ret.val.inum = 1;
-
-    var->type = CZL_INT;
-    var->val.inum = 0;
-
     return 1;
 }
 
@@ -1415,7 +1394,7 @@ char* czl_get_obj_buf
     case CZL_FILE:
         *(buf-1) = CZL_INT; //文件只保存大小信息
         return czl_get_int_buf(czl_get_file_size(CZL_FIL(obj->val.Obj)->fp), buf);
-    case CZL_FUN_REF:
+    case CZL_FUN_REF: case CZL_SOURCE:
         *((unsigned long*)buf) = (unsigned long)obj->val.fun;
         return buf+4;
     case CZL_ARRAY_LIST:
@@ -1600,7 +1579,7 @@ char* czl_analysis_ins(czl_gp *gp, char *buf, czl_ins *ins)
 char* czl_analysis_ins_buf(czl_gp *gp, char *buf, czl_var *obj)
 {
     czl_class *pclass = (czl_class*)czl_sys_hash_find(CZL_STRING, CZL_NIL,
-                                                      buf, &gp->class_hash);
+                                                      buf, &gp->huds.class_hash);
 
     if (!pclass || !(obj->val.Obj=czl_instance_fork(gp, pclass, 0)))
     {
@@ -1738,7 +1717,7 @@ char* czl_analysis_ele_buf(czl_gp *gp, char *buf, czl_var *obj)
 
     switch (obj->type)
     {
-    case CZL_INT: //CZL_FILE类型只保存文件大小
+    case CZL_INT: //CZL_FILE/CZL_SOURCE类型只保存文件大小
         return czl_analysis_int_buf(buf, &obj->val.inum);
     case CZL_FLOAT:
         obj->val.fnum = *((czl_float*)buf);
@@ -2146,20 +2125,31 @@ char czl_sys_read(czl_gp *gp, czl_fun *fun)
     long size = (fun->vars[1].val.inum < 0 ? 40*1024 : fun->vars[1].val.inum);
     czl_buf_file *f = czl_sys_hash_find(CZL_STRING, CZL_NIL, path, &gp->file_hash);
     FILE *fp = (f ? f->fp : fopen(path, "rb"));
+    unsigned long time = CZL_CLOCK;
     czl_string *s;
-    struct stat buf;
+    struct stat state;
 
     if (!fp)
+        return czl_set_ret_str(gp, &fun->ret, NULL, 0);
+
+    if (f)
     {
-        fun->ret.val.inum = 0;
-        return 1;
+        //设置热更新检测间隔时间为1s，因为fstat是IO操作会阻塞过长时间
+        if (time - f->time < 1000)
+        {
+            fun->ret.type = CZL_STRING;
+            fun->ret.val.str.Obj = f->buf;
+            ++CZL_STR(f->buf)->rc;
+            return 1;
+        }
+        f->time = time;
     }
 
-    fstat(fileno(fp), &buf);
+    fstat(fileno(fp), &state);
 
-    if (size < buf.st_size)
+    if (size < state.st_size)
     {
-        if (f && f->date == buf.st_mtime)
+        if (f && f->date == state.st_mtime)
         {
             fun->ret.type = CZL_STRING;
             fun->ret.val.str.size = CZL_STR(f->buf)->len + 1;
@@ -2170,9 +2160,9 @@ char czl_sys_read(czl_gp *gp, czl_fun *fun)
         {
             if (f)
                 rewind(fp);
-            if (!czl_str_create(gp, &fun->ret.val.str, buf.st_size+1, buf.st_size, NULL))
+            if (!czl_str_create(gp, &fun->ret.val.str, state.st_size+1, state.st_size, NULL))
                 return 0;
-            if (fread(CZL_STR(fun->ret.val.str.Obj)->str, 1, buf.st_size, fp))
+            if (fread(CZL_STR(fun->ret.val.str.Obj)->str, 1, state.st_size, fp))
                 fun->ret.type = CZL_STRING;
             else
             {
@@ -2189,7 +2179,7 @@ char czl_sys_read(czl_gp *gp, czl_fun *fun)
 
     if (f)
     {
-        if (f->date == buf.st_mtime)
+        if (f->date == state.st_mtime)
         {
             fun->ret.type = CZL_STRING;
             fun->ret.val.str.Obj = f->buf;
@@ -2202,7 +2192,7 @@ char czl_sys_read(czl_gp *gp, czl_fun *fun)
     }
     else
     {
-        if (!(f=(czl_buf_file*)CZL_BUF_FILE_MALLOC(gp)) ||
+        if (!(f=CZL_BUF_FILE_MALLOC(gp)) ||
             !(f->path=(char*)CZL_TMP_MALLOC(gp, strlen(path)+1)) ||
             !czl_sys_hash_insert(gp, CZL_STRING, f, &gp->file_hash))
         {
@@ -2216,6 +2206,7 @@ char czl_sys_read(czl_gp *gp, czl_fun *fun)
         }
         strcpy(f->path, path);
         f->fp = fp;
+        f->time = time;
         f->last = NULL;
         f->next = gp->file_head;
         if (gp->file_head)
@@ -2223,19 +2214,19 @@ char czl_sys_read(czl_gp *gp, czl_fun *fun)
         gp->file_head = f;
     }
 
-    f->date = buf.st_mtime;
+    f->date = state.st_mtime;
 
-    if (!(f->buf=(void**)CZL_STR_MALLOC(gp, CZL_SL(buf.st_size+1))))
+    if (!(f->buf=(void**)CZL_STR_MALLOC(gp, CZL_SL(state.st_size+1))))
     {
         czl_buf_file_delete(gp, f);
         return 0;
     }
     s = CZL_STR(f->buf);
     s->rc = 1;
-    s->len = buf.st_size;
+    s->len = state.st_size;
     s->str[s->len] = '\0';
 
-    if (!fread(s->str, 1, buf.st_size, fp))
+    if (!fread(s->str, 1, state.st_size, fp))
     {
         czl_buf_file_delete(gp, f);
         fun->ret.val.inum = 0;
@@ -2306,235 +2297,6 @@ char czl_sys_Hash(czl_gp *gp, czl_fun *fun)
     fun->ret.val.inum = czl_bkdr_hash(s->str, s->len);
     fun->ret.val.inum ^= fun->vars[1].val.inum;
 
-    return 1;
-}
-///////////////////////////////////////////////////////////////
-#define CZL_SHA1_HASH_SIZE 20
-
-typedef struct czl_sha1
-{
-    unsigned long Intermediate_Hash[CZL_SHA1_HASH_SIZE/4];
-    unsigned long Length_Low;
-    unsigned long Length_High;
-    unsigned long Message_Block_Index;
-    unsigned char Message_Block[64];
-} czl_sha1;
-
-#define CZL_SHA1_SHIFT(bits, word) (((word) << (bits)) | ((word) >> (32-(bits))))
-
-void czl_sha1_process_message_block(czl_sha1 *context)
-{
-    const unsigned long K[] =
-    {
-        0x5A827999,
-        0x6ED9EBA1,
-        0x8F1BBCDC,
-        0xCA62C1D6
-    };
-    int t;
-    unsigned long temp;
-    unsigned long W[80];
-    unsigned long A, B, C, D, E;
-
-    for(t = 0; t < 16; t++)
-    {
-        W[t] = context->Message_Block[t * 4] << 24;
-        W[t] |= context->Message_Block[t * 4 + 1] << 16;
-        W[t] |= context->Message_Block[t * 4 + 2] << 8;
-        W[t] |= context->Message_Block[t * 4 + 3];
-    }
-    for(t = 16; t < 80; t++)
-    {
-        W[t] = CZL_SHA1_SHIFT(1,W[t-3] ^ W[t-8] ^ W[t-14] ^ W[t-16]);
-    }
-    A = context->Intermediate_Hash[0];
-    B = context->Intermediate_Hash[1];
-    C = context->Intermediate_Hash[2];
-    D = context->Intermediate_Hash[3];
-    E = context->Intermediate_Hash[4];
-    for(t = 0; t < 20; t++)
-    {
-                temp = CZL_SHA1_SHIFT(5,A) +
-                        ((B & C) | ((~B) & D)) + E + W[t] + K[0];
-        E = D;
-        D = C;
-        C = CZL_SHA1_SHIFT(30,B);
-        B = A;
-        A = temp;
-    }
-    for(t = 20; t < 40; t++)
-    {
-        temp = CZL_SHA1_SHIFT(5,A) + (B ^ C ^ D) + E + W[t] + K[1];
-        E = D;
-        D = C;
-        C = CZL_SHA1_SHIFT(30,B);
-        B = A;
-        A = temp;
-    }
-    for(t = 40; t < 60; t++)
-    {
-        temp = CZL_SHA1_SHIFT(5,A) +
-            ((B & C) | (B & D) | (C & D)) + E + W[t] + K[2];
-        E = D;
-        D = C;
-        C = CZL_SHA1_SHIFT(30,B);
-        B = A;
-        A = temp;
-    }
-    for(t = 60; t < 80; t++)
-    {
-        temp = CZL_SHA1_SHIFT(5,A) + (B ^ C ^ D) + E + W[t] + K[3];
-        E = D;
-        D = C;
-        C = CZL_SHA1_SHIFT(30,B);
-        B = A;
-        A = temp;
-    }
-    context->Intermediate_Hash[0] += A;
-    context->Intermediate_Hash[1] += B;
-    context->Intermediate_Hash[2] += C;
-    context->Intermediate_Hash[3] += D;
-    context->Intermediate_Hash[4] += E;
-    context->Message_Block_Index = 0;
-}
-
-void czl_sha1_pad_message(czl_sha1 *context)
-{
-    if (context->Message_Block_Index > 55)
-    {
-        context->Message_Block[context->Message_Block_Index++] = 0x80;
-        while(context->Message_Block_Index < 64)
-            context->Message_Block[context->Message_Block_Index++] = 0;
-        czl_sha1_process_message_block(context);
-        while(context->Message_Block_Index < 56)
-            context->Message_Block[context->Message_Block_Index++] = 0;
-    }
-    else
-    {
-        context->Message_Block[context->Message_Block_Index++] = 0x80;
-        while(context->Message_Block_Index < 56)
-            context->Message_Block[context->Message_Block_Index++] = 0;
-    }
-
-    context->Message_Block[56] = context->Length_High >> 24;
-    context->Message_Block[57] = context->Length_High >> 16;
-    context->Message_Block[58] = context->Length_High >> 8;
-    context->Message_Block[59] = context->Length_High;
-    context->Message_Block[60] = context->Length_Low >> 24;
-    context->Message_Block[61] = context->Length_Low >> 16;
-    context->Message_Block[62] = context->Length_Low >> 8;
-    context->Message_Block[63] = context->Length_Low;
-    czl_sha1_process_message_block(context);
-}
-
-void czl_sha1_reset(czl_sha1 *context)
-{
-    context->Length_Low = 0;
-    context->Length_High = 0;
-    context->Message_Block_Index = 0;
-    context->Intermediate_Hash[0] = 0x67452301;
-    context->Intermediate_Hash[1] = 0xEFCDAB89;
-    context->Intermediate_Hash[2] = 0x98BADCFE;
-    context->Intermediate_Hash[3] = 0x10325476;
-    context->Intermediate_Hash[4] = 0xC3D2E1F0;
-}
-
-void czl_sha1_result(czl_sha1 *context, unsigned char Message_Digest[CZL_SHA1_HASH_SIZE])
-{
-    int i;
-
-    czl_sha1_pad_message(context);
-    for(i=0; i<64; ++i)
-        context->Message_Block[i] = 0;
-    context->Length_Low = 0;
-    context->Length_High = 0;
-
-    for(i = 0; i < CZL_SHA1_HASH_SIZE; ++i)
-        Message_Digest[i] = context->Intermediate_Hash[i>>2] >> 8 * ( 3 - ( i & 0x03 ) );
-}
-
-void czl_sha1_compute(czl_sha1 *context, const unsigned char *message_array, unsigned length)
-{
-    unsigned char corrupted = 0;
-
-    if (!length)
-        return;
-
-    while(length-- && !corrupted)
-    {
-        context->Message_Block[context->Message_Block_Index++] = (*message_array & 0xFF);
-        context->Length_Low += 8;
-        if (context->Length_Low == 0)
-        {
-            context->Length_High++;
-            if (context->Length_High == 0)
-                corrupted = 1;
-        }
-        if (context->Message_Block_Index == 64)
-            czl_sha1_process_message_block(context);
-        message_array++;
-    }
-}
-
-char czl_sys_sha1(czl_gp *gp, czl_fun *fun)
-{
-    czl_string *s = CZL_STR(fun->vars->val.str.Obj);
-    czl_sha1 sha;
-    unsigned char message_digest[CZL_SHA1_HASH_SIZE];
-
-    czl_sha1_reset(&sha);
-    czl_sha1_compute(&sha, (unsigned char*)s->str, s->len);
-    czl_sha1_result(&sha, message_digest);
-
-    return czl_set_ret_str(gp, &fun->ret, (char*)message_digest, CZL_SHA1_HASH_SIZE);
-}
-///////////////////////////////////////////////////////////////
-void czl_base64(const unsigned char *a, unsigned long len, char *b)
-{
-    static const char base64[64] =
-    {
-        'A','B','C','D','E','F','G','H','I','J','K','L','M',
-        'N','O','P','Q','R','S','T','U','V','W','X','Y','Z',
-        'a','b','c','d','e','f','g','h','i','j','k','l','m',
-        'n','o','p','q','r','s','t','u','v','w','x','y','z',
-        '0','1','2','3','4','5','6','7','8','9','+','/'
-    };
-    unsigned long i, j = len/3*3, k = len-j;
-
-    for (i = 0; i < j; i += 3)
-    {
-        *(b++) = base64[*a>>2];
-        *(b++) = base64[((*(a++)&0x03)<<4) | (*a>>4)];
-        *(b++) = base64[((*(a++)&0x0f)<<2) | (*a&0xc0)>>6];
-        *(b++) = base64[*(a++)&0x3f];
-    }
-
-    if (1 == k)
-    {
-        *(b++) = base64[*a>>2];
-        *(b++) = base64[(*a&0x03)<<4];
-        *(b++) = *(b++) = '=';
-    }
-    else if (2 == k)
-    {
-        *(b++) = base64[*a>>2];
-        *(b++) = base64[((*(a++)&0x03)<<4) | (*a>>4)];
-        *(b++) = base64[(*a&0x0f)<<2];
-        *(b++) = '=';
-    }
-
-    *b = '\0';
-}
-
-char czl_sys_base64(czl_gp *gp, czl_fun *fun)
-{
-    czl_string *s = CZL_STR(fun->vars->val.str.Obj);
-    unsigned long len = s->len/3*4 + (s->len%3 ? 4 : 0);
-
-    if (!czl_set_ret_str(gp, &fun->ret, NULL, len))
-        return 0;
-
-    czl_base64((unsigned char*)s->str, s->len, CZL_STR(fun->ret.val.str.Obj)->str);
     return 1;
 }
 ///////////////////////////////////////////////////////////////
@@ -3887,90 +3649,83 @@ char czl_sys_gc(czl_gp *gp, czl_fun *fun)
 }
 #endif //#ifdef CZL_MM_MODULE
 
-//被调脚本与主脚本共享内存空间
-void czl_gp_copy(czl_gp *a, czl_gp *b)
+char czl_sys_run(czl_gp *gp, czl_fun *fun)
 {
-#ifdef CZL_MM_MODULE
-	unsigned long i;
-    for (i = 0; i < CZL_MM_SP_RANGE; ++i)
+    char *path = CZL_STR(fun->vars->val.str.Obj)->str;
+    czl_hot_update *h = czl_sys_hash_find(CZL_STRING, CZL_NIL,
+                                          path, &gp->hot_update_hash);
+
+    if (h)
     {
-        a->mmp_tmp[i] = b->mmp_tmp[i];
-        a->mmp_rt[i] = b->mmp_rt[i];
-        a->mmp_stack[i] = b->mmp_stack[i];
-        a->mmp_str[i] = b->mmp_str[i];
+        unsigned long time = CZL_CLOCK;
+        czl_fun *main_fun = h->main_fun;
+        const czl_sys_hash hash = gp->huds.class_hash;
+        //设置热更新检测间隔时间为1s，因为fstat是IO操作会阻塞过长时间
+        if (time < h->time || time - h->time > 1000)
+        {
+            struct stat state;
+            fstat(fileno(h->fp), &state);
+            if (h->date != state.st_mtime)
+            {
+                czl_hot_update_delete(gp, h);
+                goto CZL_HOT_UPDATE;
+            }
+            h->time = time;
+        }
+        if (h->huds.class_hash.count)
+            gp->huds.class_hash = h->huds.class_hash;
+        czl_run_again(gp, main_fun, fun->vars+1, h->main_err_line);
+        czl_run_clean(gp, main_fun);
+        if (main_fun->ret.type != CZL_INT)
+        {
+            fun->ret.type = main_fun->ret.type;
+            main_fun->ret.type = CZL_INT;
+        }
+        fun->ret.val = main_fun->ret.val;
+        main_fun->ret.val.inum = 0;
+        if (hash.count)
+            gp->huds.class_hash = hash;
     }
-    a->mmp_obj = b->mmp_obj;
-    a->mmp_tab = b->mmp_tab;
-    a->mmp_arr = b->mmp_arr;
-    a->mmp_sq = b->mmp_sq;
-    a->mmp_ref = b->mmp_ref;
-    a->mmp_file = b->mmp_file;
-    #ifdef CZL_MM_CACHE
-        a->mm_cache_size = b->mm_cache_size;
-        a->mm_cache = b->mm_cache;
-    #endif //#ifdef CZL_MM_CACHE
-    a->mmp_sh_head = b->mmp_sh_head;
-    a->mmp_gc_size = b->mmp_gc_size;
-    a->mmp_rank = b->mmp_rank;
-    a->mmp_selfAdapt = b->mmp_selfAdapt;
-#endif //#ifdef CZL_MM_MODULE
-    a->mm_limit_backup = b->mm_limit_backup;
-    a->mm_limit = b->mm_limit;
-    a->mm_cnt = b->mm_cnt;
-    a->mm_max = b->mm_max;
-#ifdef CZL_TIMER
-    #ifdef CZL_SYSTEM_WINDOWS
-        a->timer_cs = b->timer_cs;
-    #elif defined CZL_SYSTEM_LINUX
-        a->timer_mutex = b->timer_mutex;
-    #endif
-#endif //#ifdef CZL_TIMER
-#ifndef CZL_CONSOLE
-    a->table = b->table;
-    a->log_path = b->log_path;
-    a->pclass = b->pclass;
-#endif //#ifndef CZL_CONSOLE
-    a->ch_head = b->ch_head;
-    a->fun_deep = b->fun_deep;
-#if defined CZL_SYSTEM_LINUX && (defined CZL_LIB_COM || \
-                                 defined CZL_LIB_TCP || defined CZL_LIB_UDP)
-    a->kdpfd = b->kdpfd;
-#endif
-}
-
-char czl_sys_runShell(czl_gp *gp, czl_fun *fun)
-{
-	czl_gp new_gp;
-    czl_var *path = fun->vars;
-    czl_var *ret = CZL_GRV(fun->vars+1);
-    if (!czl_ret_clean(gp, ret))
-        return 0;
-
-    fun->ret.val.inum = 0;
-
-    memset(&new_gp, 0, sizeof(czl_gp));
-    if (!(new_gp.tmp=(czl_analysis_gp*)malloc(sizeof(czl_analysis_gp))))
-        return 1;
-    memset(new_gp.tmp, 0, sizeof(czl_analysis_gp));
-    new_gp.enter_var = fun->vars[2];
-    czl_gp_copy(&new_gp, gp);
-
-    if (!czl_global_paras_init(&new_gp))
+    else
     {
-        czl_init_free(&new_gp, 0);
-        czl_gp_copy(gp, &new_gp);
-        return 1;
-    }
+        czl_fun *main_fun;
+        czl_hot_update_datas huds;
 
-    if (czl_exec_shell(&new_gp, CZL_STR(path->val.str.Obj)->str, 1))
-    {
-        ret->type = new_gp.cur_fun->ret.type;
-        ret->val = new_gp.cur_fun->ret.val;
-        new_gp.cur_fun->ret.type = CZL_INT;
-        fun->ret.val.inum = 1;
+    CZL_HOT_UPDATE:
+        if (!(gp->tmp=(czl_analysis_gp*)malloc(sizeof(czl_analysis_gp))))
+        {
+            fun->ret.val.inum = 0;
+            return 1;
+        }
+        memset(gp->tmp, 0, sizeof(czl_analysis_gp));
+
+        if (!czl_global_paras_init(gp))
+        {
+            czl_init_free(gp, 0);
+            fun->ret.val.inum = 0;
+            return 1;
+        }
+
+        huds = gp->huds;
+        memset(&gp->huds, 0, sizeof(czl_hot_update_datas));
+        gp->enter_var = fun->vars[1];
+        if (!(main_fun=czl_exec_shell(gp, path, 1)))
+            czl_hot_update_datas_free(gp, &gp->huds);
+        else
+        {
+            czl_hot_update_create(gp, path, main_fun);
+            if (gp->cur_fun->ret.type != CZL_INT)
+            {
+                fun->ret.type = gp->cur_fun->ret.type;
+                gp->cur_fun->ret.type = CZL_INT;
+            }
+            fun->ret.val = gp->cur_fun->ret.val;
+            gp->cur_fun->ret.val.inum = 0;
+            czl_run_clean(gp, main_fun);
+        }
+
+        gp->huds = huds;
     }
-    czl_shell_free(&new_gp);
-    czl_gp_copy(gp, &new_gp);
 
     return 1;
 }
@@ -4355,6 +4110,7 @@ void czl_get_obj_type(unsigned char type, const czl_var *obj, char *ret)
     case CZL_FLOAT: strcpy(ret, "float"); break;
     case CZL_STRING: strcpy(ret, "string"); break;
     case CZL_FILE: strcpy(ret, "file"); break;
+    case CZL_SOURCE: strcpy(ret, "source"); break;
     case CZL_FUN_REF: strcpy(ret, "fun"); break;
     case CZL_TABLE: strcpy(ret, "table"); break;
     case CZL_ARRAY: strcpy(ret, "array"); break;
@@ -5222,7 +4978,7 @@ void czl_thread_delete(czl_gp *gp, czl_thread *p)
 
 czl_thread* czl_thread_create(czl_gp *gp)
 {
-    czl_thread *p = (czl_thread*)CZL_THREAD_MALLOC(gp);
+    czl_thread *p = CZL_THREAD_MALLOC(gp);
     if (!p)
         return NULL;
 
@@ -5835,9 +5591,12 @@ char czl_clean(czl_gp *gp)
 
 char czl_exec(czl_gp *gp)
 {
-    char ret = czl_resume_shell(gp, gp->cur_fun);
+    char ret;
 
-    if (ret != 2)
+    if (!gp->table)
+        return 0;
+
+    if ((ret=czl_resume_shell(gp, gp->main_fun)) != 2)
         czl_memory_free(gp);
 
     return ret;

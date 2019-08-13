@@ -176,7 +176,7 @@ char czl_val_copy(czl_gp *gp, czl_var *left, czl_var *right)
     default:
         if (CZL_STRING == right->type)
             CZL_SRCA1(right->val.str);
-        else if (CZL_FILE == right->type)
+        else if (CZL_FILE == right->type || CZL_SOURCE == right->type)
             CZL_ORCA1(right->val.Obj);
         else if (!CZL_INS(right->val.Obj)->rf)
             CZL_ORCA1(right->val.Obj);
@@ -282,6 +282,9 @@ char czl_obj_cnt_cac(czl_gp *gp, czl_var *res, czl_var *opr)
         break;
     case CZL_FILE:
         res->val.inum = czl_get_file_size(CZL_FIL(opr->val.Obj)->fp);
+        break;
+    case CZL_SOURCE:
+        res->val.inum = 1;
         break;
     default:
         res->val.inum = 1;
@@ -402,7 +405,7 @@ char czl_nil_obj(czl_gp *gp, czl_var *var)
 
     switch (var->ot)
     {
-    case CZL_FILE:
+    case CZL_FILE: case CZL_SOURCE:
         var->type = CZL_INT;
         return 1;
     case CZL_INT: case CZL_FLOAT: case CZL_NUM: case CZL_FUN_REF:
@@ -662,7 +665,9 @@ char czl_ass_cac_diff_type(czl_gp *gp, czl_var *left, czl_var *right)
                 left->val = tmp.val;
                 return 1;
             }
-            else if (right->type != CZL_FILE && CZL_INS(right->val.Obj)->rf)
+            else if (right->type != CZL_FILE &&
+                     right->type != CZL_SOURCE &&
+                     CZL_INS(right->val.Obj)->rf)
                 return czl_obj_fork(gp, left, right);
             else
             {
@@ -750,11 +755,16 @@ char czl_ass_cac(czl_gp *gp, czl_var *left, czl_var *right)
         default:
             if (left->val.Obj == right->val.Obj)
                 break;
-            if (CZL_FILE == right->type)
+            if (CZL_FILE == right->type || CZL_SOURCE == right->type)
             {
                 CZL_ORCA1(right->val.Obj);
                 if (0 == CZL_ORCD1(left->val.Obj))
-                    czl_file_delete(gp, left->val.Obj);
+                {
+                    if (CZL_FILE == right->type)
+                        czl_file_delete(gp, left->val.Obj);
+                    else
+                        czl_extsrc_delete(gp, left->val.Obj);
+                }
             }
             else if (CZL_INS(right->val.Obj)->rf)
                 return czl_obj_fork(gp, left, right);

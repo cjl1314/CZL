@@ -12,8 +12,8 @@ typedef struct czl_data
 int main(void)
 {
     czl_data data = {1, 1.5, "foobar"};
-    //打开一个CZL虚拟机，入口脚本是shell.txt，log打印到czl.log文件，数据结构是data
-    czl_gp *gp = czl_open("shell.txt", "czl.log", "data");
+    //打开一个CZL虚拟机，入口脚本是main.czl，log打印到czl.log文件，数据结构是data
+    czl_gp *gp = czl_open("main.czl", "czl.log", "data");
     if (!gp)
         return 0;
 

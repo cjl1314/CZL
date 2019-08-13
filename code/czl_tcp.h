@@ -23,6 +23,7 @@
 #ifdef CZL_LIB_TCP
     extern const czl_sys_fun czl_lib_tcp[]; //库函数表声明
     #define CZL_LIB_TCP_CNT 10              //库函数个数
+    #define CZL_LIB_TCP_NAME "tcp"          //库名
     //
     #ifdef CZL_SYSTEM_WINDOWS
         extern CRITICAL_SECTION czl_tcp_cs;

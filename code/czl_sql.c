@@ -4,26 +4,24 @@
 
 //库函数声明，其中gp是CZL运行时用到的全局参数，fun是函数。
 char czl_sql_open(czl_gp *gp, czl_fun *fun);    //打开数据库
-char czl_sql_close(czl_gp *gp, czl_fun *fun);   //关闭数据库
+char czl_sql_error(czl_gp *gp, czl_fun *fun);   //获取错误信息
 char czl_sql_exec(czl_gp *gp, czl_fun *fun);    //执行sql批量获取结果
 char czl_sql_prepare(czl_gp *gp, czl_fun *fun); //编译sql
 char czl_sql_query(czl_gp *gp, czl_fun *fun);   //执行编译sql查询
 char czl_sql_reset(czl_gp *gp, czl_fun *fun);   //重置query光标
 char czl_sql_bind(czl_gp *gp, czl_fun *fun);    //执行编译sql参数绑定
-char czl_sql_free(czl_gp *gp, czl_fun *fun);    //释放编译资源
 
 //库函数表定义
 const czl_sys_fun czl_lib_sql[] =
 {
     //函数名,      函数指针,           参数个数,  参数声明
-    {"open",      czl_sql_open,      7,        "str_v1,str_v2=\"sqlite3\",str_v3=\"\",int_v4=0,str_v5=\"\",str_v6=\"\",int_v7=-1"},
-    {"close",     czl_sql_close,     1,        "int_v1"},
-    {"exec",      czl_sql_exec,      2,        "int_v1"},
-    {"prepare",   czl_sql_prepare,   2,        "int_v1,str_v2"},
-    {"query",     czl_sql_query,     1,        "int_v1"},
-    {"reset",     czl_sql_reset,     1,        "int_v1"},
-    {"bind",      czl_sql_bind,      2,        "int_v1,arr_v2"},
-    {"free",      czl_sql_free,      1,        "int_v1"},
+    {"open",      czl_sql_open,      7,        "str_v1,str_v2=\"sqlite3\",str_v3=\"\",int_v4=0,str_v5=\"\",str_v6=\"\",int_v7=0"},
+    {"error",     czl_sql_error,     1,        "v1=0"},
+    {"exec",      czl_sql_exec,      2,        "src_v1"},
+    {"prepare",   czl_sql_prepare,   2,        "src_v1,str_v2"},
+    {"query",     czl_sql_query,     1,        "src_v1"},
+    {"reset",     czl_sql_reset,     1,        "src_v1"},
+    {"bind",      czl_sql_bind,      2,        "src_v1,arr_v2"},
 };
 
 enum czl_sql_engine_enum
@@ -46,6 +44,20 @@ enum czl_mysql_state_enum
     CZL_MYSQL_STATE_END
 };
 
+void czl_sql_error_log(char *log_buf, const char *error)
+{
+    unsigned long len;
+
+    if (!error) return;
+
+    len = strlen(error);
+    if (len >= CZL_LOG_BUF_SIZE)
+        len = CZL_LOG_BUF_SIZE - 1;
+
+    memcpy(log_buf, error, len);
+    log_buf[len] = '\0';
+}
+
 char czl_sql_open(czl_gp *gp, czl_fun *fun)
 {
     char *database = CZL_STR(fun->vars->val.str.Obj)->str;
@@ -54,15 +66,20 @@ char czl_sql_open(czl_gp *gp, czl_fun *fun)
     if (czl_strcmp("sqlite3", engine))
     {
         sqlite3 *db;
-        if (sqlite3_open(database, &db) != SQLITE_OK)
+        int rc;
+        if ((rc=sqlite3_open(database, &db)) != SQLITE_OK)
+        {
+            czl_sql_error_log(gp->log_buf, sqlite3_errstr(rc));
             fun->ret.val.inum = 0;
-        else if (!(fun->ret.val.inum=czl_extsrc_create(gp, db, sqlite3_close, czl_lib_sql)))
+        }
+        else if (!(fun->ret.val.Obj=czl_extsrc_create(gp, db, sqlite3_close, CZL_LIB_SQL_NAME)))
             return 0;
         else
         {
-            czl_extsrc *extsrc = (czl_extsrc*)((unsigned long)fun->ret.val.inum);
-            extsrc->engine = CZL_SQL_ENGINE_SQLITE3;
+            czl_extsrc *extsrc = CZL_SRC(fun->ret.val.Obj);
             extsrc->type = CZL_SQL_SRC_DB;
+            extsrc->engine = CZL_SQL_ENGINE_SQLITE3;
+            fun->ret.type = CZL_SOURCE;
         }
     }
     else if (czl_strcmp("mysql", engine))
@@ -75,13 +92,8 @@ char czl_sql_open(czl_gp *gp, czl_fun *fun)
         unsigned long timeout = fun->vars[6].val.inum; //单位: s
         if (!db ||
             mysql_options(db, MYSQL_OPT_CONNECT_TIMEOUT, &timeout) ||
-            !mysql_real_connect(db, host, usr, pwd, database, port,
-                                NULL, CLIENT_MULTI_STATEMENTS))
-        {
+            !mysql_real_connect(db, host, usr, pwd, NULL, port, NULL, CLIENT_MULTI_STATEMENTS))
             fun->ret.val.inum = 0;
-            if (db)
-                mysql_close(db);
-        }
         else
         {
             unsigned long size = sizeof("create database ;") +
@@ -100,37 +112,63 @@ char czl_sql_open(czl_gp *gp, czl_fun *fun)
             strcat(buf, database);
             strcat(buf, ";");
             if (mysql_query(db, buf))
-            {
                 fun->ret.val.inum = 0;
-                mysql_close(db);
-            }
-            else if (!(fun->ret.val.inum=czl_extsrc_create(gp, db, mysql_close, czl_lib_sql)))
+            else if (!(fun->ret.val.Obj=czl_extsrc_create(gp, db, mysql_close, CZL_LIB_SQL_NAME)))
             {
                 CZL_TMP_FREE(gp, buf, size);
                 return 0;
             }
             else
             {
-                czl_extsrc *extsrc = (czl_extsrc*)((unsigned long)fun->ret.val.inum);
-                extsrc->engine = CZL_SQL_ENGINE_MYSQL;
+                czl_extsrc *extsrc = CZL_SRC(fun->ret.val.Obj);
                 extsrc->type = CZL_SQL_SRC_DB;
+                extsrc->engine = CZL_SQL_ENGINE_MYSQL;
             #ifdef CZL_SYSTEM_WINDOWS
                 extsrc->stdcall_flag = 1;
             #endif
+                fun->ret.type = CZL_SOURCE;
             }
             CZL_TMP_FREE(gp, buf, size);
         }
+        if (!fun->ret.val.Obj && db)
+        {
+            czl_sql_error_log(gp->log_buf, mysql_error(db));
+            mysql_close(db);
+        }
     }
     else
+    {
+        czl_sql_error_log(gp->log_buf, "SQL engine just surport sqlite3 and mysql");
         fun->ret.val.inum = 0;
+    }
 
     return 1;
 }
 
-char czl_sql_close(czl_gp *gp, czl_fun *fun)
+char czl_sql_error(czl_gp *gp, czl_fun *fun)
 {
-    fun->ret.val.inum = czl_extsrc_delete(gp, fun->vars->val.inum);
-    return 1;
+    const char *error;
+
+    if (CZL_SOURCE == fun->vars->type)
+    {
+        czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, CZL_LIB_SQL_NAME);
+        if (!extsrc || extsrc->type != CZL_SQL_SRC_DB)
+        {
+            fun->ret.val.inum = 0;
+            return 1;
+        }
+        else
+        {
+            if (CZL_SQL_ENGINE_SQLITE3 == extsrc->engine)
+                error  = sqlite3_errmsg(extsrc->src);
+            else //CZL_SQL_ENGINE_MYSQL
+                error = mysql_error(extsrc->src);
+        }
+    }
+    else
+        error = gp->log_buf;
+
+    return czl_set_ret_str(gp, &fun->ret, error, strlen(error));
 }
 
 char czl_sqlite3_bind_paras(czl_gp *gp, sqlite3_stmt *stmt, czl_var *var)
@@ -246,7 +284,7 @@ char czl_sql_exec(czl_gp *gp, czl_fun *fun)
 {
     if (CZL_STRING == fun->vars[1].type)
     {
-        czl_extsrc *extsrc = czl_extsrc_get(gp, fun->vars->val.inum, czl_lib_sql);
+        czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, CZL_LIB_SQL_NAME);
         if (!extsrc || extsrc->type != CZL_SQL_SRC_DB)
         {
             fun->ret.val.inum = 0;
@@ -268,7 +306,7 @@ char czl_sql_exec(czl_gp *gp, czl_fun *fun)
     }
     else if (CZL_ARRAY == fun->vars[1].type)
     {
-        czl_extsrc *extsrc = czl_extsrc_get(gp, fun->vars->val.inum, czl_lib_sql);
+        czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, CZL_LIB_SQL_NAME);
         if (!extsrc || extsrc->type != CZL_SQL_SRC_STMT)
         {
             fun->ret.val.inum = 0;
@@ -311,7 +349,7 @@ char czl_sql_exec(czl_gp *gp, czl_fun *fun)
 
 char czl_sql_prepare(czl_gp *gp, czl_fun *fun)
 {
-    czl_extsrc *extsrc = czl_extsrc_get(gp, fun->vars->val.inum, czl_lib_sql);
+    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, CZL_LIB_SQL_NAME);
     char *sql = CZL_STR(fun->vars[1].val.str.Obj)->str;
 
     if (!extsrc || extsrc->type != CZL_SQL_SRC_DB)
@@ -326,13 +364,14 @@ char czl_sql_prepare(czl_gp *gp, czl_fun *fun)
         //多线程下用sqlite3_prepare_v2
         if (sqlite3_prepare_v2(extsrc->src, sql, -1, &stmt, NULL) != SQLITE_OK)
             fun->ret.val.inum = 0;
-        else if (!(fun->ret.val.inum=czl_extsrc_create(gp, stmt, sqlite3_finalize, czl_lib_sql)))
+        else if (!(fun->ret.val.Obj=czl_extsrc_create(gp, stmt, sqlite3_finalize, CZL_LIB_SQL_NAME)))
             return 0;
         else
         {
-            czl_extsrc *extsrc = (czl_extsrc*)((unsigned long)fun->ret.val.inum);
-            extsrc->engine = CZL_SQL_ENGINE_SQLITE3;
+            czl_extsrc *extsrc = CZL_SRC(fun->ret.val.Obj);
             extsrc->type = CZL_SQL_SRC_STMT;
+            extsrc->engine = CZL_SQL_ENGINE_SQLITE3;
+            fun->ret.type = CZL_SOURCE;
         }
     }
     else //CZL_SQL_ENGINE_MYSQL
@@ -340,17 +379,18 @@ char czl_sql_prepare(czl_gp *gp, czl_fun *fun)
         MYSQL_STMT *stmt = mysql_stmt_init(extsrc->src);
         if (!stmt || mysql_stmt_prepare(stmt, sql, strlen(sql)))
             fun->ret.val.inum = 0;
-        else if (!(fun->ret.val.inum=czl_extsrc_create(gp, stmt, mysql_stmt_close, czl_lib_sql)))
+        else if (!(fun->ret.val.Obj=czl_extsrc_create(gp, stmt, mysql_stmt_close, CZL_LIB_SQL_NAME)))
             return 0;
         else
         {
-            czl_extsrc *extsrc = (czl_extsrc*)((unsigned long)fun->ret.val.inum);
-            extsrc->engine = CZL_SQL_ENGINE_MYSQL;
+            czl_extsrc *extsrc = CZL_SRC(fun->ret.val.Obj);
             extsrc->type = CZL_SQL_SRC_STMT;
+            extsrc->engine = CZL_SQL_ENGINE_MYSQL;
         #ifdef CZL_SYSTEM_WINDOWS
             extsrc->stdcall_flag = 1;
         #endif
             extsrc->state = CZL_MYSQL_STATE_EXEC;
+            fun->ret.type = CZL_SOURCE;
         }
     }
 
@@ -359,7 +399,7 @@ char czl_sql_prepare(czl_gp *gp, czl_fun *fun)
 
 char czl_sql_query(czl_gp *gp, czl_fun *fun)
 {
-    czl_extsrc *extsrc = czl_extsrc_get(gp, fun->vars->val.inum, czl_lib_sql);
+    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, CZL_LIB_SQL_NAME);
 
     if (!extsrc || extsrc->type != CZL_SQL_SRC_STMT)
     {
@@ -519,7 +559,7 @@ char czl_sql_query(czl_gp *gp, czl_fun *fun)
 
 char czl_sql_reset(czl_gp *gp, czl_fun *fun)
 {
-    czl_extsrc *extsrc = czl_extsrc_get(gp, fun->vars->val.inum, czl_lib_sql);
+    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, CZL_LIB_SQL_NAME);
 
     if (!extsrc || extsrc->type != CZL_SQL_SRC_STMT)
     {
@@ -546,7 +586,7 @@ char czl_sql_reset(czl_gp *gp, czl_fun *fun)
 
 char czl_sql_bind(czl_gp *gp, czl_fun *fun)
 {
-    czl_extsrc *extsrc = czl_extsrc_get(gp, fun->vars->val.inum, czl_lib_sql);
+    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, CZL_LIB_SQL_NAME);
 
     if (!extsrc || extsrc->type != CZL_SQL_SRC_STMT)
     {
@@ -570,12 +610,6 @@ char czl_sql_bind(czl_gp *gp, czl_fun *fun)
         fun->ret.val.inum = czl_mysql_bind_paras(gp, extsrc->src, fun->vars+1);
     }
 
-    return 1;
-}
-
-char czl_sql_free(czl_gp *gp, czl_fun *fun)
-{
-    fun->ret.val.inum = czl_extsrc_delete(gp, fun->vars->val.inum);
     return 1;
 }
 #endif //CZL_LIB_SQL

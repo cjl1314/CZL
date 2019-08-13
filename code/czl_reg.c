@@ -4,7 +4,6 @@
 
 //库函数声明，其中gp是CZL运行时用到的全局参数，fun是函数。
 char czl_reg_mode(czl_gp *gp, czl_fun *fun);    //编译正则模式
-char czl_reg_free(czl_gp *gp, czl_fun *fun);    //释放正则资源
 char czl_reg_match(czl_gp *gp, czl_fun *fun);   //正则匹配
 char czl_reg_collect(czl_gp *gp, czl_fun *fun); //正则提取
 char czl_reg_replace(czl_gp *gp, czl_fun *fun); //正则替换
@@ -14,10 +13,9 @@ const czl_sys_fun czl_lib_reg[] =
 {
     //函数名,    函数指针,          参数个数,  参数声明
     {"mode",    czl_reg_mode,     1,        "str_v1"},
-    {"free",    czl_reg_free,     1,        "int_v1"},
-    {"match",   czl_reg_match,    2,        "int_v1,str_v2"},
-    {"collect", czl_reg_collect,  2,        "int_v1,str_v2"},
-    {"replace", czl_reg_replace,  3,        "int_v1,str_v2,str_v3"},
+    {"match",   czl_reg_match,    2,        "src_v1,str_v2"},
+    {"collect", czl_reg_collect,  2,        "src_v1,str_v2"},
+    {"replace", czl_reg_replace,  3,        "src_v1,str_v2,str_v3"},
 };
 
 #define CZL_REG_BUF_SIZE 3*100 //必须为3*n, n为结果个数，小于3*n得不到结果
@@ -31,21 +29,17 @@ char czl_reg_mode(czl_gp *gp, czl_fun *fun)
 
     if (!re)
         fun->ret.val.inum = 0;
-    else if (!(fun->ret.val.inum=czl_extsrc_create(gp, re, pcre_free, czl_lib_reg)))
+    else if (!(fun->ret.val.Obj=czl_extsrc_create(gp, re, pcre_free, CZL_LIB_REG_NAME)))
         return 0;
+    else
+        fun->ret.type = CZL_SOURCE;
 
-    return 1;
-}
-
-char czl_reg_free(czl_gp *gp, czl_fun *fun)
-{
-    fun->ret.val.inum = czl_extsrc_delete(gp, fun->vars->val.inum);
     return 1;
 }
 
 char czl_reg_match(czl_gp *gp, czl_fun *fun)
 {
-    czl_extsrc *extsrc = czl_extsrc_get(gp, fun->vars->val.inum, czl_lib_reg);
+    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, CZL_LIB_REG_NAME);
     czl_string *text = CZL_STR(fun->vars[1].val.str.Obj);
     int ovector[CZL_REG_BUF_SIZE];
 
@@ -61,7 +55,7 @@ char czl_reg_match(czl_gp *gp, czl_fun *fun)
 
 char czl_reg_collect(czl_gp *gp, czl_fun *fun)
 {
-    czl_extsrc *extsrc = czl_extsrc_get(gp, fun->vars->val.inum, czl_lib_reg);
+    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, CZL_LIB_REG_NAME);
     czl_string *text = CZL_STR(fun->vars[1].val.str.Obj);
     int offset = 0;
     czl_array *arr = NULL;
@@ -106,7 +100,7 @@ char czl_reg_collect(czl_gp *gp, czl_fun *fun)
 
 char czl_reg_replace(czl_gp *gp, czl_fun *fun)
 {
-    czl_extsrc *extsrc = czl_extsrc_get(gp, fun->vars->val.inum, czl_lib_reg);
+    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, CZL_LIB_REG_NAME);
     czl_string *text = CZL_STR(fun->vars[1].val.str.Obj);
     czl_string *str = CZL_STR(fun->vars[2].val.str.Obj);
     int inx = 0;

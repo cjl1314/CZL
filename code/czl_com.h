@@ -19,6 +19,7 @@
 #ifdef CZL_LIB_COM
     extern const czl_sys_fun czl_lib_com[]; //库函数表声明
     #define CZL_LIB_COM_CNT 5               //库函数个数
+    #define CZL_LIB_COM_NAME "com"          //库名
 #endif //CZL_LIB_COM
 
 #endif // CZL_COM_H

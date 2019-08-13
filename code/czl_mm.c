@@ -1312,9 +1312,10 @@ void czl_mm_module_init
     czl_mm_pool_init(&gp->mmp_sq, sizeof(czl_sq), CZL_MM_OBJ_SP);
     czl_mm_pool_init(&gp->mmp_cor, sizeof(czl_coroutine), CZL_MM_OBJ_SP);
     czl_mm_pool_init(&gp->mmp_file, sizeof(czl_file), CZL_MM_OBJ_SP);
+    czl_mm_pool_init(&gp->mmp_extsrc, sizeof(czl_extsrc), CZL_MM_OBJ_SP);
 
     czl_mm_pool_init(&gp->mmp_buf_file, sizeof(czl_buf_file), CZL_MM_BUF_SP);
-    czl_mm_pool_init(&gp->mmp_extsrc, sizeof(czl_buf_file), CZL_MM_BUF_SP);
+    czl_mm_pool_init(&gp->mmp_hot_update, sizeof(czl_hot_update), CZL_MM_BUF_SP);
     czl_mm_pool_init(&gp->mmp_ref, sizeof(czl_ref_var), CZL_MM_BUF_SP);
 
 #ifdef CZL_MULT_THREAD
@@ -1342,7 +1343,7 @@ static void czl_mm_scan_pool(czl_gp *gp, czl_ulong size)
     void *buf = NULL;
     czl_ulong cnt = gp->mm_cnt;
 
-    for (c = gp->class_head; c; c = c->next)
+    for (c = gp->huds.class_head; c; c = c->next)
         while (czl_mm_fill_page(gp, c->pool.freeHead, &c->pool, 0))
             if ((cnt - gp->mm_cnt >= gp->mmp_gc_size) || (buf=malloc(size)))
                 goto CZL_END;
@@ -1405,7 +1406,7 @@ static void czl_mm_scan_page(czl_gp *gp, czl_ulong size)
 
     size += 60; //60保证大于一个heap的头部信息
 
-    for (c = gp->class_head; c; c = c->next)
+    for (c = gp->huds.class_head; c; c = c->next)
         if (czl_mm_fill_page(gp, c->pool.freeHead, &c->pool, size))
             return;
 

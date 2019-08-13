@@ -27,15 +27,16 @@
 #define CZL_MAX_STACK_SIZE          3000
 //异常码个数
 #define CZL_EXCEPTION_CODE_NUM      14
-//
+//log缓存大小
 #define CZL_LOG_BUF_SIZE 128
-//
+//脚本路径最大长度
 #define CZL_MAX_SHELL_PATH_SIZE 128
-//
+//log路径最大长度
 #define CZL_MAX_LOG_PATH_SIZE 128
-
 //主函数名
 #define CZL_MAIN_FUN_NAME	"main"
+//系统库名
+#define CZL_LIB_OS_NAME    "os"
 ///////////////////////////////////////////////////////////////
 //变量是否存在&引用: var exist ref
 #define CZL_VAR_EXIST_REF(var) \
@@ -159,6 +160,12 @@ do { objs[i]->quality = quality[i]; } while (++i < j);
     #define CZL_FIL(Obj) ((czl_file*)(*Obj))
 #else
     #define CZL_FIL(Obj) ((czl_file*)Obj)
+#endif
+
+#ifdef CZL_MM_RT_GC
+    #define CZL_SRC(Obj) ((czl_extsrc*)(*Obj))
+#else
+    #define CZL_SRC(Obj) ((czl_extsrc*)Obj)
 #endif
 
 #define CZL_TAB_LIST(Obj) ((czl_table_list*)(Obj))
@@ -342,6 +349,7 @@ typedef enum czl_opr_type_enum
     CZL_STACK,          // 栈
     CZL_QUEUE,          // 队列
     CZL_FILE,           // 文件
+    CZL_SOURCE,         // 资源
     CZL_FUN_REF,        // 函数指针 32bit
     CZL_OBJ_REF,        // 对象指针 32bit
     CZL_ARRAY_LIST,     // 数组[]列表
@@ -466,6 +474,7 @@ typedef enum czl_fun_quality_enum
 {
     CZL_STATIC_FUN,
     CZL_INS_STATIC_FUN,
+    CZL_SRC_STATIC_FUN,
     CZL_LG_VAR_DYNAMIC_FUN,
     CZL_INS_VAR_DYNAMIC_FUN,
 } czl_fun_quality_enum;
@@ -1040,27 +1049,12 @@ typedef struct czl_buf_file
 {
     char *path;
     FILE *fp;
-    void **buf;
     long date;
+    unsigned long time;
+    void **buf;
     struct czl_buf_file *next;
     struct czl_buf_file *last;
 } czl_buf_file;
-
-//扩展库资源结构
-typedef struct czl_extsrc
-{
-    void *src;
-    void (*src_free)(void*);
-    const struct czl_sys_fun *lib;
-    unsigned char engine;
-    unsigned char type;
-    unsigned char state;
-#ifdef CZL_SYSTEM_WINDOWS
-    unsigned char stdcall_flag;
-#endif
-    struct czl_extsrc *next;
-    struct czl_extsrc *last;
-} czl_extsrc;
 
 //哈希表桶链节点
 typedef struct czl_bucket
@@ -1077,6 +1071,22 @@ typedef struct czl_sys_hash
     unsigned long count;        //总数据节点个数: 与size比较进行扩容和回收
     czl_bucket **buckets;       //bucket数组
 } czl_sys_hash;
+
+//扩展库资源结构
+typedef struct czl_extsrc
+{
+    unsigned long rc;   //引用计数
+    void *src;
+    void (*src_free)(void*);
+    char *name;
+    czl_sys_hash *hash;
+    unsigned char type;
+    unsigned char engine;
+    unsigned char state;
+#ifdef CZL_SYSTEM_WINDOWS
+    unsigned char stdcall_flag;
+#endif
+} czl_extsrc;
 
 //父类节点
 typedef struct czl_class_parent
@@ -1387,6 +1397,7 @@ typedef struct czl_sysfun
     char *name;
     const czl_sys_fun *sysfun;
     czl_fun *fun;
+    unsigned long hash;
 } czl_sysfun;
 
 typedef struct czl_syslib
@@ -1489,16 +1500,39 @@ typedef struct czl_timer
 } czl_timer;
 #endif //#ifdef CZL_TIMER
 
+//热更新数据
+typedef struct czl_hot_update_datas
+{
+    czl_name *sn_head;
+    czl_exp_fun *expfun_head;
+    czl_obj_member *member_head;
+    czl_ele *eles_head;
+    czl_glo_var_list vars_head;
+    czl_enum_list enums_head;
+    czl_fun_list funs_head;
+    czl_class_list class_head;
+    czl_sys_hash class_hash;
+} czl_hot_update_datas;
+
+//热更新数据结构
+typedef struct czl_hot_update
+{
+    char *path;
+    FILE *fp;
+    long date;
+    unsigned long time;
+    czl_fun *main_fun;
+    unsigned long main_err_line;
+    struct czl_hot_update *next;
+    struct czl_hot_update *last;
+    czl_hot_update_datas huds;
+} czl_hot_update;
+
 //解释时全局参数结构
 typedef struct czl_analysis_gp
 {
-    czl_syslib *syslibs;
-    czl_sys_hash syslibs_hash;  //系统库哈希索引
     czl_sys_hash *osfun_hash;   //os系统库函数哈希索引
-    czl_sys_hash keyword_hash;  //系统关键字哈希索引
     czl_sys_hash usrlibs_hash;  //用户库哈希索引
-    //
-    czl_sys_hash consts_hash;
     //
     czl_block_struct block_stack[CZL_MAX_CODE_NEST_LAYER];
     unsigned long block_count;
@@ -1579,6 +1613,7 @@ typedef struct czl_gp
     czl_mm_sp_pool mmp_cor;         //coroutine结构内存池
     czl_mm_sp_pool mmp_file;        //file结构内存池
     czl_mm_sp_pool mmp_buf_file;    //buf_file结构内存池
+    czl_mm_sp_pool mmp_hot_update;  //hot_update结构内存池
     czl_mm_sp_pool mmp_extsrc;      //extsrc结构内存池
 #ifdef CZL_MULT_THREAD
     czl_mm_sp_pool mmp_thread;      //thread结构内存池
@@ -1630,13 +1665,40 @@ typedef struct czl_gp
     czl_sys_hash coroutines_hash;
     void **coroutines_head;
     //
+    czl_sys_hash syslibs_hash; //系统库哈希索表
+    czl_syslib *syslibs; //系统库
+    //
     czl_sys_hash file_hash; //缓存文件哈希表
     czl_buf_file *file_head; //缓存文件链表头
     //
-    czl_sys_hash extsrc_hash; //扩展库资源哈希表
-    czl_extsrc *extsrc_head; //扩展库资源链表表头
+    czl_sys_hash hot_update_hash; //热更新哈希表
+    czl_hot_update *hot_update_head; //热更新链表头
     //
-    czl_sys_hash class_hash; //格式化文件读操作需要用到，不能在运行前释放内存
+    czl_sys_hash consts_hash; //常量哈希表
+    czl_glo_var_list consts_head;
+    //
+    czl_sys_hash keyword_hash;  //系统关键字哈希索引
+    //
+#ifndef CZL_CONSOLE
+    void **table; //与C/C++数据交互表
+    char *shell_path;
+    char *log_path;
+    char *class_name;
+    czl_class *pclass;
+    czl_fun *main_fun;
+#endif //#ifndef CZL_CONSOLE
+    //
+#ifdef CZL_SYSTEM_LINUX
+    int kdpfd;  //用于tcp/udp库的epoll_create
+#endif //#ifdef CZL_SYSTEM_LINUX
+    //
+    czl_char_var *ch_head;      //字符串元素缓冲区链表头
+    //
+    unsigned long fun_deep;     //栈空间上函数调用深度
+    //
+    czl_hot_update_datas huds; //热更新数据
+    //
+    czl_glo_sentence_list glo_vars_init_head;
     //
     czl_fun *cur_fun;   //当前函数
     //
@@ -1650,29 +1712,15 @@ typedef struct czl_gp
     //
     czl_var enter_var; //用于main函数传参
     //
-    //全局临时变量，用于对象类型成员赋值时循环引用检测
+    //全局临时变量，用于对象类型成员赋值时循环引用检测 和 资源函数对象传参
     czl_var *cur_var;
     //
-    czl_glo_var_list consts_head;
-    czl_glo_var_list vars_head;
-    czl_enum_list enums_head;
-    czl_fun_list funs_head;
-    czl_class_list class_head;
-    czl_ele *eles_head;
-    czl_exp_fun *expfun_head;
-    czl_obj_member *member_head;
-    czl_name *sn_head;          //脚本文件名链表头
-    czl_glo_sentence_list glo_vars_init_head;   //全局变量初始化表达式链表头
-    //
     void **cur_ins;             //当前实例指针
-    //
-    unsigned long fun_deep;     //栈空间上函数调用深度
     //
     unsigned long error_line;   //脚本错误行号
     char *error_file;           //脚本错误文件名
     //
     unsigned long main_err_line;//main函数错误行号
-    char *main_err_file;        //main函数错误文件名
     //
     char error_flag;            //运行时错误标记
     //
@@ -1683,8 +1731,6 @@ typedef struct czl_gp
     czl_exp_ele *yeild_pc;      //用于栈空间上函数yeild返回PC地址
     //
     czl_exp_ele *next_pc;       //用于字符串连接判断是否是最后一个+指令
-    //
-    czl_char_var *ch_head;      //字符串元素缓冲区链表头
     //
     czl_var *fun_ret;           //函数返回值
     //
@@ -1700,18 +1746,6 @@ typedef struct czl_gp
     czl_para tcp_efp1, tcp_efp2;
     czl_exp_ele tcp_efe1, tcp_efe2;
     czl_var tcp_v1, tcp_v2;
-    //
-#ifndef CZL_CONSOLE
-    void **table; //与C/C++数据交互表
-    char *shell_path;
-    char *log_path;
-    char *class_name;
-    czl_class *pclass;
-#endif //#ifndef CZL_CONSOLE
-    //
-#ifdef CZL_SYSTEM_LINUX
-    int kdpfd;  //用于tcp/udp库的epoll_create
-#endif //#ifdef CZL_SYSTEM_LINUX
 } czl_gp;
 ///////////////////////////////////////////////////////////////
 //单目运算符列表
@@ -1815,7 +1849,8 @@ char czl_nsef_create(czl_gp*, void*, char);
 czl_exp_fun* czl_exp_fun_create(czl_gp*, czl_fun*, char);
 czl_para* czl_para_node_create(czl_gp*, char);
 void czl_para_node_insert(czl_para**, czl_para**, czl_para*);
-czl_para_explain* czl_para_explain_create(czl_gp*, unsigned short, unsigned char);
+czl_para_explain* czl_para_explain_create(czl_gp*, unsigned short,
+                                          unsigned char, czl_exp_ele*);
 void czl_para_explain_insert(czl_para_explain**,
                              czl_para_explain**,
                              czl_para_explain*);
@@ -1857,15 +1892,19 @@ czl_loc_var* czl_loc_var_create(czl_gp*, czl_loc_var**, czl_loc_var**,
                                 char*, char, char, char);
 void czl_save_fun_enum_list(czl_gp*, czl_store_device*);
 char czl_ast_serialize(czl_gp*, czl_fun*);
-char czl_run(czl_gp*);
+czl_fun* czl_run(czl_gp*);
 #ifndef CZL_CONSOLE
 char czl_resume_shell(czl_gp*, czl_fun*);
 czl_tabkv* czl_tabkv_create(czl_gp*, czl_table*, int);
 czl_tabkv* czl_tabkv_find(czl_table*, int);
 char czl_tabkv_delete(czl_gp*, czl_table*, int);
 #endif //#ifndef CZL_CONSOLE
+void czl_hot_update_create(czl_gp*, const char*, czl_fun*);
+void czl_hot_update_delete(czl_gp*, czl_hot_update*);
+void czl_run_again(czl_gp*, czl_fun*, czl_var*, unsigned long);
+void czl_run_clean(czl_gp*, czl_fun*);
 char czl_val_del(czl_gp*, czl_var*);
-void czl_shell_free(czl_gp*);
+void czl_hot_update_datas_free(czl_gp *gp, czl_hot_update_datas*);
 void czl_memory_free(czl_gp*);
 void czl_init_free(czl_gp*, char);
 void czl_enum_list_delete(czl_gp*, czl_enum*);
@@ -1874,6 +1913,7 @@ unsigned long czl_hash_key_create(unsigned long, unsigned long);
 unsigned long czl_str_hash(char*, unsigned long,
                            unsigned long, unsigned long);
 czl_exp_ele* czl_opr_create(czl_gp*, czl_exp_node*);
+void czl_fun_node_delete(czl_gp*, czl_fun*);
 int czl_is_keyword(czl_gp*, char*);
 char czl_get_para_ot(czl_gp*, char*);
 czl_var* czl_ele_create(czl_gp*, char, void*);
@@ -1890,9 +1930,9 @@ czl_usrlib* czl_usrlib_create(czl_gp*, char*);
 char czl_sort_cmp_fun_ret(czl_gp*, czl_var*, czl_var*);
 void czl_buf_file_delete(czl_gp*, czl_buf_file*);
 unsigned long czl_bkdr_hash(char*, unsigned long);
-unsigned long czl_extsrc_create(czl_gp*, void*, void*, const czl_sys_fun*);
-char czl_extsrc_delete(czl_gp*, unsigned long);
-czl_extsrc* czl_extsrc_get(czl_gp*, unsigned long, const czl_sys_fun*);
+void* czl_extsrc_create(czl_gp*, void*, void*, char*);
+czl_extsrc* czl_extsrc_get(void**, char*);
+void czl_extsrc_delete(czl_gp*, void**);
 char czl_tcp_event_handle(czl_gp*, czl_fun*, czl_var*, unsigned long);
 ///////////////////////////////////////////////////////////////
 #ifdef CZL_TIMER
@@ -1981,32 +2021,35 @@ void czl_free(czl_gp*, void*, czl_ulong
     #define CZL_STR_REALLOC(gp, buf, new_size, old_size) czl_realloc(gp, buf, new_size, old_size, gp->mmp_str)
     #define CZL_STR_FREE(gp, buf, size) czl_free(gp, buf, size, gp->mmp_str)
 
-    #define CZL_TAB_MALLOC(gp) (czl_table*)czl_malloc(gp, sizeof(czl_table), &gp->mmp_tab)
+    #define CZL_TAB_MALLOC(gp) czl_malloc(gp, sizeof(czl_table), &gp->mmp_tab)
     #define CZL_TAB_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_table), &gp->mmp_tab)
 
-    #define CZL_ARR_MALLOC(gp) (czl_array*)czl_malloc(gp, sizeof(czl_array), &gp->mmp_arr)
+    #define CZL_ARR_MALLOC(gp) czl_malloc(gp, sizeof(czl_array), &gp->mmp_arr)
     #define CZL_ARR_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_array), &gp->mmp_arr)
 
-    #define CZL_SQ_MALLOC(gp) (czl_sq*)czl_malloc(gp, sizeof(czl_sq), &gp->mmp_sq)
+    #define CZL_SQ_MALLOC(gp) czl_malloc(gp, sizeof(czl_sq), &gp->mmp_sq)
     #define CZL_SQ_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_sq), &gp->mmp_sq)
 
     #define CZL_REF_MALLOC(gp) czl_malloc(gp, sizeof(czl_ref_var), &gp->mmp_ref)
     #define CZL_REF_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_ref_var), &gp->mmp_ref)
 
-    #define CZL_COR_MALLOC(gp) (czl_coroutine*)czl_malloc(gp, sizeof(czl_coroutine), &gp->mmp_cor)
+    #define CZL_COR_MALLOC(gp) czl_malloc(gp, sizeof(czl_coroutine), &gp->mmp_cor)
     #define CZL_COR_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_coroutine), &gp->mmp_cor)
 
-    #define CZL_FILE_MALLOC(gp) (czl_file*)czl_malloc(gp, sizeof(czl_file), &gp->mmp_file)
+    #define CZL_FILE_MALLOC(gp) czl_malloc(gp, sizeof(czl_file), &gp->mmp_file)
     #define CZL_FILE_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_file), &gp->mmp_file)
 
     #define CZL_BUF_FILE_MALLOC(gp) (czl_buf_file*)czl_malloc(gp, sizeof(czl_buf_file), &gp->mmp_buf_file)
     #define CZL_BUF_FILE_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_buf_file), &gp->mmp_buf_file)
 
+    #define CZL_HOT_UPDATE_MALLOC(gp) (czl_hot_update*)czl_malloc(gp, sizeof(czl_hot_update), &gp->mmp_hot_update)
+    #define CZL_HOT_UPDATE_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_hot_update), &gp->mmp_hot_update)
+
     #define CZL_EXTSRC_MALLOC(gp) (czl_extsrc*)czl_malloc(gp, sizeof(czl_extsrc), &gp->mmp_extsrc)
     #define CZL_EXTSRC_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_extsrc), &gp->mmp_extsrc)
 
 #ifdef CZL_MULT_THREAD
-    #define CZL_THREAD_MALLOC(gp) czl_malloc(gp, sizeof(czl_thread), &gp->mmp_thread)
+    #define CZL_THREAD_MALLOC(gp) (czl_thread*)czl_malloc(gp, sizeof(czl_thread), &gp->mmp_thread)
     #define CZL_THREAD_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_thread), &gp->mmp_thread)
 #endif //#ifdef CZL_MULT_THREAD
 
@@ -2039,29 +2082,32 @@ void czl_free(czl_gp*, void*, czl_ulong
     #define CZL_TAB_MALLOC(gp) czl_malloc(gp, sizeof(czl_table))
     #define CZL_TAB_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_table))
 
-    #define CZL_ARR_MALLOC(gp) (czl_array*)czl_malloc(gp, sizeof(czl_array))
+    #define CZL_ARR_MALLOC(gp) czl_malloc(gp, sizeof(czl_array))
     #define CZL_ARR_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_array))
 
-    #define CZL_SQ_MALLOC(gp) (czl_sq*)czl_malloc(gp, sizeof(czl_sq))
+    #define CZL_SQ_MALLOC(gp) czl_malloc(gp, sizeof(czl_sq))
     #define CZL_SQ_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_sq))
 
     #define CZL_REF_MALLOC(gp) czl_malloc(gp, sizeof(czl_ref_var))
     #define CZL_REF_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_ref_var))
 
-    #define CZL_COR_MALLOC(gp) (czl_coroutine*)czl_malloc(gp, sizeof(czl_coroutine))
+    #define CZL_COR_MALLOC(gp) czl_malloc(gp, sizeof(czl_coroutine))
     #define CZL_COR_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_coroutine))
 
-    #define CZL_FILE_MALLOC(gp) (czl_file*)czl_malloc(gp, sizeof(czl_file))
+    #define CZL_FILE_MALLOC(gp) czl_malloc(gp, sizeof(czl_file))
     #define CZL_FILE_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_file))
 
     #define CZL_BUF_FILE_MALLOC(gp) (czl_buf_file*)czl_malloc(gp, sizeof(czl_buf_file))
     #define CZL_BUF_FILE_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_buf_file))
 
+    #define CZL_HOT_UPDATE_MALLOC(gp) (czl_hot_update*)czl_malloc(gp, sizeof(czl_hot_update))
+    #define CZL_HOT_UPDATE_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_hot_update))
+
     #define CZL_EXTSRC_MALLOC(gp) (czl_extsrc*)czl_malloc(gp, sizeof(czl_extsrc))
     #define CZL_EXTSRC_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_extsrc))
 
 #ifdef CZL_MULT_THREAD
-    #define CZL_THREAD_MALLOC(gp) czl_malloc(gp, sizeof(czl_thread))
+    #define CZL_THREAD_MALLOC(gp) (czl_thread*)czl_malloc(gp, sizeof(czl_thread))
     #define CZL_THREAD_FREE(gp, buf) czl_free(gp, buf, sizeof(czl_thread))
 #endif //#ifdef CZL_MULT_THREAD
 

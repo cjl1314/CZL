@@ -21,7 +21,8 @@
 
 #ifdef CZL_LIB_WS
     extern const czl_sys_fun czl_lib_ws[]; //库函数表声明
-    #define CZL_LIB_WS_CNT 6               //库函数个数
+    #define CZL_LIB_WS_CNT 7               //库函数个数
+    #define CZL_LIB_WS_NAME "ws"           //库名
 #endif //CZL_LIB_WS
 
 #endif // CZL_WS_H

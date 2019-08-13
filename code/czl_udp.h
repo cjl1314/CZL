@@ -22,6 +22,7 @@
 #ifdef CZL_LIB_UDP
     extern const czl_sys_fun czl_lib_udp[]; //库函数表声明
     #define CZL_LIB_UDP_CNT 6               //库函数个数
+    #define CZL_LIB_UDP_NAME "udp"          //库名
 #endif //CZL_LIB_UDP
 
 #endif // CZL_UDP_H

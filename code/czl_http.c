@@ -140,6 +140,14 @@ char czl_http_req(czl_gp *gp, czl_fun *fun)
             port = p->val.inum;
     } while ((p=p->next));
 
+    //数据长度声明
+    strcpy(buf+len, "Content-Length:");
+    len += 15;
+    len += czl_itoa(datas->len, buf+len);
+    buf[len++] = '\r';
+    buf[len++] = '\n';
+
+    //结尾换行
     buf[len++] = '\r';
     buf[len++] = '\n';
 
@@ -214,6 +222,14 @@ char czl_http_res(czl_gp *gp, czl_fun *fun)
         p = p->next;
     }
 
+    //数据长度声明
+    strcpy(buf+len, "Content-Length:");
+    len += 15;
+    len += czl_itoa(datas->len, buf+len);
+    buf[len++] = '\r';
+    buf[len++] = '\n';
+
+    //结尾换行
     buf[len++] = '\r';
     buf[len++] = '\n';
 

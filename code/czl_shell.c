@@ -40,7 +40,6 @@ int main(int argc, char **argv)
 
     czl_exec_shell(&gp, shell_path, 1);
     czl_memory_free(&gp);
-
     return 1;
 }
 #endif //#ifdef CZL_CONSOLE

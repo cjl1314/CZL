@@ -30,6 +30,7 @@
     #endif
 #elif defined CZL_SYSTEM_LINUX
     #include <unistd.h>
+    #include <sys/stat.h>
     #ifdef CZL_MULT_THREAD
         #include <pthread.h>
         #include <semaphore.h>
