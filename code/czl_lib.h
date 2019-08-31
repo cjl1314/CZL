@@ -11,7 +11,7 @@
 #define CZL_LIB_SQL
 ///////////////////////////////////////////////////////////////
 #include "czl_vm.h"
-extern const czl_sys_lib czl_syslibs[];
+extern czl_sys_lib czl_syslibs[];
 extern const unsigned long czl_syslibs_num;
 ///////////////////////////////////////////////////////////////
 //获取引用变量: get ref var
@@ -87,14 +87,19 @@ void czl_thread_pipe_delete(czl_thread_pipe*);
 #endif //#ifdef CZL_MULT_THREAD
 ///////////////////////////////////////////////////////////////
 #ifndef CZL_CONSOLE
-char czl_insert(czl_gp*, int, void*);
-char czl_get(czl_gp*, int, void*);
-char czl_delete(czl_gp*, int);
-unsigned long czl_count(czl_gp*);
-char czl_clean(czl_gp*);
-char czl_exec(czl_gp*);
-czl_gp* czl_open(char*, char*, char*);
-void czl_close(czl_gp*);
+#if defined CZL_SYSTEM_WINDOWS && defined CZL_DLL
+    #define CZL_EXT  extern __declspec(dllimport)
+#else
+    #define CZL_EXT extern
+#endif
+CZL_EXT char czl_insert(czl_gp*, int, void*);
+CZL_EXT char czl_get(czl_gp*, int, void*);
+CZL_EXT char czl_delete(czl_gp*, int);
+CZL_EXT unsigned long czl_count(czl_gp*);
+CZL_EXT char czl_clean(czl_gp*);
+CZL_EXT char czl_exec(czl_gp*);
+CZL_EXT czl_gp* czl_open(char*, char*, char*, const czl_sys_fun*, unsigned long);
+CZL_EXT void czl_close(czl_gp*);
 #endif //#ifndef CZL_CONSOLE
 ///////////////////////////////////////////////////////////////
 #endif //CZL_LIB_H

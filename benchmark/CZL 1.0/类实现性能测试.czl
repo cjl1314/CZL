@@ -1,0 +1,17 @@
+class a
+{
+	int i, sum
+	a
+	{
+		my.sum = 0
+		for (my.i = 0; my.i < 10000000; my.i++)
+			my.sum += my.i
+		echo(clock())
+		echo(my.sum)
+	}
+}
+
+main
+{
+	a a()
+}

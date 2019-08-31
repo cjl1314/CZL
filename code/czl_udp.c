@@ -5,7 +5,6 @@
 //库函数声明，其中gp是CZL运行时用到的全局参数，fun是函数。
 char czl_udp_server(czl_gp *gp, czl_fun *fun);  //创建服务器socket
 char czl_udp_connect(czl_gp *gp, czl_fun *fun); //连接服务器并获得socket
-char czl_udp_close(czl_gp *gp, czl_fun *fun);   //关闭socket
 char czl_udp_recv(czl_gp *gp, czl_fun *fun);    //从socket接收数据
 char czl_udp_send(czl_gp *gp, czl_fun *fun);    //向socket发送数据
 char czl_udp_ip(czl_gp *gp, czl_fun *fun);      //获取socket的ip地址
@@ -16,26 +15,41 @@ const czl_sys_fun czl_lib_udp[] =
     //函数名,     函数指针,          参数个数,  参数声明
     {"server",   czl_udp_server,   2,        "str_v1,int_v2"},
     {"connect",  czl_udp_connect,  2,        "str_v1,int_v2"},
-    {"close",    czl_udp_close,    1,        "str_v1"},
-    {"recv",     czl_udp_recv,     2,        "&str_v1,int_v2=-1"},
-    {"send",     czl_udp_send,     4,        "str_v1,str_v2,int_v3=1024,int_v4=0"},
-    {"ip",       czl_udp_ip,       1,        "str_v1"},
+    {"recv",     czl_udp_recv,     2,        "src_v1,int_v2=-1"},
+    {"send",     czl_udp_send,     4,        "src_v1,str_v2,int_v3=1024,int_v4=0"},
+    {"ip",       czl_udp_ip,       1,        "src_v1"},
 };
 
 #define CZL_UDP_PACKET_MAX 65507 //udp单次数据发送不得超过65507
 //UDP与TCP不同，UDP不会对数据包进行分割、合并、排序、重传，所以sendto与recvfrom总是一一对应的
 
+typedef struct czl_udp_handle
+{
+    czl_gp *gp;
+    SOCKET sock;
+    unsigned long ip;
+    unsigned long port;
+} czl_udp_handle;
+
+void czl_udp_close(czl_udp_handle *h)
+{
+#ifdef CZL_SYSTEM_WINDOWS
+    closesocket(h->sock);
+#else //CZL_SYSTEM_LINUX
+    close(h->sock);
+#endif
+    CZL_TMP_FREE(h->gp, h, sizeof(czl_udp_handle));
+}
+
 //库函数定义
 char czl_udp_server(czl_gp *gp, czl_fun *fun)
 {
+    czl_udp_handle *h;
     struct sockaddr_in service;
     SOCKET sock;
     unsigned long type = 1; //非阻塞模式
-    czl_str str;
     char *ip = czl_dns(CZL_STR(fun->vars[0].val.str.Obj)->str);
     unsigned long port = fun->vars[1].val.inum;
-
-    fun->ret.val.inum = 0;
 
     if (!ip) return 1;
 
@@ -56,7 +70,7 @@ char czl_udp_server(czl_gp *gp, czl_fun *fun)
         SOCKET_ERROR == setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &type, sizeof(int)) ||
     #endif
         SOCKET_ERROR == bind(sock, (struct sockaddr*)&service, sizeof(service)) ||
-        !czl_str_create(gp, &str, 11, 10, NULL))
+        !(h=(czl_udp_handle*)CZL_TMP_MALLOC(gp, sizeof(czl_udp_handle))))
     {
     #ifdef CZL_SYSTEM_WINDOWS
         closesocket(sock);
@@ -66,29 +80,30 @@ char czl_udp_server(czl_gp *gp, czl_fun *fun)
         return 1;
     }
 
-    memcpy(CZL_STR(str.Obj)->str, &sock, 4);
-    memcpy(CZL_STR(str.Obj)->str+4, &service.sin_addr.s_addr, 4);
-    memcpy(CZL_STR(str.Obj)->str+8, &service.sin_port, 2);
-    fun->ret.type = CZL_STRING;
-    fun->ret.val.str = str;
+    h->gp = gp;
+    h->sock = sock;
+    h->ip = service.sin_addr.s_addr;
+    h->port = service.sin_port;
+
+    if (!(fun->ret.val.Obj=czl_extsrc_create(gp, h, czl_udp_close, CZL_LIB_UDP_NAME)))
+    {
+        czl_udp_close(h);
+        return 0;
+    }
+    else
+        fun->ret.type = CZL_SOURCE;
+
     return 1;
 }
 
 char czl_udp_connect(czl_gp *gp, czl_fun *fun)
 {
-    struct sockaddr_in service;
+    czl_udp_handle *h;
     SOCKET sock;
-    czl_str str;
 
 #ifdef CZL_SYSTEM_WINDOWS
     WSADATA wsaData;
 #endif //#ifdef CZL_SYSTEM_WINDOWS
-
-    service.sin_family = AF_INET;
-    service.sin_addr.s_addr = inet_addr(CZL_STR(fun->vars[0].val.str.Obj)->str);
-    service.sin_port = htons(fun->vars[1].val.inum);
-
-    fun->ret.val.inum = 0;
 
 #ifdef CZL_SYSTEM_WINDOWS
     if (SOCKET_ERROR == WSAStartup(MAKEWORD(2, 2), &wsaData))
@@ -98,7 +113,7 @@ char czl_udp_connect(czl_gp *gp, czl_fun *fun)
     if ((sock=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) <= 0)
         return 1;
 
-    if (!czl_str_create(gp, &str, 11, 10, NULL))
+    if (!(h=(czl_udp_handle*)CZL_TMP_MALLOC(gp, sizeof(czl_udp_handle))))
     {
     #ifdef CZL_SYSTEM_WINDOWS
         closesocket(sock);
@@ -108,39 +123,27 @@ char czl_udp_connect(czl_gp *gp, czl_fun *fun)
         return 1;
     }
 
-    memcpy(CZL_STR(str.Obj)->str, &sock, 4);
-    memcpy(CZL_STR(str.Obj)->str+4, &service.sin_addr.s_addr, 4);
-    memcpy(CZL_STR(str.Obj)->str+8, &service.sin_port, 2);
-    fun->ret.type = CZL_STRING;
-    fun->ret.val.str = str;
-    return 1;
-}
+    h->gp = gp;
+    h->sock = sock;
+    h->ip = inet_addr(CZL_STR(fun->vars[0].val.str.Obj)->str);
+    h->port = htons(fun->vars[1].val.inum);
 
-char czl_udp_close(czl_gp *gp, czl_fun *fun)
-{
-    czl_string *s = CZL_STR(fun->vars[0].val.str.Obj);
-
-    fun->ret.val.inum = 1;
-
-    if (s->len != 10)
-        fun->ret.val.inum = 0;
-
-#ifdef CZL_SYSTEM_WINDOWS
-    if (SOCKET_ERROR == closesocket(*((int*)s->str)))
-        fun->ret.val.inum = 0;
-#else //CZL_SYSTEM_LINUX
-    if (SOCKET_ERROR == close(*((int*)s->str)))
-        fun->ret.val.inum = 0;
-#endif
+    if (!(fun->ret.val.Obj=czl_extsrc_create(gp, h, czl_udp_close, CZL_LIB_UDP_NAME)))
+    {
+        czl_udp_close(h);
+        return 0;
+    }
+    else
+        fun->ret.type = CZL_SOURCE;
 
     return 1;
 }
 
 char czl_udp_recv(czl_gp *gp, czl_fun *fun)
 {
-    czl_var *str = CZL_GCRV(fun->vars);
+    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, CZL_LIB_UDP_NAME);
+    czl_udp_handle *h;
     long time = fun->vars[1].val.inum;
-    czl_string *s;
     SOCKET sock;
     struct sockaddr_in in;
     int in_len = sizeof(struct sockaddr);
@@ -149,27 +152,14 @@ char czl_udp_recv(czl_gp *gp, czl_fun *fun)
     struct timeval timeout, *pTime = NULL;
     fd_set fdRead;
 
-    if (!str) return 0;
-
-    fun->ret.val.inum = 0;
-
-    s = CZL_STR(str->val.str.Obj);
-    if (s->len != 10)
+    if (!extsrc)
         return 1;
 
-    if (s->rc > 1)
-    {
-        czl_str tmp;
-        if (!czl_str_create(gp, &tmp, s->len+1, s->len, s->str))
-            return 0;
-        str->val.str = tmp;
-        s = CZL_STR(tmp.Obj);
-    }
-
-    sock = *((int*)s->str);
+    h = extsrc->src;
+    sock = h->sock;
     in.sin_family = AF_INET;
-    in.sin_addr.s_addr = *((unsigned long*)(s->str+4));
-    in.sin_port = *((unsigned short*)(s->str+8));
+    in.sin_addr.s_addr = h->ip;
+    in.sin_port = h->port;
 
 #ifdef CZL_SYSTEM_WINDOWS
     if (time >= 0) { timeout.tv_sec = 0; timeout.tv_usec = time*1000; pTime = &timeout; }
@@ -194,31 +184,23 @@ char czl_udp_recv(czl_gp *gp, czl_fun *fun)
     #ifdef CZL_SYSTEM_WINDOWS
         if (len < 0 && WSAGetLastError() == WSAEWOULDBLOCK)
             return 1;
-        closesocket(sock);
     #else //CZL_SYSTEM_LINUX
         extern int errno;
         if (len < 0 && EWOULDBLOCK == errno)
             return 1;
-        close(sock);
     #endif
-        fun->ret.val.inum = -1;
         return 1;
     }
 
-    if (!czl_str_create(gp, &fun->ret.val.str, len+1, len, buf))
-        return 0;
-
-    fun->ret.type = CZL_STRING;
-
-    memcpy(s->str+4, &in.sin_addr.s_addr, 4);
-    memcpy(s->str+8, &in.sin_port, 2);
-
-    return 1;
+    h->ip = in.sin_addr.s_addr;
+    h->port = in.sin_port;
+    return czl_set_ret_str(gp, &fun->ret, buf, len);
 }
 
 char czl_udp_send(czl_gp *gp, czl_fun *fun)
 {
-    czl_string *s = CZL_STR(fun->vars[0].val.str.Obj);
+    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, CZL_LIB_UDP_NAME);
+    czl_udp_handle *h;
     czl_string *buf = CZL_STR(fun->vars[1].val.str.Obj);
     long size = fun->vars[2].val.inum;
     unsigned long delay = fun->vars[3].val.inum;
@@ -227,18 +209,17 @@ char czl_udp_send(czl_gp *gp, czl_fun *fun)
     unsigned long cnt = 0;
     long len, ret;
 
+    if (!extsrc)
+        return 1;
+
     size = (size <= 0 || size > CZL_UDP_PACKET_MAX ? CZL_UDP_PACKET_MAX : size);
     len = (buf->len < size ? buf->len : size);
 
-    fun->ret.val.inum = 0;
-
-    if (s->len != 10)
-        return 1;
-
-    sock = *((int*)s->str);
+    h = extsrc->src;
+    sock = h->sock;
     in.sin_family = AF_INET;
-    in.sin_addr.s_addr = *((unsigned long*)(s->str+4));
-    in.sin_port = *((unsigned short*)(s->str+8));
+    in.sin_addr.s_addr = h->ip;
+    in.sin_port = h->port;
 
 #ifdef CZL_SYSTEM_LINUX
     struct epoll_event ev, events[1];
@@ -263,25 +244,10 @@ char czl_udp_send(czl_gp *gp, czl_fun *fun)
                      (struct sockaddr*)&in, sizeof(struct sockaddr));
         if (SOCKET_ERROR == ret)
         {
-        #ifdef CZL_SYSTEM_WINDOWS
-            if (WSAGetLastError() == WSAEWOULDBLOCK)
-                break;
-            else
-            {
-                closesocket(sock);
-                fun->ret.val.inum = -1;
-                return 1;
-            }
-        #else //CZL_SYSTEM_LINUX
-            extern int errno;
-            if (EWOULDBLOCK == errno || EAGAIN == errno)
-                break;
-            else
-            {
-                fun->ret.val.inum = -1;
-                goto CZL_END;
-            }
-        #endif
+            //if (WSAGetLastError() == WSAEWOULDBLOCK)
+            //extern int errno;
+            //if (EWOULDBLOCK == errno || EAGAIN == errno)
+            break;
         }
         else if (ret < len)
         {
@@ -296,13 +262,12 @@ char czl_udp_send(czl_gp *gp, czl_fun *fun)
             CZL_SLEEP(delay);
     }
 
+    fun->ret.type = CZL_INT;
     fun->ret.val.inum = cnt;
 
 #ifdef CZL_SYSTEM_LINUX
 CZL_END:
     epoll_ctl(gp->kdpfd, EPOLL_CTL_DEL, sock, NULL);
-    if (-1 == fun->ret.val.inum)
-        close(sock);
 #endif
 
     return 1;
@@ -310,14 +275,14 @@ CZL_END:
 
 char czl_udp_ip(czl_gp *gp, czl_fun *fun)
 {
-    czl_string *s = CZL_STR(fun->vars[0].val.str.Obj);
+    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, CZL_LIB_UDP_NAME);
     struct in_addr in;
     char *ip;
 
-    if (s->len != 10)
-        fun->ret.val.inum = 0;
+    if (!extsrc)
+        return 1;
 
-    memcpy(&in, s->str+4, 4);
+    memcpy(&in, &((czl_udp_handle*)extsrc->src)->ip, 4);
     ip = inet_ntoa(in);
     if (!czl_set_ret_str(gp, &fun->ret, ip, strlen(ip)))
         return 0;

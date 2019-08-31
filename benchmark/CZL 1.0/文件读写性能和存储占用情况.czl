@@ -10,7 +10,7 @@ main
 	f = fopen("datas.txt", "3wb+")
 	
 	a = []
-	for i in (0, 1000000-1)
+	for i in (0, 1000000)
 		a[i] = new a
 
 	fwrite(f, a)

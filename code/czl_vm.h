@@ -27,6 +27,8 @@
 #define CZL_MAX_STACK_SIZE          3000
 //异常码个数
 #define CZL_EXCEPTION_CODE_NUM      14
+//字符串连接缓存大小
+#define CZL_ADD_BUF_SIZE 1024*1024
 //log缓存大小
 #define CZL_LOG_BUF_SIZE 128
 //脚本路径最大长度
@@ -47,12 +49,7 @@
 #define CZL_SL(size) (8+size)
 
 //实例长度: instance length
-#define CZL_IL(parents_cnt, vars_cnt) \
-(12+(parents_cnt)*sizeof(czl_ins*) + (vars_cnt)*sizeof(czl_var))
-
-//获取实例变量数组: get instance vars
-#define CZL_GIV(ins) \
-((czl_var*)(ins->parents + ins->pclass->parents_count))
+#define CZL_IL(total_cnt) (12+(total_cnt)*sizeof(czl_var))
 
 //获取对象成员指针长度
 #define CZL_RL(cnt) (8+(cnt)*sizeof(void*))
@@ -95,17 +92,12 @@
 ///////////////////////////////////////////////////////////////
 //释放实例: instance free
 #ifdef CZL_MM_MODULE
-    #define CZL_IF(gp, obj, ins) \
-            czl_free(gp, obj, \
-                     CZL_IL(ins->pclass->parents_count, \
-                            ins->pclass->vars_count), \
-                     &ins->pclass->pool)
+    #define CZL_IF(gp, obj, pclass) \
+    czl_free(gp, obj, CZL_IL(pclass->total_count), &pclass->pool)
 #else
-    #define CZL_IF(gp, obj, ins) \
-            czl_free(gp, ins, \
-                     CZL_IL(ins->pclass->parents_count, \
-                            ins->pclass->vars_count))
-#endif //#ifdef CZL_MM_MODULE
+    #define CZL_IF(gp, obj, pclass) \
+    czl_free(gp, obj, CZL_IL(pclass->total_count))
+#endif
 ///////////////////////////////////////////////////////////////
 //对象是否被锁: obj is lock
 #define CZL_OBJ_IS_LOCK(obj) (CZL_LOCK_ELE == (obj)->quality)
@@ -395,6 +387,7 @@ typedef enum czl_var_quality_enum
     CZL_FUNRET_VAR,     //函数返回值变量，不能等于0
     CZL_ARRBUF_VAR,     //数组连接缓存变量，不能等于0
     CZL_ARRLINK_VAR,    //数组连接开始变量
+    CZL_TMP_VAR,        //临时变量
     CZL_STR_ELE,        //字符串中的字符
     CZL_OBJ_ELE,        //对象成员变量
     CZL_LOCK_ELE,       //被锁定的对象成员变量
@@ -504,8 +497,14 @@ typedef enum czl_ctrl_type_enum
 //索引类型
 typedef enum czl_index_type_enum
 {
-    CZL_ARRAY_INDEX,
-    CZL_INSTANCE_INDEX
+    CZL_ARRAY_INX,
+    CZL_INSTANCE_INX,
+    CZL_STATIC_INX,
+    CZL_DYNAMIC_INX,
+    CZL_STATIC_VARIABLE,
+    CZL_STATIC_FUNCION,
+    CZL_VAR_INX,
+    CZL_FUN_INX,
 } czl_index_type_enum;
 
 //try异常触发动作类型
@@ -555,7 +554,7 @@ typedef struct czl_string
 {
     unsigned long rc;   //引用计数
     unsigned long len;  //字符串实际长度
-    char str[4];        //字符串数据地址
+    char str[0];        //字符串数据地址
 } czl_string;
 
 typedef struct czl_str
@@ -687,7 +686,7 @@ typedef struct czl_ref_obj
 {
     unsigned long cnt; //必须放在第一个，与 czl_ref_var 里的 var 左区别
     czl_ref_var *head;
-    void **objs[1];
+    void **objs[0];
 } czl_ref_obj;
 
 //全局变量节点，链表结构，解释时用到，
@@ -713,8 +712,8 @@ typedef struct czl_class_var
     unsigned char permission;   //变量权限: czl_permission_enum
     unsigned char ot;           //强制类型: czl_opr_type_enum
     czl_value val;              //变量值
-    struct czl_class_var *next;
     char *Name;
+    struct czl_class_var *next;
     unsigned long index;//实例变量索引
     unsigned long hash; //实例变量哈希值
 } czl_class_var, *czl_class_var_list;
@@ -752,8 +751,8 @@ typedef struct czl_loc_var
     unsigned char optimizable;  //标记变量是否可优化，注意与czl_glo_var的optimizable内存对其
     unsigned char ot;           //类型声明
     czl_value val;
-    //静态局部变量初始化参数
-    unsigned char type;
+    struct czl_class *pclass;   //对象强类型声明
+    unsigned char type;         //静态局部变量初始化参数
     struct czl_loc_var *next;
 } czl_loc_var, *czl_loc_var_list;
 
@@ -1020,7 +1019,7 @@ typedef struct czl_fun
     czl_store_device *store_device_head;    //数据存储器列表头
     czl_goto_flag_list goto_flags;          //goto语句标志列表
     czl_sentence_list sentences_head;       //语句列表头
-    struct czl_class_ptr_vars *class_vars;  //类成员my变量入参列表
+    struct czl_ins_var *my_vars;            //类成员my变量入参列表
     void **cur_ins;                         //当前类函数所属的实例
     unsigned long hash;                     //函数名哈希值
     czl_exp_ele *pc;                        //yeild语句的下一条pc地址
@@ -1103,8 +1102,8 @@ typedef struct czl_class
     unsigned char flag;                 //标记类是否定义结束
     unsigned char final_flag;           //终节点类标志位
     unsigned char ot_num;               //用于强类型声明
-    unsigned short parents_count;       //父类继承个数
     unsigned short vars_count;          //类成员动态变量个数
+    unsigned short total_count;         //包含继承得到的全部动态变量个数
     czl_class_var_list vars;            //类成员变量列表头
     czl_enum_list enums;                //类成员枚举列表头
     czl_fun_list funs;                  //类成员函数列表头
@@ -1124,31 +1123,22 @@ typedef struct czl_ins
     unsigned long rf;               //引用标记
     //
     czl_class *pclass;              //实例所属的类指针
-    void **parents[1];              //父类数组，其后紧跟czl_var数组内存
+    char vars[0];                   //czl_var数组
 } czl_ins;
 
 //实例成员变量的表达式形式节点
 typedef struct czl_ins_var
 {
-    czl_var *var;       //实例成员变量地址
-    unsigned long index;//实例变量索引
+    czl_var *var;           //实例成员变量地址
+    unsigned short index;   //实例变量索引
+    unsigned char ot;       //强类型声明
     struct czl_ins_var *next;
 } czl_ins_var, *czl_ins_var_list;
 
-//类成员函数my成员变量变量节点
-typedef struct czl_class_ptr_vars
-{
-    czl_class *pclass;           //变量所属的类指针
-    czl_ins_var_list vars;       //实例成员变量列表
-    struct czl_class_ptr_vars *next;    //父类
-} czl_class_ptr_vars;
-
 typedef struct czl_instance_index
 {
-    //注意： 当类名有哈希冲突且哈希值相等时，索引会出错，但这种概率几乎是0，不考虑
     unsigned long hash;             //缓存哈希值
     struct czl_exp_fun *exp_fun;    //成员函数
-    char *class_name;               //指定类前缀名
 } czl_instance_index;
 
 typedef struct czl_array_index
@@ -1168,16 +1158,18 @@ typedef union czl_member_index_union
 typedef struct czl_member_index
 {
     unsigned char type;            //索引类型: czl_index_type_enum
-    czl_member_index_union index;  //索引
+    unsigned char flag;            //索引类型: czl_index_type_enum
     struct czl_member_index *next; //下一级索引
+    czl_member_index_union index;  //索引
 } czl_member_index;
 
 //类、类实例、数组、表 成员节点
 typedef struct czl_obj_member
 {
     unsigned char type;         //原始对象类型: czl_opr_type_enum
-    //flag说明: CZL_ASS: 成员赋值， CZL_SWAP: 成员交换， CZL_REF_VAR: 取成员引用
-    unsigned char flag;
+    unsigned char flag;         //CZL_ASS: 成员赋值， CZL_SWAP: 成员交换， CZL_REF_VAR: 取成员引用
+    unsigned char kind;         //最终成员索引类型: czl_index_type_enum
+    unsigned char ot;           //最终成员强类型: czl_opr_type_enum
     czl_var *obj;               //原始对象值: 实例、数组、表、字符串
     czl_member_index *index;    //成员索引
     struct czl_obj_member *next;
@@ -1307,7 +1299,7 @@ typedef union czl_new_obj_union
 typedef struct czl_new_sentence
 {
     czl_new_obj_union new_obj;  //新建对象
-    char type;                  //新建对象类型: czl_opr_type_enum
+    unsigned char type;                  //新建对象类型: czl_opr_type_enum
 } czl_new_sentence;
 
 //表达式中函数调用节点
@@ -1563,11 +1555,8 @@ typedef struct czl_analysis_gp
     unsigned char permission;					//当前变量、函数访问权限
     unsigned char class_ot_num;                 //类强类型声明编号
     //
-    czl_class_ptr_vars *class_ptr_vars_head;     //引用变量头
-    czl_class_ptr_vars *class_ptr_vars_tail;     //引用变量尾
-    czl_class_var *cur_class_var;                //当前类函数中的成员变量
-    czl_class *cur_var_class;                    //czl_cur_class_var所属的类
-    czl_ins_var *ins_vars_tail;                  //引用实例变量尾
+    long ins_var_index;                          //必须有符号
+    czl_ins_var *ins_vars_head;                  //引用实例变量头
     //
     unsigned char variable_field;           //当前解析的是变量还是常量
     unsigned char analysis_field;			//当前解析域在全局还是函数内
@@ -1712,7 +1701,7 @@ typedef struct czl_gp
     //
     czl_var enter_var; //用于main函数传参
     //
-    //全局临时变量，用于对象类型成员赋值时循环引用检测 和 资源函数对象传参
+    //全局临时变量，用于对象类型成员赋值时循环引用检测 和 资源函数对象传参 等
     czl_var *cur_var;
     //
     void **cur_ins;             //当前实例指针
@@ -1730,7 +1719,10 @@ typedef struct czl_gp
     char yeild_end;             //用于foreach协程标记其是否结束
     czl_exp_ele *yeild_pc;      //用于栈空间上函数yeild返回PC地址
     //
-    czl_exp_ele *next_pc;       //用于字符串连接判断是否是最后一个+指令
+    czl_exp_ele *add_pc;        //用于预测数组连接加速执行
+    char *add_buf;              //缓存字符串连接临时数据
+    unsigned long add_cnt;
+    unsigned long add_sum;
     //
     czl_var *fun_ret;           //函数返回值
     //
@@ -1755,6 +1747,8 @@ extern const unsigned long czl_unary_opt_table_num;
 extern const czl_binary_operator czl_binary_opt_table[];
 extern const unsigned long czl_binary_opt_table_num;
 ///////////////////////////////////////////////////////////////
+char czl_ref_copy(czl_gp*, czl_var*, czl_var*);
+char czl_ref_set(czl_gp*, czl_var*, czl_var*);
 char czl_as_save(czl_gp*, char*, char*);
 char czl_shell_name_save(czl_gp*, char*, char);
 czl_name* czl_shell_name_find(czl_gp*, char*);
@@ -1762,7 +1756,7 @@ char czl_fun_paras_check(czl_gp*, czl_exp_fun*, const czl_fun*);
 char czl_exp_tree_to_stack(czl_gp*, czl_exp_node*);
 char czl_exp_integrity_check(czl_gp*, czl_exp_handle*);
 char czl_exp_is_integrity(czl_gp*, czl_exp_handle*, char);
-czl_exp_node* czl_opr_node_create(czl_gp*, char, void*);
+czl_exp_node* czl_opr_node_create(czl_gp*, char, void*, unsigned long);
 czl_var* czl_const_create(czl_gp*, char, const czl_value*);
 czl_exp_node* czl_unary_opt_node_create(czl_gp*, char, char);
 czl_exp_node* czl_binary_opt_node_create(czl_gp*, char, char, char);
@@ -1817,18 +1811,19 @@ czl_new_sentence* czl_new_sentence_create(czl_gp*, char);
 void czl_new_sentence_delete(czl_gp*, czl_new_sentence*);
 char czl_obj_new(czl_gp*, czl_new_sentence*, czl_var*);
 char czl_obj_fork(czl_gp*, czl_var *left, czl_var *right);
-char czl_my_vars_class_sort(czl_gp*, czl_fun*);
-czl_var* czl_class_ref_var_node_create(czl_gp*);
-char czl_is_member_var(char, const czl_obj_member*);
-czl_obj_member* czl_obj_member_node_create(czl_gp*, char, void*);
-czl_member_index* czl_ins_index_create(czl_gp*, char*, char*, czl_exp_fun*);
+czl_var* czl_ins_var_create(czl_gp*, unsigned long, unsigned char);
+char czl_is_member_var(unsigned char, const czl_obj_member*);
+czl_obj_member* czl_obj_member_create(czl_gp*, czl_exp_node*);
+void czl_obj_member_reset(czl_gp*, czl_exp_node*);
+czl_member_index* czl_ins_index_create(czl_gp*, char*, czl_class**,
+                                       czl_exp_fun*, czl_obj_member*);
 czl_member_index* czl_arr_index_create(czl_gp*, czl_exp_ele*, czl_exp_fun*);
 void czl_member_index_node_insert(czl_member_index**,
                                   czl_member_index**,
                                   czl_member_index*);
 void czl_obj_member_delete(czl_obj_member*);
 czl_class_var* czl_class_var_find(char*, const czl_class*);
-czl_fun* czl_member_fun_find(unsigned long, const czl_class*);
+void czl_set_class_total_cnt(czl_class*);
 czl_class* czl_if_class_parent_repeat(const char*, czl_class*);
 char czl_sys_lib_hash_create(czl_gp*);
 char czl_sys_keyword_hash_create(czl_gp*, const czl_keyword*, unsigned long);
@@ -1845,7 +1840,7 @@ void* czl_sys_hash_delete(czl_gp*, char, void*, czl_sys_hash*);
 czl_fun* czl_fun_find(czl_gp*, char*, char);
 czl_fun* czl_fun_find_in_exp(czl_gp*, char*, char);
 char czl_integrity_check(czl_gp*, char);
-char czl_nsef_create(czl_gp*, void*, char);
+char czl_nsef_create(czl_gp*, void*, char, unsigned long);
 czl_exp_fun* czl_exp_fun_create(czl_gp*, czl_fun*, char);
 czl_para* czl_para_node_create(czl_gp*, char);
 void czl_para_node_insert(czl_para**, czl_para**, czl_para*);
@@ -1904,6 +1899,7 @@ void czl_hot_update_delete(czl_gp*, czl_hot_update*);
 void czl_run_again(czl_gp*, czl_fun*, czl_var*, unsigned long);
 void czl_run_clean(czl_gp*, czl_fun*);
 char czl_val_del(czl_gp*, czl_var*);
+void czl_tmp_buf_free(czl_gp*, czl_var*);
 void czl_hot_update_datas_free(czl_gp *gp, czl_hot_update_datas*);
 void czl_memory_free(czl_gp*);
 void czl_init_free(czl_gp*, char);
@@ -1912,6 +1908,8 @@ void czl_block_delete(czl_gp*, char, void*, char);
 unsigned long czl_hash_key_create(unsigned long, unsigned long);
 unsigned long czl_str_hash(char*, unsigned long,
                            unsigned long, unsigned long);
+char czl_ass_type_check(czl_gp*, unsigned char, void*, unsigned char, void*);
+char czl_copy_ot_check(czl_gp*, unsigned char, unsigned char, void*);
 czl_exp_ele* czl_opr_create(czl_gp*, czl_exp_node*);
 void czl_fun_node_delete(czl_gp*, czl_fun*);
 int czl_is_keyword(czl_gp*, char*);
@@ -1951,7 +1949,7 @@ char czl_timer_delete(czl_gp*, unsigned long);
 char czl_timer_cb_fun_run(czl_gp*);
 #endif //#ifdef CZL_TIMER
 ///////////////////////////////////////////////////////////////
-#if (defined CZL_MULT_THREAD && defined CZL_CONSOLE)
+#ifdef CZL_MULT_THREAD
     #ifdef CZL_SYSTEM_WINDOWS
         extern CRITICAL_SECTION czl_global_cs;
     #elif defined CZL_SYSTEM_LINUX
@@ -1959,7 +1957,7 @@ char czl_timer_cb_fun_run(czl_gp*);
     #endif
     void czl_global_lock(void);
     void czl_global_unlock(void);
-#endif //#if (defined CZL_MULT_THREAD && defined CZL_CONSOLE)
+#endif //#ifdef CZL_MULT_THREAD
 ///////////////////////////////////////////////////////////////
 void* czl_malloc(czl_gp*, czl_ulong
                  #ifdef CZL_MM_MODULE

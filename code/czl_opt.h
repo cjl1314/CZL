@@ -6,16 +6,13 @@
 ///////////////////////////////////////////////////////////////
 //检查释放数组连接缓存、函数返回值: tmp buf check free
 #define CZL_TB_CF(gp, res) \
-if (res->quality) { \
-    czl_val_del(gp, res); \
-    res->quality = CZL_DYNAMIC_VAR; \
-}
+if (res->quality) czl_tmp_buf_free(gp, res); \
 
 //临时缓存扩容大小
 #define CZL_TB_SZIE(pc, left, al, bl) \
-((left->quality != CZL_ARRLINK_VAR && left->quality != CZL_ARRBUF_VAR) || \
- (pc && left == pc->lo && CZL_BINARY2_OPT == pc->flag && CZL_ADD_A == pc->kind) ? \
- (al)*2+bl+1 : al+bl+1)
+(CZL_ARRLINK_VAR == left->quality && \
+ (!pc || !pc->next || (pc+1)->flag != CZL_BINARY2_OPT || (pc+1)->kind != CZL_ADD_A) ? \
+ al+bl+1 : (al)*2+bl+1)
 ///////////////////////////////////////////////////////////////
 #ifdef CZL_TIMER
 //检查定时器状态: check timer state
@@ -70,7 +67,7 @@ if (lo) { \
     if (CZL_ARRBUF_VAR == ret->quality) \
         ret->quality = CZL_DYNAMIC_VAR; \
     else if (CZL_FUNRET_VAR == ret->quality) \
-        ret->type = CZL_INT; \
+        ret->type = CZL_NIL; \
 } \
 (pc+pc->rt-1)->res = ret; \
 pc += pc->rt;
@@ -151,10 +148,9 @@ default: \
 #define CZL_RB2O(gp, lo, ro, pc) \
 if (pc->lo != pc->res) \
     CZL_TB_CF(gp, pc->res); \
-if (CZL_ADD_A == pc->kind || CZL_DEC_A == pc->kind) { \
-    gp->next_pc = pc+1; \
-    if (CZL_DYNAMIC_VAR == pc->res->quality) \
-        pc->res->quality = CZL_ARRLINK_VAR; \
+if (CZL_DYNAMIC_VAR == pc->res->quality && (CZL_ADD_A == pc->kind || CZL_DEC_A == pc->kind)) { \
+    pc->res->quality = CZL_ARRLINK_VAR; \
+    gp->add_pc = pc; \
 } \
 if (CZL_REG_VAR == pc->lt && pc->lo->type != CZL_OBJ_REF) { \
     lo = pc->lo; \
@@ -172,7 +168,7 @@ else { \
     pc->res->val = lo->val; \
     if (CZL_FUNRET_VAR == lo->quality) { \
         pc->res->quality = CZL_FUNRET_VAR; \
-        lo->type = CZL_INT; \
+        lo->type = CZL_NIL; \
     } \
 } \
 if (CZL_REG_VAR == pc->rt && pc->ro->type != CZL_OBJ_REF) \
@@ -278,7 +274,7 @@ default: goto CZL_EXCEPTION_CATCH; \
 CZL_TB_CF(gp, pc->res); \
 *pc->res = *(pc-1)->res; \
 if (CZL_FUNRET_VAR == pc->res->quality) \
-    (pc-1)->res->type = CZL_INT; \
+    (pc-1)->res->type = CZL_NIL; \
 else if (CZL_ARRBUF_VAR == pc->res->quality) \
     (pc-1)->res->quality = CZL_DYNAMIC_VAR; \
 else if (CZL_STRING == pc->res->type) { \
@@ -292,8 +288,7 @@ else if (CZL_STRING == pc->res->type) { \
 
 //执行return/yeild语句: run return/yeild sentence
 #define CZL_RRYS(gp, pc) \
-if (!pc->res) pc->ro->val.inum = 0; \
-else if (!czl_val_copy(gp, pc->res, (pc-1)->res)) goto CZL_EXCEPTION_CATCH; \
+if (pc->res && !czl_val_copy(gp, pc->res, (pc-1)->res)) goto CZL_EXCEPTION_CATCH; \
 goto CZL_FUN_RETURN;
 
 //执行try语句: run try sentence
@@ -310,14 +305,14 @@ gp->exceptionCode = CZL_EXCEPTION_NO;
 #define CZL_CF_FR(gp, var) \
 if (CZL_FUNRET_VAR == var->quality) { \
     czl_val_del(gp, var); \
-    var->type = CZL_INT; \
+    var->type = CZL_NIL; \
 }
 
 //检查释放函数返回值: check free fun ret
-#define CZL_CF_FR2(gp, var) \
-if (var->type != CZL_INT) { \
-    czl_val_del(gp, var); \
-    var->type = CZL_INT; \
+#define CZL_CF_FR2(gp, ret) \
+if (ret->type != CZL_NIL) { \
+    czl_val_del(gp, ret); \
+    ret->type = CZL_NIL; \
 }
 
 //执行函数单目运算符指令: run fun unary opt
@@ -381,11 +376,11 @@ else if (pc->rt != CZL_USR_FUN) { \
     else if (!(ro=czl_get_opr(gp, pc->rt, pc->ro))) \
         goto CZL_EXCEPTION_CATCH; \
     *pc->res = cur->fun->ret; \
-    cur->fun->ret.type = CZL_INT; \
+    cur->fun->ret.type = CZL_NIL; \
 } \
-else if (CZL_NIL == pc->res->type) { \
+else if (CZL_FUNCTION == pc->res->type) { \
     *pc->res = cur->fun->ret; \
-    cur->fun->ret.type = CZL_INT; \
+    cur->fun->ret.type = CZL_NIL; \
     if (!(cur->fun=czl_fun_run_prepare(gp, (czl_exp_fun*)pc->ro))) \
         goto CZL_EXCEPTION_CATCH; \
     ++index; \
@@ -471,7 +466,7 @@ case CZL_OPERAND: lo = pc->ro; break; \
 case CZL_UNARY2_OPT: lo = pc->lo; break; \
 case CZL_ASS_OPT: case CZL_BINARY_OPT: lo = pc->ro; break; \
 default: \
-    if (CZL_USR_FUN == pc->lt) { lo = pc->lo; pc->res->type = CZL_NIL; } \
+    if (CZL_USR_FUN == pc->lt) { lo = pc->lo; pc->res->type = CZL_FUNCTION; } \
     else lo = pc->ro; \
     break; \
 } \
@@ -706,7 +701,8 @@ pc->res->val.inum = pc->lo->val.inum >> pc->ro->val.inum; \
 ///////////////////////////////////////////////////////////////
 extern char (*const czl_opt_cac_funs[])(czl_gp*, czl_var*, czl_var*);
 ///////////////////////////////////////////////////////////////
-char czl_val_copy(czl_gp*, czl_var*, czl_var*);
+char czl_add_buf_resize(czl_gp*, unsigned long);
+char czl_strbuf_copy(czl_gp*, czl_var*);
 ///////////////////////////////////////////////////////////////
 char czl_ass_cac(czl_gp*, czl_var*, czl_var*);
 char czl_equ_equ_cac(czl_gp*, czl_var*, czl_var*);

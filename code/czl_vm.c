@@ -104,6 +104,7 @@ static void czl_set_exp_reg(czl_gp*, czl_exp_ele*, char flag);
 static czl_var* czl_exp_stack_cac(czl_gp*, czl_exp_stack);
 static char czl_fun_run(czl_gp*, czl_exp_ele*, czl_fun*);
 static void czl_set_char(czl_gp*);
+static czl_fun* czl_member_fun_find(unsigned long, const czl_class*);
 static czl_var* czl_get_member_res(czl_gp*, const czl_obj_member*);
 ///////////////////////////////////////////////////////////////
 static void czl_ref_vars_update
@@ -231,17 +232,33 @@ static char czl_fun_local_vars_backup(czl_gp *gp, czl_fun *fun)
     return 1;
 }
 
+void czl_tmp_buf_free(czl_gp *gp, czl_var *var)
+{
+    if (CZL_ARRBUF_VAR == var->quality && CZL_STRING == var->type)
+    {
+        if (gp->add_cnt)
+        {
+        #ifdef CZL_MM_RT_GC
+            gp->add_cnt -= (*((unsigned long*)(gp->add_buf+gp->add_cnt-4)) + 1 + 4 + 8 + 4);
+        #else
+            gp->add_cnt -= (*((unsigned long*)(gp->add_buf+gp->add_cnt-4)) + 1 + 8 + 4);
+        #endif
+            if (gp->add_sum > CZL_ADD_BUF_SIZE)
+                czl_add_buf_resize(gp, CZL_ADD_BUF_SIZE);
+        }
+    }
+    else
+        czl_val_del(gp, var);
+
+    var->quality = CZL_DYNAMIC_VAR;
+}
+
 static void czl_reg_check(czl_gp *gp, czl_var *head, unsigned long cnt)
 {
     unsigned long i;
     for (i = 0; i < cnt; ++i)
-    {
         if (head[i].quality != CZL_DYNAMIC_VAR)
-        {
-            czl_val_del(gp, head + i);
-            head[i].quality = CZL_DYNAMIC_VAR;
-        }
-    }
+            czl_tmp_buf_free(gp, head+i);
 }
 
 void czl_ref_obj_update(czl_var *var)
@@ -343,11 +360,6 @@ static void czl_loc_vars_free
                 continue;
             break;
         case CZL_FUN_REF:
-            if (CZL_FUN_REF == p->ot)
-            {
-                p->val.fun = NULL;
-                continue;
-            }
             break;
         case CZL_OBJ_REF:
             //第一层函数调用完不释放指针内存，
@@ -437,35 +449,11 @@ static void czl_backup_vars_delete(czl_gp *gp, czl_fun *fun)
         CZL_STACK_FREE(gp, fun->backup_vars, fun->backup_size*sizeof(czl_var_arr));
 }
 ///////////////////////////////////////////////////////////////
-static char czl_set_fun_class_ptr_vars
-(
-    czl_ins *ins,
-    const czl_class_ptr_vars *ptr_vars
-)
-{
-	unsigned long i, j = ins->pclass->parents_count;
-
-    //利用地址一致性避免耗时的字符串比较
-    if (ins->pclass == ptr_vars->pclass)
-    {
-        czl_ins_var *p = ptr_vars->vars;
-        czl_var *vars = CZL_GIV(ins);
-        do {
-            p->var = vars + p->index;
-        } while ((p=p->next));
-        if (!(ptr_vars=ptr_vars->next))
-            return 1;
-    }
-
-    for (i = 0; i < j; i++)
-        if (czl_set_fun_class_ptr_vars(CZL_INS(ins->parents[i]), ptr_vars))
-            return 1;
-
-    return 0;
-}
-
 static char czl_set_class_fun_vars(czl_gp *gp, czl_fun *fun)
 {
+    czl_var *vars;
+    czl_ins_var *p;
+
     //每个类成员函数同一时刻只能被一个实例占用，发生抢用时抛出异常
     if (fun->cur_ins)
     {
@@ -485,34 +473,24 @@ static char czl_set_class_fun_vars(czl_gp *gp, czl_fun *fun)
     }
 
     fun->cur_ins = gp->cur_ins;
-    czl_set_fun_class_ptr_vars(CZL_INS(fun->cur_ins), fun->class_vars);
+
+    vars = (czl_var*)CZL_INS(fun->cur_ins)->vars;
+    p = fun->my_vars;
+
+    do {
+        p->var = vars + p->index;
+        p = p->next;
+    } while (p);
+
     return 1;
 }
 ///////////////////////////////////////////////////////////////
-char czl_is_member_var(char type, const czl_obj_member *obj)
+char czl_is_member_var(unsigned char type, const czl_obj_member *obj)
 {
-	czl_member_index *index;
-
-    if (type != CZL_MEMBER || !obj->index || CZL_CONST_VAR == obj->obj->quality)
+    if (CZL_MEMBER == type && CZL_VAR_INX == obj->kind && obj->obj->quality != CZL_CONST_VAR)
+        return 1;
+    else
         return 0;
-
-    index = obj->index;
-
-    while (index->next)
-        index = index->next;
-
-    if (CZL_ARRAY_INDEX == index->type)
-    {
-        if (index->index.arr.exp_fun)
-            return 0;
-    }
-    else //CZL_INSTANCE_INDEX
-    {
-        if (index->index.ins.exp_fun)
-            return 0;
-    }
-
-    return 1;
 }
 
 static char czl_is_ref_or_var(czl_gp *gp, czl_exp_ele *exp)
@@ -549,7 +527,7 @@ static char czl_fun_para_explain_check
 {
     czl_para *p = exp_fun->paras;
     czl_para_explain *e = fun->para_explain;
-    int i = (CZL_SRC_STATIC_FUN == exp_fun->quality && p ? 1 : 0);
+    int i = (CZL_SRC_STATIC_FUN == exp_fun->quality && fun->enter_vars_cnt > 1 ? 1 : 0);
 
     if (exp_fun->paras_count+i > fun->enter_vars_cnt)
     {
@@ -568,6 +546,9 @@ static char czl_fun_para_explain_check
             sprintf(gp->log_buf, "para %d of function %s has no default para, ", i+1, fun->name);
             return 0;
         }
+        if (gp->tmp && p->para && CZL_EIO(p->para) &&
+            !czl_copy_ot_check(gp, fun->vars[i].ot, p->para->kind, p->para->res))
+            return 0;
         ++i;
         if (e && e->index < i)
         {
@@ -624,6 +605,7 @@ static char czl_fun_unsure_paras_check(czl_gp *gp, const czl_para *p)
 static char czl_fun_paras_null_check(czl_gp *gp, czl_exp_fun *exp_fun)
 {
     czl_para *p = exp_fun->paras;
+    czl_var *var = exp_fun->fun->vars;
 
     while (p)
     {
@@ -634,6 +616,13 @@ static char czl_fun_paras_null_check(czl_gp *gp, czl_exp_fun *exp_fun)
             else
                 sprintf(gp->log_buf, "para of function %s should not be empty, ", exp_fun->fun->name);
             return 0;
+        }
+        if (gp->tmp)
+        {
+            if (CZL_EIO(p->para) &&
+                !czl_copy_ot_check(gp, var->ot, p->para->kind, p->para->res))
+                return 0;
+            ++var;
         }
         p = p->next;
     }
@@ -677,7 +666,135 @@ char czl_fun_paras_check
         return 0;
     }
 }
+//////////////////////////////////////////////////////////////////
+static char czl_val_copy(czl_gp *gp, czl_var *left, czl_var *right)
+{
+    if (!right) return 0;
 
+    switch (right->type)
+    {
+    case CZL_INT:
+        switch (left->ot)
+        {
+        case CZL_NIL: case CZL_NUM:
+            left->type = right->type;
+            left->val = right->val;
+            return 1;
+        case CZL_INT:
+            left->type = CZL_INT;
+            left->val = right->val;
+            return 1;
+        case CZL_FLOAT:
+            left->type = CZL_FLOAT;
+            left->val.fnum = right->val.inum;
+            return 1;
+        default:
+            goto CZL_TYPE_ERROR;
+        }
+    case CZL_FLOAT:
+        switch (left->ot)
+        {
+        case CZL_NIL: case CZL_NUM:
+            left->type = right->type;
+            left->val = right->val;
+            return 1;
+        case CZL_INT:
+            left->type = CZL_INT;
+            left->val.inum = right->val.fnum;
+            return 1;
+        case CZL_FLOAT:
+            left->type = CZL_FLOAT;
+            left->val = right->val;
+            return 1;
+        default:
+            goto CZL_TYPE_ERROR;
+        }
+    case CZL_FUN_REF:
+        if (left->ot != CZL_NIL && left->ot != CZL_FUN_REF)
+            goto CZL_TYPE_ERROR;
+        left->type = right->type;
+        left->val = right->val;
+        return 1;
+    case CZL_OBJ_REF:
+#ifdef CZL_LIB_TCP
+    case CZL_NULL: //用于tcp库事件回调函数快速引用类型入参
+#endif //#ifdef CZL_LIB_TCP
+        return czl_ref_set(gp, left, right);
+    case CZL_ARRAY_LIST:
+        switch (left->ot)
+        {
+        case CZL_NIL: case CZL_ARRAY:
+            return czl_array_new(gp, NULL, CZL_ARR_LIST(right->val.Obj), left);
+        case CZL_STACK: case CZL_QUEUE:
+            if (!(left->val.Obj=czl_sq_new(gp, NULL, CZL_ARR_LIST(right->val.Obj))))
+                return 0;
+            left->type = left->ot;
+            return 1;
+        default:
+            goto CZL_TYPE_ERROR;
+        }
+    case CZL_TABLE_LIST:
+        if (left->ot != CZL_NIL && left->ot != CZL_TABLE)
+            goto CZL_TYPE_ERROR;
+        return czl_table_new(gp, CZL_TAB_LIST(right->val.Obj), left);
+    case CZL_NEW:
+        if (left->ot != CZL_NIL && left->ot != ((czl_new_sentence*)right->val.Obj)->type)
+            goto CZL_TYPE_ERROR;
+        return czl_obj_new(gp, (czl_new_sentence*)right->val.Obj, left);
+    case CZL_INSTANCE:
+        if (left->ot != CZL_NIL && left->ot != CZL_INS(right->val.Obj)->pclass->ot_num)
+            goto CZL_TYPE_ERROR;
+        break;
+    case CZL_NIL:
+        if (left->ot != CZL_NIL)
+            goto CZL_TYPE_ERROR;
+        left->type = CZL_INT;
+        left->val.inum = 0;
+        return 1;
+    default:
+        if (left->ot != CZL_NIL && left->ot != right->type)
+            goto CZL_TYPE_ERROR;
+        break;
+    }
+
+    switch (right->quality)
+    {
+    case CZL_FUNRET_VAR:
+        left->type = right->type;
+        left->val = right->val;
+        right->type = CZL_NIL;
+        return 1;
+    case CZL_ARRBUF_VAR:
+        right->quality = CZL_DYNAMIC_VAR;
+        if (CZL_STRING == right->type)
+            return czl_strbuf_copy(gp, left);
+        break;
+    default:
+        if (CZL_STRING == right->type)
+            CZL_SRCA1(right->val.str);
+        else if (CZL_FILE == right->type || CZL_SOURCE == right->type)
+            CZL_ORCA1(right->val.Obj);
+        else if (!CZL_INS(right->val.Obj)->rf)
+            CZL_ORCA1(right->val.Obj);
+        else
+            return czl_obj_fork(gp, left, right);
+        break;
+    }
+
+    left->type = right->type;
+    left->val = right->val;
+    return 1;
+
+CZL_TYPE_ERROR:
+    if (CZL_FUNRET_VAR == right->quality)
+    {
+        czl_val_del(gp, right);
+        right->type = CZL_NIL;
+    }
+    gp->exceptionCode = CZL_EXCEPTION_COPY_TYPE_NOT_MATCH;
+    return 0;
+}
+//////////////////////////////////////////////////////////////////
 static void czl_coroutine_paras_copy(czl_fun *fun, czl_var *vars)
 {
     czl_var *p = fun->vars;
@@ -763,14 +880,15 @@ czl_var* czl_coroutine_run
     unsigned long i, j = fun->enter_vars_cnt;
 
     //检查释放函数返回值
-    if (fun->ret.type != CZL_INT)
+    if (fun->ret.type != CZL_NIL)
     {
         czl_val_del(gp, &fun->ret);
-        fun->ret.type = CZL_INT;
+        fun->ret.type = CZL_NIL;
     }
+    fun->ret.val.inum = 0;
 
     //类成员函数
-    if (fun->class_vars && !czl_set_class_fun_vars(gp, fun))
+    if (fun->my_vars && !czl_set_class_fun_vars(gp, fun))
         return NULL;
 
     if (CZL_IN_IDLE == fun->state)
@@ -880,11 +998,12 @@ static czl_fun* czl_fun_run_prepare(czl_gp *gp, czl_exp_fun *exp_fun)
         return NULL;
 
     //检查释放函数返回值
-    if (fun->ret.type != CZL_INT)
+    if (fun->ret.type != CZL_NIL)
     {
         czl_val_del(gp, &fun->ret);
-        fun->ret.type = CZL_INT;
+        fun->ret.type = CZL_NIL;
     }
+    fun->ret.val.inum = 0;
 
     //系统参数个数不确定函数独立执行
     if (fun->enter_vars_cnt < 0)
@@ -895,7 +1014,7 @@ static czl_fun* czl_fun_run_prepare(czl_gp *gp, czl_exp_fun *exp_fun)
     }
 
     //类成员函数
-    if (fun->type != CZL_SYS_FUN && fun->class_vars && !czl_set_class_fun_vars(gp, fun))
+    if (fun->type != CZL_SYS_FUN && fun->my_vars && !czl_set_class_fun_vars(gp, fun))
         return NULL;
 
     //检查函数是否发生递归调用
@@ -989,7 +1108,7 @@ static czl_var* czl_exp_fun_run(czl_gp *gp, czl_exp_fun *exp_fun)
         if (gp->fun_ret)
         {
             czl_val_del(gp, gp->fun_ret);
-            gp->fun_ret->type = CZL_INT;
+            gp->fun_ret->type = CZL_NIL;
             gp->fun_ret = NULL;
         }
     }
@@ -1191,77 +1310,9 @@ char czl_is_obj_binary_opt(char macro)
     }
 }
 
-char czl_exp_unary_const_merge(czl_gp *gp, czl_exp_node *node)
-{
-    czl_var *var = (czl_var*)node->right->op.obj;
-    unsigned long cnt = 0;
-    czl_exp_node *p;
-    czl_var res;
-
-    for (p = node; p; p = p->left, cnt++)
-        if (!czl_opt_cac_funs[p->type](gp, &res, (p == node ? var : &res)))
-            return 0;
-
-    if (!(var=czl_const_create(gp, res.type, &res.val)))
-        return 0;
-    node->left = node->right = NULL;
-    node->flag = CZL_OPERAND;
-    node->type = CZL_ENUM;
-    node->op.obj = var;
-
-    return 1;
-}
-
-char czl_exp_binary_const_merge(czl_gp *gp, czl_exp_node *node)
-{
-	czl_var *var;
-    czl_var *left = (czl_var*)node->left->op.obj;
-    czl_var *right = (czl_var*)node->right->op.obj;
-    czl_var res;
-
-    if (CZL_ARRAY_LIST == left->type)
-        czl_set_array_list_reg(gp, CZL_ARR_LIST(left->val.Obj));
-    else if (CZL_TABLE_LIST == left->type)
-        czl_set_table_list_reg(gp, CZL_TAB_LIST(left->val.Obj));
-    if (CZL_ARRAY_LIST == right->type)
-        czl_set_array_list_reg(gp, CZL_ARR_LIST(right->val.Obj));
-    else if (CZL_TABLE_LIST == right->type)
-        czl_set_table_list_reg(gp, CZL_TAB_LIST(right->val.Obj));
-
-    switch (node->type)
-    {
-    case CZL_OR_OR:
-        res.type = CZL_INT;
-        res.val.inum = (CZL_EIT(left) ? 1 : CZL_EIT(right));
-        break;
-    case CZL_AND_AND:
-        res.type = CZL_INT;
-        res.val.inum = (CZL_EIT(left) ? CZL_EIT(right) : 0);
-        break;
-    default:
-        res.type = left->type;
-        res.val = left->val;
-        res.quality = CZL_ARRLINK_VAR;
-        if (node->type >= CZL_ADD)
-            node->type = CZL_ADD_A + (node->type - CZL_ADD);
-        if (!czl_opt_cac_funs[node->type](gp, &res, right))
-            return 0;
-        break;
-    }
-
-    if (!(var=czl_const_create(gp, res.type, &res.val)))
-        return 0;
-    node->left = node->right = NULL;
-    node->flag = CZL_OPERAND;
-    node->type = CZL_ENUM;
-    node->op.obj = var;
-
-    return 1;
-}
-
 char* czl_get_unary_opt_name(unsigned char macro)
 {
-	unsigned long i;
+    unsigned long i;
 
     if (CZL_SELF_ADD == macro)
         macro = CZL_ADD_SELF;
@@ -1281,6 +1332,84 @@ char* czl_get_binary_opt_name(unsigned char macro)
         if (macro == czl_binary_opt_table[i].macro)
             return czl_binary_opt_table[i].name;
     return NULL;
+}
+
+char czl_exp_unary_const_merge(czl_gp *gp, czl_exp_node *node)
+{
+    czl_var *var = (czl_var*)node->right->op.obj;
+    unsigned long cnt = 0;
+    czl_exp_node *p;
+    czl_var res;
+
+    for (p = node; p; p = p->left, cnt++)
+        if (!czl_opt_cac_funs[p->type](gp, &res, (p == node ? var : &res)))
+        {
+            sprintf(gp->log_buf, " %s object type not match, ",
+                    czl_get_unary_opt_name(p->type));
+            return 0;
+        }
+
+    if (!(var=czl_const_create(gp, res.type, &res.val)))
+        return 0;
+
+    node->left = node->right = NULL;
+    node->flag = CZL_OPERAND;
+    node->type = CZL_ENUM;
+    node->op.obj = var;
+    return 1;
+}
+
+char czl_exp_binary_const_merge(czl_gp *gp, czl_exp_node *node)
+{
+	czl_var *var;
+    czl_var *left = (czl_var*)node->left->op.obj;
+    czl_var *right = (czl_var*)node->right->op.obj;
+    czl_var res;
+
+    if (CZL_ARRAY_LIST == left->type)
+        czl_set_array_list_reg(gp, CZL_ARR_LIST(left->val.Obj));
+    else if (CZL_TABLE_LIST == left->type)
+        czl_set_table_list_reg(gp, CZL_TAB_LIST(left->val.Obj));
+    if (CZL_ARRAY_LIST == right->type)
+        czl_set_array_list_reg(gp, CZL_ARR_LIST(right->val.Obj));
+    else if (CZL_TABLE_LIST == right->type)
+        czl_set_table_list_reg(gp, CZL_TAB_LIST(right->val.Obj));
+
+    if (CZL_OR_OR == node->type)
+    {
+        res.type = CZL_INT;
+        res.val.inum = (CZL_EIT(left) ? 1 : CZL_EIT(right));
+    }
+    else if (CZL_AND_AND == node->type)
+    {
+        res.type = CZL_INT;
+        res.val.inum = (CZL_EIT(left) ? CZL_EIT(right) : 0);
+    }
+    else
+    {
+        unsigned char type = node->type;
+        res.type = left->type;
+        res.val = left->val;
+        res.quality = CZL_ARRLINK_VAR;
+        if (node->type >= CZL_ADD)
+            node->type = CZL_ADD_A + (node->type - CZL_ADD);
+        if (!czl_opt_cac_funs[node->type](gp, &res, right))
+        {
+            sprintf(gp->log_buf, " %s object type not match, ",
+                    czl_get_binary_opt_name(type));
+            return 0;
+        }
+        gp->add_cnt = 0;
+    }
+
+    if (!(var=czl_const_create(gp, res.type, &res.val)))
+        return 0;
+
+    node->left = node->right = NULL;
+    node->flag = CZL_OPERAND;
+    node->type = CZL_ENUM;
+    node->op.obj = var;
+    return 1;
 }
 
 char czl_exp_const_merge(czl_gp *gp, czl_exp_node *node)
@@ -1305,7 +1434,7 @@ char czl_exp_const_merge(czl_gp *gp, czl_exp_node *node)
             //1++
             if (czl_is_obj_unary_opt(node) && CZL_IS_NOT_VAR(node->right))
             {
-                sprintf(gp->log_buf, "%s should be used with a variable, ",
+                sprintf(gp->log_buf, " %s should be used with a variable, ",
                         czl_get_unary_opt_name(node->type));
                 return 0;
             }
@@ -1314,7 +1443,7 @@ char czl_exp_const_merge(czl_gp *gp, czl_exp_node *node)
                 if ((!node->parent || node->parent->flag != CZL_BINARY_OPT ||
                      node->parent->type != CZL_ASS))
                 {
-                    sprintf(gp->log_buf, "& should be used with =, ");
+                    sprintf(gp->log_buf, " & should be used with =, ");
                     return 0;
                 }
                 if (CZL_LG_VAR == node->parent->left->type)
@@ -1330,7 +1459,7 @@ char czl_exp_const_merge(czl_gp *gp, czl_exp_node *node)
                 (CZL_BINARY_OPT == node->right->flag ||
                  CZL_IS_NOT_VAR(node->right->right)))
             {
-                sprintf(gp->log_buf, "%s should be used with variable, ",
+                sprintf(gp->log_buf, " %s should be used with variable, ",
                         czl_get_unary_opt_name(node->type));
                 return 0;
             }
@@ -1347,7 +1476,7 @@ char czl_exp_const_merge(czl_gp *gp, czl_exp_node *node)
             if (CZL_IS_NOT_VAR(node->left) ||
                 (CZL_SWAP == node->type && CZL_IS_NOT_VAR(node->right)))
             {
-                sprintf(gp->log_buf, "%s should be used with variable, ",
+                sprintf(gp->log_buf, " %s should be used with variable, ",
                         czl_get_binary_opt_name(node->type));
                 return 0;
             }
@@ -1360,6 +1489,11 @@ char czl_exp_const_merge(czl_gp *gp, czl_exp_node *node)
                         czl_get_unary_opt_name(node->right->type));
                 return 0;
             }
+            if (CZL_ASS == node->type &&
+                !czl_ass_type_check(gp,
+                                    node->left->type, node->left->op.obj,
+                                    node->right->type, node->right->op.obj))
+                return 0;
         }
         if (!czl_exp_const_merge(gp, node->right))
             return 0;
@@ -1457,7 +1591,7 @@ char czl_exp_is_integrity(czl_gp *gp, czl_exp_handle *h, char sign)
 }
 ///////////////////////////////////////////////////////////////
 //创建表达式树节点
-czl_exp_node* czl_exp_node_create(czl_gp *gp)
+czl_exp_node* czl_exp_node_create(czl_gp *gp, unsigned long line)
 {
 	czl_exp_node *p;
 
@@ -1472,16 +1606,16 @@ czl_exp_node* czl_exp_node_create(czl_gp *gp)
     p->bracket = CZL_BRACKET_NO;
     p->left = p->right = p->parent = NULL;
     //
-    p->err_line = gp->error_line;
+    p->err_line = line;
     p->err_file = gp->error_file;
 
     return p;
 }
 
 //创建操作数节点
-czl_exp_node* czl_opr_node_create(czl_gp *gp, char type, void *val)
+czl_exp_node* czl_opr_node_create(czl_gp *gp, char type, void *val, unsigned long line)
 {
-    czl_exp_node *node = czl_exp_node_create(gp);
+    czl_exp_node *node = czl_exp_node_create(gp, line);
     if (!node)
         return NULL;
 
@@ -1516,7 +1650,7 @@ czl_exp_node* czl_unary_opt_node_create
     char position
 )
 {
-    czl_exp_node *node = czl_exp_node_create(gp);
+    czl_exp_node *node = czl_exp_node_create(gp, gp->error_line);
     if (!node)
         return NULL;
 
@@ -1536,7 +1670,7 @@ czl_exp_node* czl_binary_opt_node_create
     char associativity
 )
 {
-    czl_exp_node *node = czl_exp_node_create(gp);
+    czl_exp_node *node = czl_exp_node_create(gp, gp->error_line);
     if (!node)
         return NULL;
 
@@ -1566,8 +1700,8 @@ czl_exp_node* czl_binary_opt_node_insert_find
     {
         //如果是操作数或单目运算符或括号子树，直接跳过
         if (CZL_OPERAND == p->flag ||
-                CZL_UNARY_OPT == p->flag ||
-                CZL_BRACKET_YES == p->bracket)
+            CZL_UNARY_OPT == p->flag ||
+            CZL_BRACKET_YES == p->bracket)
             continue;
         //先按照LEFT_TO_RIGHT结合性找到插入节点
         if (priority >= p->op.opt.priority)
@@ -1593,8 +1727,8 @@ char czl_three_opt_match
     {
         //如果是操作数或单目运算符或括号子树，直接跳过
         if (CZL_OPERAND == p->flag ||
-                CZL_UNARY_OPT == p->flag ||
-                CZL_BRACKET_YES == p->bracket)
+            CZL_UNARY_OPT == p->flag ||
+            CZL_BRACKET_YES == p->bracket)
             continue;
         if (CZL_COL == p->type)
             p = p->parent;
@@ -1641,8 +1775,8 @@ char czl_binary_opt_node_insert
     //把他直接作为根节点即可
     if (!insert)
     {
-        node->left = h->cur;
-        h->cur->parent = node;
+        node->left = h->root;
+        h->root->parent = node;
         h->root = node;
     }
     else
@@ -1994,7 +2128,7 @@ char czl_val_del(czl_gp *gp, czl_var *var)
 
     switch (var->type)
     {
-    case CZL_INT: case CZL_FLOAT: case CZL_FUN_REF:
+    case CZL_INT: case CZL_FLOAT: case CZL_FUN_REF: case CZL_NIL:
         break;
     case CZL_OBJ_REF:
         czl_ref_break(gp, (czl_ref_var*)var->name, CZL_GRV(var));
@@ -2296,7 +2430,8 @@ czl_exp_ele* czl_set_opt_opr
                 if (CZL_MEMBER == pc->lt && CZL_REF_VAR == pc->kind)
                     ((czl_obj_member*)pc->lo)->flag = CZL_REF_VAR;
                 //
-                if (CZL_LG_VAR == pc->lt && pc->kind != CZL_REF_VAR)
+                if (CZL_LG_VAR == pc->lt &&
+                    pc->kind != CZL_REF_VAR && pc->kind != CZL_OBJ_CNT)
                 {
                     if (CZL_INT == ((czl_loc_var*)pc->lo)->ot)
                         gp->tmp->int_reg_cnt = 2;
@@ -2621,8 +2756,14 @@ static void czl_runtime_error_report(czl_gp *gp, czl_exp_ele *err)
     }
 }
 
-static void czl_fun_ret_check_free(czl_gp *gp, czl_var *res, czl_var *lo, czl_var *ro)
+static void czl_buf_check_free(czl_gp *gp, czl_var *res, czl_var *lo, czl_var *ro)
 {
+    //重置字符串连接缓存
+    CZL_TMP_FREE(gp, gp->add_buf, gp->add_sum);
+    gp->add_buf = NULL;
+    gp->add_cnt = gp->add_sum = 0;
+
+    //释放函数返回值
     if (res)
     {
         if (CZL_STR_ELE == res->quality)
@@ -2630,13 +2771,13 @@ static void czl_fun_ret_check_free(czl_gp *gp, czl_var *res, czl_var *lo, czl_va
         else if (CZL_FUNRET_VAR == res->quality)
         {
             czl_val_del(gp, res);
-            res->type = CZL_INT;
+            res->type = CZL_NIL;
         }
     }
     if (lo && CZL_FUNRET_VAR == lo->quality)
     {
         czl_val_del(gp, lo);
-        lo->type = CZL_INT;
+        lo->type = CZL_NIL;
     }
     if (ro)
     {
@@ -2645,7 +2786,7 @@ static void czl_fun_ret_check_free(czl_gp *gp, czl_var *res, czl_var *lo, czl_va
         else if (CZL_FUNRET_VAR == ro->quality)
         {
             czl_val_del(gp, ro);
-            ro->type = CZL_INT;
+            ro->type = CZL_NIL;
         }
     }
 }
@@ -2706,7 +2847,7 @@ static czl_var* czl_exp_stack_cac(czl_gp *gp, czl_exp_stack pc)
     return (pc-1)->res;
 
 CZL_EXCEPTION_CATCH: CZL_RUN_FUN:
-    czl_fun_ret_check_free(gp, pc->res, lo, ro);
+    czl_buf_check_free(gp, pc->res, lo, ro);
     czl_runtime_error_report(gp, pc);
     return NULL;
 }
@@ -2718,15 +2859,19 @@ czl_var* czl_exp_cac(czl_gp *gp, czl_exp_stack exp)
     if (gp->fun_ret)
     {
         czl_val_del(gp, gp->fun_ret);
-        gp->fun_ret->type = CZL_INT;
+        gp->fun_ret->type = CZL_NIL;
         gp->fun_ret = NULL;
     }
 
     if (!(ret=czl_exp_stack_cac(gp, exp)))
         return NULL;
 
-    //把函数返回值标记下来，方便实时回收其内存
-    if (CZL_FUNRET_VAR == ret->quality)
+    if (CZL_NIL == ret->type)
+    {
+        ret->type = CZL_INT;
+        ret->val.inum = 0;
+    }
+    else if (CZL_FUNRET_VAR == ret->quality) //把函数返回值标记下来，方便实时回收其内存
         gp->fun_ret = ret;
 
     return ret;
@@ -3381,30 +3526,28 @@ czl_tabkv* czl_create_key_str_tabkv
                        )))
         return NULL;
 
-    if (1 == s->rc && s->len+1 != key->val.str.size)
-    {
-        void **obj = CZL_SR(gp, key->val.str, s->len+1);
-        if (!obj)
-            goto CZL_OOM;
-        key->val.str.Obj = obj;
-        s = CZL_STR(obj);
-        key->val.str.size = s->len + 1;
-    }
-
-    if (CZL_ARRBUF_VAR == key->quality)
+    if (CZL_TMP_VAR == key->quality)
+        p->key.str.Obj = key->val.str.Obj;
+    else if (CZL_ARRBUF_VAR == key->quality)
     {
         key->quality = CZL_DYNAMIC_VAR;
-        p->key = key->val;
-    }
-    else if (CZL_FUNRET_VAR == key->quality)
-    {
-        p->key.str = key->val.str;
-        key->type = CZL_INT;
+        p->type = CZL_INT;
+        if (!czl_strbuf_copy(gp, (czl_var*)p))
+            goto CZL_OOM;
+        p->key.str.Obj = p->val.str.Obj;
     }
     else if (s->len+1 == key->val.str.size)
     {
-        p->key.str = key->val.str;
-        ++s->rc;
+        if (CZL_FUNRET_VAR == key->quality && 1 == s->rc)
+        {
+            p->key.str.Obj = key->val.str.Obj;
+            key->type = CZL_NIL;
+        }
+        else
+        {
+            p->key.str.Obj = key->val.str.Obj;
+            ++s->rc;
+        }
     }
     else if (!czl_str_create(gp, &p->key.str, s->len+1, s->len, s->str))
         goto CZL_OOM;
@@ -4007,7 +4150,25 @@ char czl_const_exp_init(czl_gp *gp, czl_var *var, char quality)
         return 0;
 
     if (CZL_CONST_VAR == var->quality)
-        var->ot = var->type;
+    {
+        if (CZL_INSTANCE == var->type)
+        {
+            czl_loc_var *obj = (czl_loc_var*)gp->tmp->exp_head->res;
+            if (CZL_INSTANCE == obj->type)
+            {
+                var->ot = obj->ot;
+                ((czl_loc_var*)var)->pclass = obj->pclass;
+            }
+            else //CZL_NEW
+            {
+                czl_new_sentence *New = (czl_new_sentence*)gp->tmp->exp_head->res->val.Obj;
+                var->ot = New->new_obj.ins.pclass->ot_num;
+                ((czl_loc_var*)var)->pclass = New->new_obj.ins.pclass;
+            }
+        }
+        else
+            var->ot = var->type;
+    }
 
     czl_exp_stack_delete(gp, gp->tmp->exp_head);
     gp->tmp->exp_head = NULL;
@@ -4043,18 +4204,10 @@ void czl_enum_list_delete(czl_gp *gp, czl_enum *p)
     }
 }
 ///////////////////////////////////////////////////////////////
-static void czl_init_var_type(czl_var *var, unsigned char ot)
+static void czl_init_var(czl_var *var, unsigned char ot)
 {
+    var->type = (CZL_FLOAT == ot ? CZL_FLOAT : CZL_INT);
     var->val.inum = 0;
-    switch (ot)
-    {
-    case CZL_FLOAT: case CZL_FUN_REF:
-        var->type = ot;
-        break;
-    default:
-        var->type = CZL_INT;
-        break;
-    }
 }
 
 czl_loc_var* czl_loc_var_create
@@ -4135,7 +4288,7 @@ czl_glo_var* czl_glo_var_create
     p->ot = ot;
     p->quality = quality;
     p->optimizable = 1;
-    czl_init_var_type((czl_var*)p, ot);
+    czl_init_var((czl_var*)p, ot);
     p->next = NULL;
 
     return p;
@@ -4166,7 +4319,7 @@ czl_glo_var* czl_class_var_create
     p->ot = ot;
     p->permission = permission;
     p->quality = quality;
-    czl_init_var_type((czl_var*)p, ot);
+    czl_init_var((czl_var*)p, ot);
     p->next = NULL;
     p->hash = czl_bkdr_hash(name, len);
 
@@ -4444,10 +4597,10 @@ czl_class_var* czl_var_find_in_class_index
     const czl_sys_hash *table
 )
 {
-    czl_class_var *node = (czl_class_var*)czl_sys_hash_find(CZL_STRING, CZL_NIL, 
-														    name, table);
+    czl_class_var *node = (czl_class_var*)czl_sys_hash_find
+                            (CZL_STRING, CZL_NIL,  name, table);
     if (CZL_IN_CONSTANT == gp->tmp->variable_field &&
-            node && node->quality != CZL_CONST_VAR)
+        node && node->quality != CZL_CONST_VAR)
         return NULL;
 
     return node;
@@ -4458,7 +4611,7 @@ czl_class_var* czl_var_find_in_class_parents
     czl_gp *gp,
     char *name,
     const czl_class_parent *p,
-    char flag
+    unsigned long offset
 )
 {
     czl_class_var *node;
@@ -4466,27 +4619,22 @@ czl_class_var* czl_var_find_in_class_parents
 
     while (p)
     {
-        if (flag || p->permission != CZL_PRIVATE)
+        if (CZL_PRIVATE == p->permission)
+            offset += p->pclass->total_count;
+        else
         {
             pclass = p->pclass;
-            node = czl_var_find_in_class_index
-                    (gp, name, &pclass->vars_hash);
+            node = czl_var_find_in_class_index(gp, name, &pclass->vars_hash);
             if (node && node->permission != CZL_PRIVATE)
             {
                 if (CZL_IN_CLASS_FUN == gp->tmp->analysis_field &&
                     CZL_DYNAMIC_VAR == node->quality)
-                {
-                    gp->tmp->cur_class_var = node;
-                    gp->tmp->cur_var_class = pclass;
-                }
+                    gp->tmp->ins_var_index = node->index + offset;
                 return node;
             }
-            if (p->permission != CZL_PRIVATE)
-            {
-                if ((node=czl_var_find_in_class_parents
-                     (gp, name, pclass->parents, 0)))
-                    return node;
-            }
+            offset += pclass->vars_count;
+            if ((node=czl_var_find_in_class_parents(gp, name, pclass->parents, offset)))
+                return node;
         }
         p = p->next;
     }
@@ -4498,26 +4646,24 @@ czl_var* czl_var_find_in_class
 (
     czl_gp *gp,
     char *name,
+    czl_class *pclass,
     char find_parents_flag
 )
 {
-    czl_class_var *node = czl_var_find_in_class_index
-                          (gp, name, &gp->tmp->cur_class->vars_hash);
+    czl_class_var *node = czl_var_find_in_class_index(gp, name, &pclass->vars_hash);
+
     if (node)
     {
         if (find_parents_flag &&
             CZL_IN_CLASS_FUN == gp->tmp->analysis_field &&
             CZL_DYNAMIC_VAR == node->quality)
-        {
-            gp->tmp->cur_class_var = node;
-            gp->tmp->cur_var_class = gp->tmp->cur_class;
-        }
+            gp->tmp->ins_var_index = node->index;
         return (czl_var*)node;
     }
 
     if (find_parents_flag)
         return (czl_var*)czl_var_find_in_class_parents
-                            (gp, name, gp->tmp->cur_class->parents, 1);
+                (gp, name, pclass->parents, pclass->vars_count);
 
     return NULL;
 }
@@ -4529,7 +4675,7 @@ czl_var* czl_var_find(czl_gp *gp, char *name, char mode)
     case CZL_IN_GLOBAL:
         return czl_var_find_in_global(gp, name);
     case CZL_IN_CLASS:
-        return czl_var_find_in_class(gp, name, 0);
+        return czl_var_find_in_class(gp, name, gp->tmp->cur_class, 0);
     default: //CZL_IN_GLOBAL_FUN/CZL_IN_CLASS_FUN
         return czl_var_find_in_fun(gp, name, mode);
     }
@@ -4544,18 +4690,19 @@ czl_var* czl_var_find_in_exp
 {
     czl_var *node;
 
-    gp->tmp->cur_class_var = NULL;
+    gp->tmp->ins_var_index = -1;
 
     if (my_flag)
     {
-        node = czl_var_find_in_class(gp, name, 1);
-        return gp->tmp->cur_class_var ? czl_class_ref_var_node_create(gp) : node;
+        node = czl_var_find_in_class(gp, name, gp->tmp->cur_class, 1);
+        return gp->tmp->ins_var_index >= 0 ?
+               czl_ins_var_create(gp, gp->tmp->ins_var_index, node->ot) : node;
     }
     else
         return czl_var_find(gp, name, CZL_GLOBAL_FIND);
 }
 ///////////////////////////////////////////////////////////////
-char czl_nsef_create(czl_gp *gp, void *ef, char flag)
+char czl_nsef_create(czl_gp *gp, void *ef, char flag, unsigned long line)
 {
     czl_usrlib *usrlib = gp->tmp->cur_usrlib;
     czl_nsef *n = (czl_nsef*)CZL_TMP_MALLOC(gp, sizeof(czl_nsef));
@@ -4565,7 +4712,7 @@ char czl_nsef_create(czl_gp *gp, void *ef, char flag)
     n->flag = flag;
     n->ef = (czl_exp_fun*)ef;
     n->err_file = gp->error_file;
-    n->err_line = gp->error_line;
+    n->err_line = line;
     n->next = NULL;
 
     if (!usrlib->nsef_head)
@@ -4596,7 +4743,7 @@ czl_exp_fun* czl_exp_fun_create
 
     if (CZL_STATIC_FUN == quality && CZL_IN_STATEMENT == fun->state)
     {
-        if (!czl_nsef_create(gp, p, 1))
+        if (!czl_nsef_create(gp, p, 1, gp->error_line))
         {
             CZL_RT_FREE(gp, p, sizeof(czl_exp_fun));
             return NULL;
@@ -4778,7 +4925,6 @@ czl_class* czl_class_create(czl_gp *gp, char *name, char final_flag)
     p->enums = NULL;
     p->funs = NULL;
     p->parents = NULL;
-    p->parents_count = 0;
     p->vars_hash.size = 0;
     p->vars_hash.count = 0;
     p->vars_hash.buckets = NULL;
@@ -4966,6 +5112,85 @@ char czl_ref_obj_create
 
     return 1;
 }
+
+char czl_ref_copy(czl_gp *gp, czl_var *left, czl_var *var)
+{
+    czl_ref_var *ref = (czl_ref_var*)left->name;
+    czl_ref_obj *obj = (czl_ref_obj*)var->name;
+
+    if (!left->name)
+    {
+        if (!(left->name=(char*)CZL_REF_MALLOC(gp)))
+            return 0;
+        ((czl_ref_var*)left->name)->var = left;
+    }
+    if (!obj)
+    {
+        if (!(obj=(czl_ref_obj*)CZL_TMP_MALLOC(gp, CZL_RL(0))))
+        {
+            if (!ref)
+                CZL_REF_FREE(gp, left->name);
+            return 0;
+        }
+        obj->cnt = 0;
+        obj->head = NULL;
+        var->name = (char*)obj;
+    }
+    if (!ref)
+        ref = (czl_ref_var*)left->name;
+
+    if (left->type == CZL_OBJ_REF)
+    {
+        czl_var *tmp = CZL_GRV(left);
+        if (tmp == var)
+            return 1;
+        czl_ref_break(gp, ref, tmp);
+    }
+
+    ref->last = NULL;
+    if (NULL == obj->head)
+        ref->next = NULL;
+    else
+    {
+        ref->next = obj->head;
+        obj->head->last = ref;
+    }
+    obj->head = ref;
+
+    if (obj->cnt)
+        CZL_ORFA1(obj);
+
+    return 1;
+}
+
+char czl_ref_set(czl_gp *gp, czl_var *left, czl_var *right)
+{
+    czl_var *var = CZL_GRV(right);
+
+    right->quality = CZL_DYNAMIC_VAR;
+
+    if (left->ot > CZL_NIL)
+    {
+        if (var->type != CZL_INSTANCE ||
+            left->ot != CZL_INS(var->val.Obj)->pclass->ot_num)
+        {
+            gp->exceptionCode = CZL_EXCEPTION_COPY_TYPE_NOT_MATCH;
+            return 0;
+        }
+    }
+    else if (left->ot != CZL_NIL && left->ot != var->type)
+    {
+        gp->exceptionCode = CZL_EXCEPTION_COPY_TYPE_NOT_MATCH;
+        return 0;
+    }
+
+    if (!czl_ref_copy(gp, left, var))
+        return 0;
+
+    left->type = CZL_OBJ_REF;
+    left->val = right->val;
+    return 1;
+}
 ///////////////////////////////////////////////////////////////
 char czl_file_delete(czl_gp *gp, void **obj)
 {
@@ -4974,11 +5199,13 @@ char czl_file_delete(czl_gp *gp, void **obj)
     return (EOF == ret ? 0 : 1);
 }
 ///////////////////////////////////////////////////////////////
-char czl_ins_free(czl_gp *gp, void **obj, unsigned long cnt)
+char czl_instance_delete(czl_gp *gp, void **obj)
 {
-    unsigned long i;
     czl_ins *ins = CZL_INS(obj);
-    czl_var *p = CZL_GIV(ins);
+    czl_class *pclass = ins->pclass;
+    czl_var *p = (czl_var*)ins->vars;
+    unsigned long i, cnt = pclass->total_count;
+
     for (i = 0; i < cnt; ++i, ++p)
     {
         if (CZL_OBJ_IS_LOCK(p))
@@ -4993,37 +5220,16 @@ char czl_ins_free(czl_gp *gp, void **obj, unsigned long cnt)
         p->type = CZL_INT;
     }
 
-    CZL_IF(gp, obj, ins);
-    return 1;
-}
-
-char czl_ins_delete(czl_gp *gp, void **obj)
-{
-    czl_ins *ins = CZL_INS(obj);
-    unsigned long i, j = ins->pclass->parents_count;
-    for (i = 0; i < j; i++)
-        if (!czl_ins_delete(gp, ins->parents[i]))
-            return 0;
-
-    return czl_ins_free(gp, obj, ins->pclass->vars_count);
-}
-
-char czl_instance_delete(czl_gp *gp, void **obj)
-{
-    if (!czl_ins_delete(gp, obj))
-    {
-        CZL_INS(obj)->rc = 1;
-        return 0;
-    }
-
+    CZL_IF(gp, obj, pclass);
     return 1;
 }
 
 static void** czl_ins_create(czl_gp *gp, czl_class *pclass)
 {
     czl_ins *ins;
-    void **obj = (void**)czl_malloc(gp, CZL_IL(pclass->parents_count,
-                                               pclass->vars_count)
+    czl_var *var;
+    unsigned long i, cnt = pclass->total_count;
+    void **obj = (void**)czl_malloc(gp, CZL_IL(cnt)
                                     #ifdef CZL_MM_MODULE
                                     , &pclass->pool
                                     #endif
@@ -5036,108 +5242,73 @@ static void** czl_ins_create(czl_gp *gp, czl_class *pclass)
     ins->rf = 0;
     //
     ins->pclass = pclass;
-    if (pclass->parents_count)
-        memset(ins->parents, 0, pclass->parents_count*sizeof(czl_ins*));
+
+    var = (czl_var*)ins->vars;
+    for (i = 0; i < cnt; ++i)
+        (var++)->type = CZL_INT;
 
     return obj;
 }
 
-static void** czl_ins_create_by_instance
-(
-    czl_gp *gp,
-    czl_var *p,
-    czl_class *pclass
-)
-{
-	czl_var *q;
-    unsigned long i = 0;
-    unsigned long vars_cnt = pclass->vars_count;
-    czl_ins *ins;
-    void **obj = czl_ins_create(gp, pclass);
-    if (!obj)
-        return NULL;
-
-    ins = CZL_INS(obj);
-    for (q = CZL_GIV(ins); i < vars_cnt; ++p, ++q, ++i)
-    {
-        q->name = NULL;
-        q->type = CZL_INT;
-        q->quality = CZL_OBJ_ELE;
-        q->permission = p->permission;
-        q->ot = p->ot;
-        if (!czl_val_copy(gp, q, p))
-        {
-            czl_ins_free(gp, obj, i);
-            return NULL;
-        }
-    }
-
-    return obj;
-}
-
-void** czl_instance_new_and_copy
+void** czl_ins_new_and_copy
 (
     czl_gp *gp,
     czl_ins *ins
 )
 {
-    unsigned long i, j = ins->pclass->parents_count;
-    czl_ins *node;
-    void **obj = czl_ins_create_by_instance(gp, CZL_GIV(ins), ins->pclass);
+    czl_var *p = (czl_var*)ins->vars, *q;
+    unsigned long i, cnt = ins->pclass->total_count;
+    void **obj = czl_ins_create(gp, ins->pclass);
     if (!obj)
         return NULL;
 
-    node = CZL_INS(obj);
-    for (i = 0; i < j; i++)
+    q = (czl_var*)CZL_INS(obj)->vars;
+
+    for (i = 0; i < cnt; ++i)
     {
-        void **tmp = czl_instance_new_and_copy(gp, CZL_INS(ins->parents[i]));
-        if (!tmp)
+        q->name = NULL;
+        q->quality = CZL_OBJ_ELE;
+        q->permission = p->permission;
+        q->ot = p->ot;
+        if (!czl_val_copy(gp, q++, p++))
         {
             czl_instance_delete(gp, obj);
             return NULL;
         }
-        node->parents[i++] = tmp;
     }
 
     return obj;
 }
 
-static void** czl_ins_create_by_class
+static czl_var* czl_ins_create_by_class
 (
     czl_gp *gp,
-    czl_class_var *p,
+    czl_var *q,
     czl_class *pclass,
     char copy_flag
 )
 {
-	czl_var *q;
-    czl_ins *ins;
-    void **obj = czl_ins_create(gp, pclass);
-    if (!obj)
-        return NULL;
+    czl_class_parent *parent;
+    czl_class_var *p;
 
-    ins = CZL_INS(obj);
-    for (q = CZL_GIV(ins); p; p = p->next)
+    for (p = pclass->vars; p; p = p->next)
     {
         if (p->quality != CZL_DYNAMIC_VAR)
             continue;
         q->name = NULL;
-        q->type = CZL_INT;
         q->quality = CZL_OBJ_ELE;
         q->permission = p->permission;
         q->ot = p->ot;
-        if (copy_flag)
-        {
-            if (!czl_val_copy(gp, q, (czl_var*)p))
-            {
-                czl_ins_free(gp, obj, CZL_GIV(ins) - q);
-                return NULL;
-            }
-        }
+        if (copy_flag && !czl_val_copy(gp, q, (czl_var*)p))
+            return NULL;
         ++q;
     }
 
-    return obj;
+    for (parent = pclass->parents; parent; parent = parent->next)
+        if (!(q=czl_ins_create_by_class(gp, q, parent->pclass, copy_flag)))
+            return NULL;
+
+    return q;
 }
 
 void** czl_instance_fork
@@ -5147,23 +5318,14 @@ void** czl_instance_fork
     char copy_flag
 )
 {
-	int i = 0;
-    czl_class_parent *p;
-    czl_ins *ins;
-    void **obj = czl_ins_create_by_class(gp, pclass->vars, pclass, copy_flag);
+    void **obj = czl_ins_create(gp, pclass);
     if (!obj)
         return NULL;
 
-    ins = CZL_INS(obj);
-    for (p = pclass->parents; p; p = p->next)
+    if (!czl_ins_create_by_class(gp, (czl_var*)CZL_INS(obj)->vars, pclass, copy_flag))
     {
-        void **tmp = czl_instance_fork(gp, p->pclass, copy_flag);
-        if (!tmp)
-        {
-            czl_instance_delete(gp, obj);
-            return NULL;
-        }
-        ins->parents[i++] = tmp;
+        czl_instance_delete(gp, obj);
+        return NULL;
     }
 
     return obj;
@@ -5219,15 +5381,16 @@ void czl_table_node_insert
 
 void czl_table_list_delete(czl_gp *gp, czl_table_list *list)
 {
-    czl_table_node *p = list->paras, *q;
+    czl_table_node *p, *q;
 
-    while (p)
+    if (!list) return;
+
+    for (p = list->paras; p; p = q)
     {
         q = p->next;
         czl_exp_stack_delete(gp, p->key);
         czl_exp_stack_delete(gp, p->val);
         CZL_RT_FREE(gp, p, sizeof(czl_table_node));
-        p = q;
     }
 
     CZL_RT_FREE(gp, list, sizeof(czl_table_list));
@@ -5529,24 +5692,20 @@ char czl_str_create
     return 1;
 }
 
-static czl_long czl_get_exp_number(czl_gp *gp, czl_exp_stack exp)
+static long czl_get_exp_number(czl_gp *gp, czl_exp_stack exp)
 {
 	czl_var *ret;
 
-    if (!exp)
-        return 0;
+    if (!exp) return 0;
 
     if (!(ret=czl_exp_stack_cac(gp, exp)))
         return -1;
 
     switch (ret->type)
     {
-    case CZL_INT:
-        return ret->val.inum;
-    case CZL_FLOAT:
-        return ret->val.fnum;
-    default:
-        return -1;
+    case CZL_INT: return ret->val.inum;
+    case CZL_FLOAT: return ret->val.fnum;
+    default: return -1;
     }
 }
 
@@ -5559,8 +5718,9 @@ char czl_string_new
 {
 	unsigned long len = 0;
 	czl_var *init = (czl_var*)pnew->init_list;
-    czl_long l = czl_get_exp_number(gp, pnew->len);
-    if (l < 0)
+    long l;
+
+    if ((l=czl_get_exp_number(gp, pnew->len)) < 0)
     {
         gp->exceptionCode = CZL_EXCEPTION_ARRAY_LENGTH_LESS_ZERO;
         return 0;
@@ -5611,8 +5771,8 @@ char czl_instance_new
         void **arr;
 		czl_var *vars;
 		czl_long i;
-        czl_long l = czl_get_exp_number(gp, pnew->len);
-        if (l < 0)
+        long l;
+        if ((l=czl_get_exp_number(gp, pnew->len)) < 0)
         {
             gp->exceptionCode = CZL_EXCEPTION_ARRAY_LENGTH_LESS_ZERO;
             return 0;
@@ -5776,8 +5936,9 @@ char czl_array_new
 {
 	unsigned long num;
     void **obj;
-    czl_long l = czl_get_exp_number(gp, len);
-    if (l < 0)
+    long l;
+
+    if ((l=czl_get_exp_number(gp, len)) < 0)
     {
         gp->exceptionCode = CZL_EXCEPTION_ARRAY_LENGTH_LESS_ZERO;
         return 0;
@@ -5989,8 +6150,9 @@ void** czl_sq_new
 {
 	unsigned long num;
     void **obj;
-    czl_long l = czl_get_exp_number(gp, len);
-    if (l < 0)
+    long l;
+
+    if ((l=czl_get_exp_number(gp, len)) < 0)
     {
         gp->exceptionCode = CZL_EXCEPTION_ARRAY_LENGTH_LESS_ZERO;
         return NULL;
@@ -6073,14 +6235,14 @@ char czl_obj_new
             return 0;
         res->type = New->type;
         return 1;
-    default:
+    default: //CZL_INSTANCE
         return czl_instance_new(gp, &New->new_obj.ins, res);
     }
 }
 ///////////////////////////////////////////////////////////////
 czl_ins* czl_ins_fork(czl_gp *gp, czl_var *ins)
 {
-    void **obj = czl_instance_new_and_copy(gp, CZL_INS(ins->val.Obj));
+    void **obj = czl_ins_new_and_copy(gp, CZL_INS(ins->val.Obj));
     if (!obj)
         return NULL;
 
@@ -6194,139 +6356,6 @@ char czl_obj_fork(czl_gp *gp, czl_var *left, czl_var *right)
     return 1;
 }
 ///////////////////////////////////////////////////////////////
-int czl_get_class_num(const czl_class_ptr_vars *p)
-{
-    int num = 0;
-
-    while (p)
-    {
-        num++;
-        p = p->next;
-    }
-
-    return num;
-}
-
-char czl_class_index_find
-(
-    const char *name,
-    const czl_class *pclass,
-    int *index
-)
-{
-    czl_class_parent *p;
-
-    if (name == pclass->name)
-        return 1;
-
-    *index += 1;
-
-    for (p = pclass->parents; p; p = p->next)
-        if (czl_class_index_find(name, p->pclass, index))
-            return 1;
-
-    return 0;
-}
-
-void czl_instance_sort_by_index
-(
-    int num,
-    int *indexs,
-    czl_class_ptr_vars **head
-)
-{
-    int t;
-    int i, j, k;
-    czl_class_ptr_vars *p, *p_last;
-    czl_class_ptr_vars *q, *q_last;
-    czl_class_ptr_vars *min = NULL, *min_last = NULL;
-    czl_class_ptr_vars *tmp;
-
-    p_last = NULL;
-    p = *head;
-    for (i = 0; i < num; i++)
-    {
-        k = i;
-        q_last = p;
-        q = p->next;
-        for (j = i+1; j < num; j++)
-        {
-            if (indexs[j] < indexs[k])
-            {
-                k = j;
-                min = q;
-                min_last = q_last;
-            }
-            q_last = q;
-            q = q->next;
-        }
-        if (k != i)
-        {
-            t = indexs[i];
-            indexs[i] = indexs[k];
-            indexs[k] = t;
-            //
-            if (!p_last)
-                *head = min;
-            else
-                p_last->next = min;
-            min_last->next = p;
-            tmp = p->next;
-            p->next = min->next;
-            min->next = tmp;
-            //
-            p = min;
-        }
-        p_last = p;
-        p = p->next;
-    }
-}
-
-char czl_class_sort
-(
-    czl_gp *gp,
-    czl_class_ptr_vars **ptr_vars,
-    const czl_class *cur_class
-)
-{
-	int i;
-	int *class_indexs;
-    czl_class_ptr_vars *p = *ptr_vars;
-    int num = czl_get_class_num(*ptr_vars);
-    if (0 == num)
-        return 1;
-
-    //构建class_indexs索引数组
-    if (!(class_indexs=(int*)CZL_TMP_CALLOC(gp, num, sizeof(int))))
-        return 0;
-    
-    for (i = 0; i < num; i++)
-    {
-        czl_class_index_find(p->pclass->name,
-                             cur_class,
-                             &class_indexs[i]);
-        p = p->next;
-    }
-
-    //根据class_indexs索引数组排序ptr_vars链表，这里采用选择排序算法
-    czl_instance_sort_by_index(num, class_indexs, ptr_vars);
-
-    //释放class_indexs内存
-    CZL_TMP_FREE(gp, class_indexs, num*sizeof(int));
-
-    return 1;
-}
-
-char czl_my_vars_class_sort(czl_gp *gp, czl_fun *fun)
-{
-    if (!gp->tmp->class_ptr_vars_head) return 1;
-
-    fun->class_vars = gp->tmp->class_ptr_vars_head;
-    gp->tmp->class_ptr_vars_head = NULL;
-
-    return czl_class_sort(gp, &fun->class_vars, gp->tmp->cur_class);
-}
-
 void czl_ins_var_list_delete(czl_gp *gp, czl_ins_var *p)
 {
     czl_ins_var *q;
@@ -6339,114 +6368,176 @@ void czl_ins_var_list_delete(czl_gp *gp, czl_ins_var *p)
     }
 }
 
-void czl_class_ptr_vars_delete(czl_gp *gp, czl_class_ptr_vars *p)
+czl_var* czl_ins_var_create(czl_gp *gp, unsigned long index, unsigned char ot)
 {
-    czl_class_ptr_vars *q;
+    czl_ins_var *p;
 
-    while (p)
-    {
-        q = p->next;
-        czl_ins_var_list_delete(gp, p->vars);
-        CZL_RT_FREE(gp, p, sizeof(czl_class_ptr_vars));
-        p = q;
-    }
-}
+    for (p = gp->tmp->ins_vars_head; p; p = p->next)
+        if (index == p->index)
+            return (czl_var*)p;
 
-czl_var* czl_class_ref_var_node_create(czl_gp *gp)
-{
-    czl_class_ptr_vars *ptr_vars = gp->tmp->class_ptr_vars_head;
-    czl_ins_var *node;
-
-    while (ptr_vars)
-    {
-        if (gp->tmp->cur_var_class == ptr_vars->pclass)
-        {
-            for (node=ptr_vars->vars; node; node = node->next)
-                if (gp->tmp->cur_class_var->index == node->index)
-                    return (czl_var*)node;
-            break;
-        }
-        ptr_vars = ptr_vars->next;
-    }
-
-    if (!ptr_vars)
-    {
-        if (!(ptr_vars=(czl_class_ptr_vars*)CZL_RT_MALLOC(gp, sizeof(czl_class_ptr_vars))))
-            return NULL;
-        ptr_vars->vars = NULL;
-        ptr_vars->pclass = gp->tmp->cur_var_class;
-        ptr_vars->next = NULL;
-        if (NULL == gp->tmp->class_ptr_vars_head)
-            gp->tmp->class_ptr_vars_head = ptr_vars;
-        else
-            gp->tmp->class_ptr_vars_tail->next = ptr_vars;
-        gp->tmp->class_ptr_vars_tail = ptr_vars;
-    }
-
-    if (!(node=(czl_ins_var*)CZL_RT_MALLOC(gp, sizeof(czl_ins_var))))
+    if (!(p=(czl_ins_var*)CZL_RT_MALLOC(gp, sizeof(czl_ins_var))))
         return NULL;
-    node->index = gp->tmp->cur_class_var->index;
-    node->next = NULL;
-    if (NULL == ptr_vars->vars)
-        ptr_vars->vars = node;
-    else
-        gp->tmp->ins_vars_tail->next = node;
-    gp->tmp->ins_vars_tail = node;
 
-    return (czl_var*)node;
+    p->index = index;
+    p->ot = ot;
+    p->next = gp->tmp->ins_vars_head;
+    gp->tmp->ins_vars_head = p;
+
+    return (czl_var*)p;
 }
 ///////////////////////////////////////////////////////////////
-czl_obj_member* czl_obj_member_node_create
+czl_obj_member* czl_obj_member_create
 (
     czl_gp *gp,
-    char type,
-    void *obj
+    czl_exp_node *node
 )
 {
     czl_obj_member *p = (czl_obj_member*)CZL_RT_MALLOC(gp, sizeof(czl_obj_member));
     if (!p)
         return NULL;
 
-    p->type = type;
+    p->type = node->type;
     p->flag = 0;
-    p->obj = obj;
+    p->obj = node->op.obj;
     p->index = NULL;
 
     p->next = gp->huds.member_head;
     gp->huds.member_head = p;
 
+    node->type = CZL_MEMBER;
+    node->op.obj = p;
+
     return p;
+}
+
+void czl_obj_member_reset
+(
+    czl_gp *gp,
+    czl_exp_node *node
+)
+{
+    czl_obj_member *member = node->op.obj;
+    void *obj = member->obj;
+
+    gp->huds.member_head = member->next;
+
+    CZL_RT_FREE(gp, member, sizeof(czl_obj_member));
+
+    node->type = CZL_LG_VAR;
+    node->op.obj = obj;
+}
+
+czl_member_index* czl_ins_index_set
+(
+    czl_gp *gp,
+    char *name,
+    czl_class **pclass,
+    czl_member_index *index,
+    czl_obj_member *member
+)
+{
+    unsigned char analysis_field = gp->tmp->analysis_field;
+    gp->tmp->analysis_field = CZL_IN_CLASS_FUN;
+    gp->tmp->ins_var_index = -1;
+    czl_loc_var *inx = (czl_loc_var*)czl_var_find_in_class(gp, name, *pclass, 1);
+    gp->tmp->analysis_field = analysis_field;
+
+    if (gp->tmp->ins_var_index >= 0)
+    {
+        index->flag = CZL_STATIC_INX;
+        index->index.ins.hash = gp->tmp->ins_var_index;
+        gp->cur_var = (czl_var*)inx;
+    }
+    else if (inx && CZL_PUBLIC == inx->optimizable && inx->quality != CZL_CONST_VAR)
+    {
+        czl_member_index *p = member->index, *q;
+        while (p)
+        {
+            q = p->next;
+            CZL_RT_FREE(gp, p, sizeof(czl_member_index));
+            p = q;
+        }
+        member->index = NULL;
+        if (index->index.ins.exp_fun)
+        {
+            index->flag = CZL_STATIC_VARIABLE;
+            index->index.ins.hash = (unsigned long)inx;
+        }
+        else
+        {
+            CZL_RT_FREE(gp, index, sizeof(czl_member_index));
+            index = NULL;
+            member->type = CZL_LG_VAR;
+            member->obj = gp->cur_var = (czl_var*)inx;
+        }
+    }
+    else
+    {
+        sprintf(gp->log_buf, "undefined member %s in class %s, ", name, (*pclass)->name);
+        CZL_RT_FREE(gp, index, sizeof(czl_member_index));
+        return NULL;
+    }
+
+    *pclass = (inx->ot > CZL_NIL ? inx->pclass : NULL);
+    return index;
 }
 
 czl_member_index* czl_ins_index_create
 (
     czl_gp *gp,
-    char *var_name,
-    char *class_name,
-    czl_exp_fun *exp_fun
+    char *name,
+    czl_class **pclass,
+    czl_exp_fun *exp_fun,
+    czl_obj_member *member
 )
 {
-	unsigned long len;
+    unsigned long hash = czl_bkdr_hash(name, strlen(name));
     czl_member_index *p = (czl_member_index*)CZL_RT_MALLOC(gp, sizeof(czl_member_index));
     if (!p)
         return NULL;
 
-    p->type = CZL_INSTANCE_INDEX;
+    p->type = CZL_INSTANCE_INX;
     p->next = NULL;
 
-    p->index.ins.hash = czl_bkdr_hash(var_name, strlen(var_name));
-    p->index.ins.exp_fun = exp_fun;
-    p->index.ins.class_name = NULL;
-
-    if ((len=strlen(class_name)))
+    if (*pclass)
     {
-        p->index.ins.class_name = (char*)CZL_RT_MALLOC(gp, len+1);
-        if (!p->index.ins.class_name)
+        if (exp_fun)
         {
-            CZL_RT_FREE(gp, p->index.ins.class_name, len+1);
-            return NULL;
+            czl_fun *fun;
+            p->index.ins.exp_fun = exp_fun;
+            if ((fun=czl_member_fun_find(hash, *pclass)))
+            {
+                if ((CZL_IN_IDLE == fun->state &&
+                     !czl_fun_paras_check(gp, exp_fun, fun)) ||
+                    (CZL_IN_STATEMENT == fun->state &&
+                     !czl_nsef_create(gp, exp_fun, 1, gp->error_line)))
+                {
+                    CZL_RT_FREE(gp, p, sizeof(czl_member_index));
+                    return NULL;
+                }
+                p->flag = CZL_STATIC_FUNCION;
+                p->index.ins.hash = (unsigned long)fun;
+                exp_fun->fun = fun;
+                exp_fun->quality = CZL_STATIC_FUN;
+            }
+            else
+            {
+                exp_fun->quality = CZL_LG_VAR_DYNAMIC_FUN;
+                return czl_ins_index_set(gp, name, pclass, p, member);
+            }
         }
-        strcpy(p->index.ins.class_name, class_name);
+        else
+        {
+            p->index.ins.exp_fun = NULL;
+            return czl_ins_index_set(gp, name, pclass, p, member);
+        }
+    }
+    else
+    {
+        p->flag = CZL_DYNAMIC_INX;
+        p->index.ins.hash = hash;
+        p->index.ins.exp_fun = exp_fun;
     }
 
     return p;
@@ -6459,16 +6550,17 @@ czl_member_index* czl_arr_index_create
     czl_exp_fun *exp_fun
 )
 {
-    czl_member_index *p = (czl_member_index*)CZL_RT_MALLOC(gp, sizeof(czl_member_index));
-    if (!p)
+    czl_member_index *p;
+
+    if (!(p=(czl_member_index*)CZL_RT_MALLOC(gp, sizeof(czl_member_index))))
         return NULL;
 
-    p->type = CZL_ARRAY_INDEX;
+    p->type = CZL_ARRAY_INX;
+    p->flag = CZL_DYNAMIC_INX;
     p->next = NULL;
 
     p->index.arr.exp = exp;
     p->index.arr.exp_fun = exp_fun;
-
     return p;
 }
 
@@ -6498,16 +6590,8 @@ void czl_member_delete(czl_gp *gp, czl_obj_member *p)
         for (a = p->index; a; a = b)
         {
             b = a->next;
-            if (CZL_ARRAY_INDEX == a->type)
-            {
+            if (CZL_ARRAY_INX == a->type)
                 czl_exp_stack_delete(gp, a->index.arr.exp);
-            }
-            else //CZL_INSTANCE_INDEX
-            {
-                if (a->index.ins.class_name)
-                    CZL_RT_FREE(gp, a->index.ins.class_name,
-                                strlen(a->index.ins.class_name)+1);
-            }
             CZL_RT_FREE(gp, a, sizeof(czl_member_index));
         }
         CZL_RT_FREE(gp, p, sizeof(czl_obj_member));
@@ -6529,10 +6613,8 @@ czl_class_var* czl_class_var_find
         return var;
 
     for (p = pclass->parents; p; p = p->next)
-    {
         if ((var=czl_class_var_find(name, p->pclass)))
             return var;
-    }
 
     return NULL;
 }
@@ -6540,10 +6622,10 @@ czl_class_var* czl_class_var_find
 static czl_var* czl_ins_var_find
 (
     unsigned long hash,
-    czl_ins *ins
+    czl_var *vars,
+    const czl_sys_hash *table
 )
 {
-    const czl_sys_hash *table = &ins->pclass->vars_hash;
     czl_class_var *var;
     czl_bucket *p;
     long index;
@@ -6556,19 +6638,16 @@ static czl_var* czl_ins_var_find
     while (p && hash != ((czl_class_var*)p->key)->hash)
         p = p->next;
 
-    var = p->key;
-    if (!var || var->permission != CZL_PUBLIC)
+    if (!p || (var=p->key)->permission != CZL_PUBLIC)
         return NULL;
 
     switch (var->quality)
     {
     case CZL_DYNAMIC_VAR:
-        return CZL_GIV(ins) + var->index;
+        return vars + var->index;
     case CZL_STATIC_VAR:
         return (czl_var*)var;
     default: //CZL_CONST_VAR
-        //实例内部enum不可以被外部访问，
-        //这样做可以在表达式计算中不用判断操作对象是否是变量
         return NULL;
     }
 }
@@ -6576,25 +6655,24 @@ static czl_var* czl_ins_var_find
 static czl_var* czl_member_var_find
 (
     unsigned long hash,
-    czl_ins *ins
+    czl_var *vars,
+    czl_class *pclass
 )
 {
-    void ***parents;
 	czl_class_parent *p;
-    czl_var *var = czl_ins_var_find(hash, ins);
+    czl_var *var = czl_ins_var_find(hash, vars, &pclass->vars_hash);
     if (var)
         return var;
 
-    parents = ins->parents;
-    for (p = ins->pclass->parents; p; p = p->next)
-    {
+    for (p = pclass->parents; p; p = p->next)
         if (CZL_PUBLIC == p->permission)
         {
-            if ((var=czl_member_var_find(hash, CZL_INS(*parents))))
+            vars += pclass->vars_count;
+            if ((var=czl_member_var_find(hash, vars, p->pclass)))
                 return var;
         }
-        parents++;
-    }
+        else
+            vars += pclass->total_count;
 
     return NULL;
 }
@@ -6619,7 +6697,7 @@ static void* czl_class_fun_find
     return p ? p->key : NULL;
 }
 
-czl_fun* czl_member_fun_find
+static czl_fun* czl_member_fun_find
 (
     unsigned long hash,
     const czl_class *pclass
@@ -6636,6 +6714,16 @@ czl_fun* czl_member_fun_find
                 return fun;
 
     return NULL;
+}
+
+void czl_set_class_total_cnt(czl_class *pclass)
+{
+    czl_class_parent *p;
+
+    pclass->total_count = pclass->vars_count;
+
+    for (p = pclass->parents; p; p = p->next)
+        pclass->total_count += p->pclass->total_count;
 }
 
 czl_class* czl_if_class_parent_repeat
@@ -6657,136 +6745,51 @@ czl_class* czl_if_class_parent_repeat
     return NULL;
 }
 
-static czl_class* czl_class_parent_find
-(
-    const char *name,
-    czl_class *pclass
-)
-{
-    czl_class *tmp;
-    czl_class_parent *p;
-
-    if (strcmp(name, pclass->name) == 0)
-        return pclass;
-
-    for (p = pclass->parents; p; p = p->next)
-        if (CZL_PUBLIC == p->permission &&
-            (tmp=czl_class_parent_find(name, p->pclass)))
-            return tmp;
-
-    return NULL;
-}
-
-static czl_fun* czl_sure_class_fun_find
-(
-    unsigned long hash,
-    char *class_name,
-    czl_class *pclass
-)
-{
-	czl_fun *fun;
-
-    if (!(pclass=czl_class_parent_find(class_name, pclass)))
-        return NULL;
-
-    fun = (czl_fun*)czl_class_fun_find(hash, &pclass->funs_hash);
-    if (fun && CZL_PUBLIC == fun->permission)
-        return fun;
-
-    return NULL;
-}
-
-static czl_ins* czl_instance_parent_find
-(
-    const char *name,
-    czl_ins *ins
-)
-{
-    czl_ins *tmp;
-    void ***parents;
-    czl_class_parent *p;
-
-    if (strcmp(name, ins->pclass->name) == 0)
-        return ins;
-
-    parents = ins->parents;
-    for (p = ins->pclass->parents; p; p = p->next)
-    {
-        if (CZL_PUBLIC == p->permission)
-        {
-            tmp = czl_instance_parent_find(name, CZL_INS(*parents));
-            if (tmp)
-                return tmp;
-        }
-        parents++;
-    }
-
-    return NULL;
-}
-
-static czl_var* czl_sure_class_var_find
-(
-    unsigned long hash,
-    const char *class_name,
-    czl_ins *instance
-)
-{
-    if (!(instance=czl_instance_parent_find(class_name, instance)))
-        return NULL;
-
-    return czl_ins_var_find(hash, instance);
-}
-
 static czl_var* czl_get_ins_member_res
 (
     czl_gp *gp,
-    const czl_instance_index *inx,
-    void **obj
+    const czl_instance_index inx,
+    void **obj,
+    unsigned char flag
 )
 {
     czl_ins *ins = CZL_INS(obj);
 
-    if (inx->exp_fun)
+    if (inx.exp_fun)
     {
-        czl_fun *fun;
-        czl_exp_fun *exp_fun = inx->exp_fun;
-        if (!inx->class_name)
-            fun = czl_member_fun_find(inx->hash, ins->pclass);
-        else
-            fun = czl_sure_class_fun_find(inx->hash, inx->class_name, ins->pclass);
-        if (fun)
+        if (CZL_STATIC_INX == flag)
+            inx.exp_fun->fun = (czl_fun*)((czl_var*)ins->vars + inx.hash);
+        else if (CZL_STATIC_VARIABLE == flag)
+            inx.exp_fun->fun = (czl_fun*)inx.hash;
+        else if (CZL_DYNAMIC_INX == flag)
         {
-            exp_fun->quality = CZL_INS_STATIC_FUN;
-            exp_fun->fun = fun;
-        }
-        else
-        {
-            czl_var *var;
-            if (!inx->class_name)
-                var = czl_member_var_find(inx->hash, ins);
-            else
-                var = czl_sure_class_var_find(inx->hash, inx->class_name, ins);
-            if (!var)
+            czl_fun *fun = czl_member_fun_find(inx.hash, ins->pclass);
+            if (fun)
             {
-                gp->exceptionCode = CZL_EXCEPTION_OBJECT_MEMBER_NOT_FIND;
-                return NULL;
+                inx.exp_fun->quality = CZL_INS_STATIC_FUN;
+                inx.exp_fun->fun = fun;
             }
-            exp_fun->quality = CZL_LG_VAR_DYNAMIC_FUN;
-            exp_fun->fun = (czl_fun*)var;
+            else
+            {
+                czl_var *var = czl_member_var_find(inx.hash, (czl_var*)ins->vars, ins->pclass);
+                if (!var)
+                {
+                    gp->exceptionCode = CZL_EXCEPTION_OBJECT_MEMBER_NOT_FIND;
+                    return NULL;
+                }
+                inx.exp_fun->quality = CZL_LG_VAR_DYNAMIC_FUN;
+                inx.exp_fun->fun = (czl_fun*)var;
+            }
         }
-        return czl_class_fun_run(gp, exp_fun, obj);
+        return czl_class_fun_run(gp, inx.exp_fun, obj);
     }
-    else
+    else if (CZL_STATIC_INX == flag)
+        return (czl_var*)ins->vars + inx.hash;
+    else //CZL_DYNAMIC_INX
     {
-        czl_var *var;
-        if (!inx->class_name)
-            var = czl_member_var_find(inx->hash, ins);
-        else
-            var = czl_sure_class_var_find(inx->hash, inx->class_name, ins);
+        czl_var *var = czl_member_var_find(inx.hash, (czl_var*)ins->vars, ins->pclass);
         if (!var)
-        {
             gp->exceptionCode = CZL_EXCEPTION_OBJECT_MEMBER_NOT_FIND;
-        }
         return var;
     }
 }
@@ -6872,8 +6875,9 @@ static czl_var* czl_get_arr_member_res
 )
 {
     czl_array *arr;
-    czl_long i = czl_get_exp_number(gp, inx->index.arr.exp);
-    if (i < 0)
+    long i;
+
+    if ((i=czl_get_exp_number(gp, inx->index.arr.exp)) < 0)
     {
         gp->exceptionCode = CZL_EXCEPTION_OBJECT_MEMBER_NOT_FIND;
         return NULL;
@@ -6896,8 +6900,7 @@ static czl_var* czl_get_arr_member_res
     }
 
     if (inx->index.arr.exp_fun)
-        return czl_arr_tab_exp_fun_run(gp, inx->index.arr.exp_fun,
-                                       (czl_fun*)(arr->vars+i));
+        return czl_arr_tab_exp_fun_run(gp, inx->index.arr.exp_fun, (czl_fun*)(arr->vars+i));
     else
     {
         if (CZL_REF_VAR == flag && !inx->next)
@@ -6913,14 +6916,14 @@ static czl_var* czl_get_arr_member_res
 static czl_var* czl_get_tab_member_res
 (
     czl_gp *gp,
-    const czl_array_index *inx,
+    const czl_array_index inx,
     czl_var *obj,
     unsigned char flag
 )
 {
 	czl_tabkv *ele;
     czl_table *tab;
-    czl_var *res = czl_exp_stack_cac(gp, inx->exp);
+    czl_var *res = czl_exp_stack_cac(gp, inx.exp);
     if (!res)
         return NULL;
 
@@ -6931,14 +6934,13 @@ static czl_var* czl_get_tab_member_res
     {
         if (CZL_ASS == flag)
             return NULL;
-        gp->tmp_var.quality = CZL_DYNAMIC_VAR;
-        gp->tmp_var.type = CZL_INT;
+        gp->tmp_var.type = CZL_NIL;
         gp->tmp_var.val.inum = 0;
         return &gp->tmp_var;
     }
 
-    if (inx->exp_fun)
-        return czl_arr_tab_exp_fun_run(gp, inx->exp_fun, (czl_fun*)ele);
+    if (inx.exp_fun)
+        return czl_arr_tab_exp_fun_run(gp, inx.exp_fun, (czl_fun*)ele);
     else
         return (czl_var*)ele;
 }
@@ -6988,14 +6990,15 @@ static czl_var* czl_get_char(czl_gp *gp, char *ch)
 static czl_var* czl_get_str_member_res
 (
     czl_gp *gp,
-    const czl_member_index *inx,
+    const czl_array_index inx,
     czl_str *str,
     unsigned char flag
 )
 {
     czl_string *s = CZL_STR(str->Obj);
-    czl_long i = czl_get_exp_number(gp, inx->index.arr.exp);
-    if (i < 0)
+    long i;
+
+    if ((i=czl_get_exp_number(gp, inx.exp)) < 0)
     {
         gp->exceptionCode = CZL_EXCEPTION_OBJECT_MEMBER_NOT_FIND;
         return NULL;
@@ -7022,7 +7025,7 @@ static czl_var* czl_get_str_member_res
         s->len = i+1;
     }
 
-    if (inx->index.arr.exp_fun)
+    if (inx.exp_fun)
     {
         gp->exceptionCode = CZL_EXCEPTION_FUNCTION_CALL_NO_FUN_PTR;
         return NULL;
@@ -7138,7 +7141,7 @@ static czl_var* czl_get_member_res(czl_gp *gp, const czl_obj_member *member)
         obj = CZL_GRV(obj);
 
     if (CZL_SOURCE == obj->type &&
-        CZL_INSTANCE_INDEX == inx->type && inx->index.ins.exp_fun)
+        CZL_INSTANCE_INX == inx->type && inx->index.ins.exp_fun)
         return czl_src_fun_run(gp, obj, &inx->index.ins);
 
     var = (CZL_REF_VAR == member->flag ? obj : gp->cur_var);
@@ -7158,6 +7161,12 @@ static czl_var* czl_get_member_res(czl_gp *gp, const czl_obj_member *member)
         quality[cnt] = obj->quality;
         CZL_LOCK_OBJ(obj);
         objs[cnt++] = obj;
+        if ((obj->type != CZL_INSTANCE && inx->type != CZL_ARRAY_INX) ||
+            (CZL_INSTANCE == obj->type && inx->type != CZL_INSTANCE_INX))
+        {
+            gp->exceptionCode = CZL_EXCEPTION_OBJECT_TYPE_NOT_MATCH;
+            goto CZL_ERROR_END;
+        }
         if (1 == circle_ref_flag && var->val.Obj == obj->val.Obj)
         {
             if (!czl_circle_ref_obj_fork(gp, var, &tmp))
@@ -7167,34 +7176,24 @@ static czl_var* czl_get_member_res(czl_gp *gp, const czl_obj_member *member)
         switch (obj->type)
         {
         case CZL_STRING:
-            if (CZL_REF_VAR == member->flag)
-                goto CZL_ERROR_END;
-            if (member->flag &&
-                CZL_STR(obj->val.str.Obj)->rc > 1 && !czl_string_fork(gp, obj))
-                goto CZL_ERROR_END;
-            if (inx->type != CZL_ARRAY_INDEX ||
-                !(obj=czl_get_str_member_res(gp, inx, &obj->val.str, member->flag)))
+            if (CZL_REF_VAR == member->flag ||
+                (member->flag && CZL_STR(obj->val.str.Obj)->rc > 1 && !czl_string_fork(gp, obj)) ||
+                !(obj=czl_get_str_member_res(gp, inx->index.arr, &obj->val.str, member->flag)))
                 goto CZL_ERROR_END;
             break;
         case CZL_ARRAY:
-            if (member->flag && CZL_ARR(obj->val.Obj)->rc > 1 && !czl_array_fork(gp, obj))
-                goto CZL_ERROR_END;
-            if (inx->type != CZL_ARRAY_INDEX ||
+            if ((member->flag && CZL_ARR(obj->val.Obj)->rc > 1 && !czl_array_fork(gp, obj)) ||
                 !(obj=czl_get_arr_member_res(gp, inx, obj, member->flag)))
                 goto CZL_ERROR_END;
             break;
         case CZL_TABLE:
-            if (member->flag && CZL_TAB(obj->val.Obj)->rc > 1 && !czl_table_fork(gp, obj))
-                goto CZL_ERROR_END;
-            if (inx->type != CZL_ARRAY_INDEX ||
-                !(obj=czl_get_tab_member_res(gp, &inx->index.arr, obj, member->flag)))
+            if ((member->flag && CZL_TAB(obj->val.Obj)->rc > 1 && !czl_table_fork(gp, obj)) ||
+                !(obj=czl_get_tab_member_res(gp, inx->index.arr, obj, member->flag)))
                 goto CZL_ERROR_END;
             break;
         case CZL_INSTANCE:
-            if (member->flag && CZL_INS(obj->val.Obj)->rc > 1 && !czl_ins_fork(gp, obj))
-                goto CZL_ERROR_END;
-            if (inx->type != CZL_INSTANCE_INDEX ||
-                !(obj=czl_get_ins_member_res(gp, &inx->index.ins, obj->val.Obj)))
+            if ((member->flag && CZL_INS(obj->val.Obj)->rc > 1 && !czl_ins_fork(gp, obj)) ||
+                !(obj=czl_get_ins_member_res(gp, inx->index.ins, obj->val.Obj, inx->flag)))
                 goto CZL_ERROR_END;
             break;
         default:
@@ -7223,6 +7222,62 @@ CZL_ERROR_END:
     return NULL;
 }
 ///////////////////////////////////////////////////////////////
+unsigned char czl_get_opr_ot(unsigned char type, void *obj)
+{
+    switch (type)
+    {
+    case CZL_FUNCTION:
+        if (CZL_STATIC_FUN == ((czl_exp_fun*)obj)->quality)
+            return ((czl_exp_fun*)obj)->fun->ret.ot;
+        return CZL_NIL;
+    case CZL_MEMBER:
+        return ((czl_obj_member*)obj)->ot;
+    case CZL_ARRAY_LIST:
+        return CZL_ARRAY;
+    case CZL_TABLE_LIST:
+        return CZL_TABLE;
+    case CZL_NEW:
+        return ((czl_new_sentence*)((czl_var*)obj)->val.Obj)->type;
+    case CZL_INS_VAR:
+        return ((czl_ins_var*)obj)->ot;
+    case CZL_FUN_REF:
+        return type;
+    default: //CZL_LG_VAR/CZL_ENUM
+        return ((czl_var*)obj)->ot;
+    }
+}
+
+char czl_ass_type_check(czl_gp *gp, unsigned char lt, void *lo, unsigned char rt, void *ro)
+{
+    lt = czl_get_opr_ot(lt, lo);
+    rt = czl_get_opr_ot(rt, ro);
+
+    if (lt != CZL_NIL && rt != CZL_NIL && lt != rt &&
+        !((CZL_INT == lt || CZL_FLOAT == lt || CZL_NUM == lt) &&
+          (CZL_INT == rt || CZL_FLOAT == rt || CZL_NUM == rt)))
+    {
+        sprintf(gp->log_buf, "variable copy type not matched, ");
+        return 0;
+    }
+
+    return 1;
+}
+
+char czl_copy_ot_check(czl_gp *gp, unsigned char lt, unsigned char rt, void *ro)
+{
+    rt = czl_get_opr_ot(rt, ro);
+
+    if (lt != CZL_NIL && rt != CZL_NIL && lt != rt &&
+        !((CZL_INT == lt || CZL_FLOAT == lt || CZL_NUM == lt) &&
+          (CZL_INT == rt || CZL_FLOAT == rt || CZL_NUM == rt)))
+    {
+        sprintf(gp->log_buf, "variable copy type not matched, ");
+        return 0;
+    }
+
+    return 1;
+}
+
 czl_exp_ele* czl_opr_create(czl_gp *gp, czl_exp_node *node)
 {
     czl_exp_ele *p = (czl_exp_ele*)CZL_RT_MALLOC(gp, sizeof(czl_exp_ele));
@@ -7233,7 +7288,8 @@ czl_exp_ele* czl_opr_create(czl_gp *gp, czl_exp_node *node)
     p->kind = node->type;
     p->res = (czl_var*)node->op.obj;
     p->lt = CZL_OPERAND; //用于区别条件运算符&&、||和三目运算符
-    p->pl.msg.line = gp->error_line;
+    p->rt = czl_get_opr_ot(node->type, node->op.obj);
+    p->pl.msg.line = node->err_line;
     p->pl.msg.cnt = 1;
     p->next = NULL;
 
@@ -7322,7 +7378,6 @@ static char czl_build_sys_fun_paras_explain
             return 0;
 
         fun->vars[inx.val.inum-1].ot = ot;
-        fun->vars[inx.val.inum-1].type = CZL_INT;
 
         if ('=' == *e)
         {
@@ -7362,6 +7417,7 @@ static char czl_build_sys_fun_paras_explain
             if (gp->tmp)
                 --gp->tmp->exp_node_cnt;
         }
+
         if (ref_flag || defaultPara)
         {
             index = inx.val.inum;
@@ -7585,7 +7641,7 @@ czl_fun* czl_fun_node_create
     p->ret.name = NULL;
     p->ret.quality = CZL_FUNRET_VAR;
     p->ret.ot = ret_ot;
-    p->ret.type = CZL_INT;
+    p->ret.type = CZL_NIL;
     p->ret.val.inum = 0;
 
     if (type != CZL_SYS_FUN)
@@ -7599,7 +7655,7 @@ czl_fun* czl_fun_node_create
         p->store_device_head = NULL;
         p->goto_flags = NULL;
         p->sentences_head = NULL;
-        p->class_vars = NULL;
+        p->my_vars = NULL;
         p->cur_ins = NULL;
         p->pc = NULL;
         p->foreachs = NULL;
@@ -7985,9 +8041,19 @@ czl_sentence* czl_sentence_create(czl_gp *gp, char type)
     switch (type)
     {
     case CZL_EXP_SENTENCE:
+        p->sentence.exp = gp->tmp->exp_head;
+        gp->tmp->exp_head = NULL;
+        break;
     case CZL_RETURN_SENTENCE:
         p->sentence.exp = gp->tmp->exp_head;
         gp->tmp->exp_head = NULL;
+        if (p->sentence.exp && CZL_EIO(p->sentence.exp) &&
+            !czl_copy_ot_check(gp, gp->cur_fun->ret.ot,
+                               p->sentence.exp->kind, p->sentence.exp->res))
+        {
+            gp->error_line = p->sentence.exp->pl.msg.line;
+            goto CZL_ERROR_END;
+        }
         break;
     case CZL_YEILD_SENTENCE:
         if (gp->cur_fun->para_explain)
@@ -7998,6 +8064,13 @@ czl_sentence* czl_sentence_create(czl_gp *gp, char type)
         gp->cur_fun->yeild_flag = 1;
         p->sentence.exp = gp->tmp->exp_head;
         gp->tmp->exp_head = NULL;
+        if (p->sentence.exp && CZL_EIO(p->sentence.exp) &&
+            !czl_copy_ot_check(gp, gp->cur_fun->ret.ot,
+                               p->sentence.exp->kind, p->sentence.exp->res))
+        {
+            gp->error_line = p->sentence.exp->pl.msg.line;
+            goto CZL_ERROR_END;
+        }
         break;
     case CZL_BRANCH_BLOCK:
         p->sentence.branch = czl_branch_node_create(gp);
@@ -8487,6 +8560,7 @@ static char czl_foreach_table
     if (1 == loop->flag)
     {
         czl_var tmp;
+        tmp.quality = CZL_DYNAMIC_VAR;
         tmp.type = ele->kt;
         tmp.val = ele->key;
         return czl_ass_cac(gp, lo, &tmp) ? 1 : -1;
@@ -8494,6 +8568,7 @@ static char czl_foreach_table
     else if (2 == loop->flag)
     {
         czl_var tmp;
+        tmp.quality = CZL_DYNAMIC_VAR;
         if (loop->c)
         {
             czl_var *k;
@@ -8519,6 +8594,7 @@ static char czl_foreach_table
     else if (loop->c)
     {
         czl_var tmp;
+        tmp.quality = CZL_DYNAMIC_VAR;
         tmp.type = ele->kt;
         tmp.val = ele->key;
         if (!czl_ass_cac(gp, lo, &tmp))
@@ -9007,6 +9083,7 @@ static char czl_fun_run(czl_gp *gp, czl_exp_ele *pc, czl_fun *fun)
         case CZL_XOR_XOR:
             CZL_XOR_XOR_CAC(pc);
             break;
+        //
         case CZL_ADD:
             CZL_ADD_CAC(pc);
             break;
@@ -9061,7 +9138,7 @@ CZL_RUN_FUN:
     CZL_RUF(gp, index, size, stack, cur, pc, lo);
 
 CZL_EXCEPTION_CATCH:
-    czl_fun_ret_check_free(gp, pc->res, lo, ro);
+    czl_buf_check_free(gp, pc->res, lo, ro);
     czl_runtime_error_report(gp, pc);
     if ((pc=czl_exception_handle(gp, fun, pc, stack, &index)))
     {
@@ -9115,7 +9192,7 @@ static void czl_set_member_reg(czl_gp *gp, czl_obj_member *obj)
 
     while (inx)
     {
-        if (CZL_ARRAY_INDEX == inx->type)
+        if (CZL_ARRAY_INX == inx->type)
         {
             czl_set_exp_reg(gp, inx->index.arr.exp, 0);
             czl_set_exp_fun_reg(gp, inx->index.arr.exp_fun);
@@ -9247,7 +9324,8 @@ static char czl_is_quick_unary_opt(czl_gp *gp, czl_exp_ele *pc, unsigned char to
         (pc->lo->ot != CZL_INT && pc->lo->ot != CZL_FLOAT))
         return 0;
 
-    if (tof || CZL_REF_VAR == pc->kind || CZL_OBJ_CNT == pc->kind ||
+    if (tof || CZL_OR_OR == pc->kind || CZL_AND_AND == pc->kind ||
+        CZL_REF_VAR == pc->kind || CZL_OBJ_CNT == pc->kind ||
         (CZL_LOGIC_FLIP == pc->kind && pc->lo->ot != CZL_INT))
         return 0;
 
@@ -9279,7 +9357,7 @@ static char czl_is_quick_binary_opt(czl_gp *gp, czl_exp_ele *pc, unsigned char t
         return 0;
 
     if (tof || CZL_SWAP == pc->kind || CZL_CMP == pc->kind ||
-        (pc->kind >= CZL_ELE_DEL && pc->kind <= CZL_ELE_INX) ||
+        CZL_ELE_DEL == pc->kind && CZL_ELE_INX == pc->kind ||
         (((pc->kind >= CZL_MOD_A && pc->kind <= CZL_R_SHIFT_A) ||
           (pc->kind >= CZL_MOD && pc->kind <= CZL_R_SHIFT)) &&
          (pc->lo->ot != CZL_INT || pc->ro->ot != CZL_INT)))
@@ -9888,9 +9966,9 @@ czl_exp_ele* czl_compile_block
                 CZL_CE(p->sentence.exp, buf);
                 (buf-1)->next = buf;
                 buf->res = &gp->cur_fun->ret;
+                buf->pl.msg.line = p->sentence.exp->pl.msg.line;
             }
             buf->flag = p->type;
-            buf->ro = &gp->cur_fun->ret;
             b->last = buf;
             ++buf; //CZL_RETURN_SENTENCE/CZL_YEILD_SENTENCE
             break;
@@ -10312,7 +10390,7 @@ char czl_reg_create(czl_gp *gp, czl_fun *fun)
         if (CZL_DYNAMIC_VAR == p->quality)
         {
             p->var = a;
-            czl_init_var_type(a, p->ot);
+            czl_init_var(a, p->ot);
             a->quality = p->quality;
             a->permission = p->optimizable;
             (a++)->ot = p->ot;
@@ -10335,7 +10413,7 @@ char czl_reg_create(czl_gp *gp, czl_fun *fun)
             if (CZL_DYNAMIC_VAR == p->quality)
             {
                 p->var = a;
-                czl_init_var_type(a, p->ot);
+                czl_init_var(a, p->ot);
                 a->quality = p->quality;
                 a->permission = p->optimizable;
                 (a++)->ot = p->ot;
@@ -10692,7 +10770,7 @@ char czl_integrity_check(czl_gp *gp, char flag)
         czl_exp_stack_delete(gp, gp->tmp->exp_head);
         czl_paras_list_delete(gp, gp->tmp->try_paras, 0);
         czl_paras_list_delete(gp, gp->tmp->branch_child_paras, 0);
-        czl_class_ptr_vars_delete(gp, gp->tmp->class_ptr_vars_head);
+        czl_ins_var_list_delete(gp, gp->tmp->ins_vars_head);
         czl_for_paras_delete(gp, gp->tmp->cur_loop_type,
                              gp->tmp->foreach_type,
                              gp->tmp->for_condition,
@@ -10734,6 +10812,7 @@ char czl_integrity_check(czl_gp *gp, char flag)
     czl_hash_table_delete(gp, &gp->tmp->usrlibs_hash);
     czl_hash_table_delete(gp, &gp->tmp->sn_hash);
     free(gp->tmp);
+    gp->tmp = NULL; //必须置空，因为运行时需要用于czl_exp_node_create状态判断
 
     return flag;
 }
@@ -10879,10 +10958,10 @@ char czl_resume_shell(czl_gp *gp, czl_fun *fun)
             return 0;
         fun->pc = fun->opcode;
     }
-    else if (fun->ret.type != CZL_INT)
+    else if (fun->ret.type != CZL_NIL)
     {
         czl_val_del(gp, &fun->ret);
-        fun->ret.type = CZL_INT;
+        fun->ret.type = CZL_NIL;
     }
 
     ret = czl_main_run(gp, fun, fun->pc);
@@ -10935,7 +11014,7 @@ char czl_tabkv_delete
 }
 #endif //#ifndef CZL_CONSOLE
 ///////////////////////////////////////////////////////////////
-#if (defined CZL_MULT_THREAD && defined CZL_CONSOLE)
+#ifdef CZL_MULT_THREAD
 #ifdef CZL_SYSTEM_WINDOWS
     CRITICAL_SECTION czl_global_cs;
 #elif defined CZL_SYSTEM_LINUX
@@ -10959,7 +11038,7 @@ void czl_global_unlock(void)
     pthread_mutex_unlock(&czl_global_mutex);
 #endif
 }
-#endif //#if (defined CZL_MULT_THREAD && defined CZL_CONSOLE)
+#endif //#ifdef CZL_MULT_THREAD
 
 void czl_log(czl_gp *gp, char *log)
 {
@@ -10973,9 +11052,17 @@ void czl_log(czl_gp *gp, char *log)
     #endif
 #else
 	FILE *fout;
-    if (!gp->log_path)
-        return;
-    if ((fout=fopen(gp->log_path, "a")))
+    if (gp->log_path)
+        fout = fopen(gp->log_path, "a");
+    else
+    {
+        fout = stdout;
+    #ifdef CZL_MULT_THREAD
+        czl_global_lock();
+    #endif
+    }
+
+    if (fout)
     {
         time_t now;
         struct tm *tm_now;
@@ -10984,7 +11071,11 @@ void czl_log(czl_gp *gp, char *log)
         fprintf(fout, "[%d-%02d-%02d %02d:%02d:%02d] %s",
                 tm_now->tm_year+1900, tm_now->tm_mon+1, tm_now->tm_mday,
                 tm_now->tm_hour, tm_now->tm_min, tm_now->tm_sec, log);
-        fclose(fout);
+        if (gp->log_path)
+            fclose(fout);
+    #ifdef CZL_MULT_THREAD
+        czl_global_unlock();
+    #endif
     }
 #endif
 }
@@ -11150,7 +11241,7 @@ void czl_fun_node_delete(czl_gp *gp, czl_fun *p)
     else
     {
         CZL_RT_FREE(gp, p->name, strlen(p->name)+1);
-        czl_class_ptr_vars_delete(gp, p->class_vars);
+        czl_ins_var_list_delete(gp, p->my_vars);
         if (p->opcode)
         {
             if (p->yeild_flag)
@@ -11784,9 +11875,9 @@ void czl_mm_free(czl_gp *gp)
     czl_mm_sp_destroy(gp, &gp->mmp_ref);
     czl_mm_sp_destroy(gp, &gp->mmp_cor);
     czl_mm_sp_destroy(gp, &gp->mmp_file);
+    czl_mm_sp_destroy(gp, &gp->mmp_extsrc);
     czl_mm_sp_destroy(gp, &gp->mmp_buf_file);
     czl_mm_sp_destroy(gp, &gp->mmp_hot_update);
-    czl_mm_sp_destroy(gp, &gp->mmp_extsrc);
 
 #ifdef CZL_MULT_THREAD
     czl_mm_sp_destroy(gp, &gp->mmp_thread);
@@ -11825,6 +11916,7 @@ void czl_mm_free(czl_gp *gp)
     czl_hash_table_delete(gp, &gp->consts_hash);
     czl_var_list_delete(gp, gp->consts_head);
     czl_hash_table_delete(gp, &gp->keyword_hash);
+    CZL_TMP_FREE(gp, gp->add_buf, gp->add_sum);
     #ifdef CZL_MULT_THREAD
         czl_hash_table_delete(gp, &gp->threads_hash);
         czl_thread_list_delete(gp, gp->threads_head);

@@ -397,7 +397,7 @@ char czl_http_doc(czl_gp *gp, czl_fun *fun)
             while (' ' == *s) ++s; //过滤空格
             if (!(t=strchr(s, ch)))
                 goto CZL_HTML;
-            key.quality = CZL_ARRBUF_VAR;
+            key.quality = CZL_TMP_VAR;
             if (!czl_str_create(gp, &key.val.str, t-s+1, t-s, s) ||
                 !(ele=czl_create_key_str_tabkv(gp, tab, &key, NULL, 1)))
             {
@@ -536,7 +536,7 @@ char czl_http_form(czl_gp *gp, czl_fun *fun)
         //解析键
         if (!(t=strchr(s, '=')))
             goto CZL_END;
-        key.quality = CZL_ARRBUF_VAR;
+        key.quality = CZL_TMP_VAR;
         if (!czl_str_create(gp, &key.val.str, t-s+1, t-s, s) ||
             !(ele=czl_create_key_str_tabkv(gp, tab, &key, NULL, 1)))
         {
@@ -597,7 +597,7 @@ char czl_http_kv(czl_gp *gp, czl_fun *fun)
         while (' ' == *s) ++s; //过滤空格
         if (!(t=strchr(s, '=')))
             goto CZL_END;
-        key.quality = CZL_ARRBUF_VAR;
+        key.quality = CZL_TMP_VAR;
         if (!czl_str_create(gp, &key.val.str, t-s+1, t-s, s) ||
             !(ele=czl_create_key_str_tabkv(gp, tab, &key, NULL, 1)))
         {

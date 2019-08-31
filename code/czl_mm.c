@@ -1369,6 +1369,10 @@ static void czl_mm_scan_pool(czl_gp *gp, czl_ulong size)
         if ((cnt - gp->mm_cnt >= gp->mmp_gc_size) || (buf=malloc(size)))
             goto CZL_END;
 
+    while (czl_mm_fill_page(gp, gp->mmp_extsrc.freeHead, &gp->mmp_extsrc, 0))
+        if ((cnt - gp->mm_cnt >= gp->mmp_gc_size) || (buf=malloc(size)))
+            goto CZL_END;
+
     while (czl_mm_fill_page(gp, gp->mmp_arr.freeHead, &gp->mmp_arr, 0))
         if ((cnt - gp->mm_cnt >= gp->mmp_gc_size) || (buf=malloc(size)))
             goto CZL_END;
@@ -1424,6 +1428,9 @@ static void czl_mm_scan_page(czl_gp *gp, czl_ulong size)
         return;
 
     if (czl_mm_fill_page(gp, gp->mmp_file.freeHead, &gp->mmp_file, size))
+        return;
+
+    if (czl_mm_fill_page(gp, gp->mmp_extsrc.freeHead, &gp->mmp_extsrc, size))
         return;
 
     if (czl_mm_fill_page(gp, gp->mmp_arr.freeHead, &gp->mmp_arr, size))

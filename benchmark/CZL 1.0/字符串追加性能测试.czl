@@ -1,0 +1,14 @@
+main
+{
+	str s
+	for i in (0, 1000000)
+	{
+		s = ""
+		s += "foo"
+		s += "bar"
+		s += "ok"
+		s += i
+	}
+	echo(clock())
+	echo(s)
+}
