@@ -1628,7 +1628,8 @@ char* czl_object_member_match(czl_gp *gp, char *code, czl_exp_node *node)
         if (obj &&
             (('.' == *code && obj->ot < CZL_NIL && obj->ot != CZL_SOURCE) ||
              ('[' == *code && obj->ot != CZL_NIL &&
-              obj->ot != CZL_STRING && obj->ot != CZL_ARRAY && obj->ot != CZL_TABLE)))
+              obj->ot != CZL_STRING && obj->ot != CZL_ARRAY &&
+              obj->ot != CZL_TABLE && obj->ot != CZL_SOURCE)))
         {
             sprintf(gp->log_buf, "index not match of %s, ", obj->name);
             return NULL;
@@ -4293,6 +4294,11 @@ char czl_global_paras_init(czl_gp *gp)
     //初始化类强类型声明编号
     gp->tmp->class_ot_num = CZL_NIL;
 
+    return 1;
+}
+
+void czl_expfun_init(czl_gp *gp)
+{
     //初始化运行时构造函数
     gp->ef0.paras = NULL;
     gp->ef0.paras_count = 0;
@@ -4338,11 +4344,8 @@ char czl_global_paras_init(czl_gp *gp)
     gp->tcp_efe2.kind = CZL_REG_VAR;
     gp->tcp_efe2.res = &gp->tcp_v2;
 
-    gp->tcp_v1.type = CZL_NULL;
-    gp->tcp_v1.val.ref.inx = -1;
+    gp->tcp_v1.type = CZL_SOURCE;
 #endif //#ifdef CZL_LIB_TCP
-
-    return 1;
 }
 
 #if (defined CZL_MULT_THREAD || defined CZL_LIB_TCP)
@@ -4424,6 +4427,9 @@ char czl_sys_init(czl_gp *gp)
     //初始化czl_global_paras结构
     if (!czl_global_paras_init(gp))
         return 0;
+
+    //初始化临时构造函数结构
+    czl_expfun_init(gp);
 
     return 1;
 }

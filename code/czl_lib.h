@@ -33,6 +33,7 @@ unsigned long czl_ftoa(double, char*, int);
 char* czl_get_number_from_str(char*, czl_var*);
 char czl_obj_read(czl_gp*, FILE*, czl_var*);
 char czl_line_read(czl_gp*, FILE*, czl_var*);
+unsigned long czl_rand_str(char*);
 czl_long czl_get_file_size(FILE*);
 int czl_get_int_mode(char*);
 char czl_strcmp(const char*, const char*);

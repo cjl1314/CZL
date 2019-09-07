@@ -29,7 +29,8 @@ char czl_reg_pattern(czl_gp *gp, czl_fun *fun)
 
     if (!re)
         return 1;
-    else if (!(fun->ret.val.Obj=czl_extsrc_create(gp, re, pcre_free, CZL_LIB_REG_NAME)))
+    else if (!(fun->ret.val.Obj=czl_extsrc_create(gp, re, pcre_free,
+                                                  CZL_LIB_REG_NAME, czl_lib_reg)))
     {
         pcre_free(re);
         return 0;
@@ -42,7 +43,7 @@ char czl_reg_pattern(czl_gp *gp, czl_fun *fun)
 
 char czl_reg_match(czl_gp *gp, czl_fun *fun)
 {
-    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, CZL_LIB_REG_NAME);
+    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, czl_lib_reg);
     czl_string *text = CZL_STR(fun->vars[1].val.str.Obj);
     int ovector[CZL_REG_BUF_SIZE];
 
@@ -59,7 +60,7 @@ char czl_reg_match(czl_gp *gp, czl_fun *fun)
 
 char czl_reg_collect(czl_gp *gp, czl_fun *fun)
 {
-    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, CZL_LIB_REG_NAME);
+    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, czl_lib_reg);
     czl_string *text = CZL_STR(fun->vars[1].val.str.Obj);
     int offset = 0;
     czl_array *arr = NULL;
@@ -101,7 +102,7 @@ char czl_reg_collect(czl_gp *gp, czl_fun *fun)
 
 char czl_reg_replace(czl_gp *gp, czl_fun *fun)
 {
-    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, CZL_LIB_REG_NAME);
+    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, czl_lib_reg);
     czl_string *text = CZL_STR(fun->vars[1].val.str.Obj);
     czl_string *str = CZL_STR(fun->vars[2].val.str.Obj);
     int inx = 0;

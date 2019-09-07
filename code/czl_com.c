@@ -178,7 +178,8 @@ char czl_com_open(czl_gp *gp, czl_fun *fun)
     h->timeout = timeOut;
 #endif
 
-    if (!(fun->ret.val.Obj=czl_extsrc_create(gp, h, czl_com_close, CZL_LIB_COM_NAME)))
+    if (!(fun->ret.val.Obj=czl_extsrc_create(gp, h, czl_com_close,
+                                             CZL_LIB_COM_NAME, czl_lib_com)))
     {
         czl_com_close(h);
         return 0;
@@ -191,7 +192,7 @@ char czl_com_open(czl_gp *gp, czl_fun *fun)
 
 char czl_com_write(czl_gp *gp, czl_fun *fun)
 {
-    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, CZL_LIB_COM_NAME);
+    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, czl_lib_com);
 
 #ifdef CZL_SYSTEM_WINDOWS
     char *buf = CZL_STR(fun->vars[1].val.str.Obj)->str;
@@ -245,7 +246,7 @@ char czl_com_write(czl_gp *gp, czl_fun *fun)
 
 char czl_com_read(czl_gp *gp, czl_fun *fun)
 {
-    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, CZL_LIB_COM_NAME);
+    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, czl_lib_com);
 
 #ifdef CZL_SYSTEM_WINDOWS
     DWORD size;

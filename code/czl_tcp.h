@@ -22,16 +22,52 @@
 
 #ifdef CZL_LIB_TCP
     extern const czl_sys_fun czl_lib_tcp[]; //库函数表声明
-    #define CZL_LIB_TCP_CNT 10              //库函数个数
+    #define CZL_LIB_TCP_CNT 11              //库函数个数
     #define CZL_LIB_TCP_NAME "tcp"          //库名
+    #define CZL_TCP_BUF_SIZE 50*1024
     //
     #ifdef CZL_SYSTEM_WINDOWS
         extern CRITICAL_SECTION czl_tcp_cs;
     #else //CZL_SYSTEM_LINUX
         extern pthread_mutex_t czl_tcp_mutex;
     #endif
-    void czl_tcp_lock(void);
-    void czl_tcp_unlock(void);
+    //
+    enum czl_tcp_type_enum
+    {
+        CZL_TCP_SRV,
+        CZL_TCP_CLIENT,
+        CZL_TCP_SRV_MASTER,
+        CZL_TCP_SRV_WORKER
+    };
+    //
+    typedef struct czl_tcp_handle
+    {
+        czl_gp *gp;
+        SOCKET sock;
+        unsigned char type;
+        long maxFd;
+        unsigned long limit;
+        void **obj;
+        czl_fun *login;
+        czl_fun *leave;
+        czl_fun *block;
+        czl_fun *tcp;
+    #ifdef CZL_LIB_HTTP
+        czl_fun *http;
+    #endif
+    #ifdef CZL_LIB_WS
+        czl_fun *ws;
+    #endif
+    #ifdef CZL_SYSTEM_WINDOWS
+        czl_tabkv *last;
+    #else //CZL_SYSTEM_LINUX
+        int kdpfd;
+        unsigned long count;
+        struct epoll_event *events;
+    #endif
+    } czl_tcp_handle;
+    char czl_tcp_connect(czl_gp*, czl_fun*);
+    unsigned long czl_tcp_data(czl_gp*, SOCKET, long, char*);
 #endif //CZL_LIB_TCP
 
 #endif // CZL_TCP_H

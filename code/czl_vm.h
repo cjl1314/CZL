@@ -106,7 +106,7 @@
 #define CZL_LOCK_OBJ(obj) ((obj)->quality = CZL_LOCK_ELE)
 
 //解锁对象: unlock obj
-#define CZL_UNLOCK_OBJ(obj, Quality) ((obj)->quality = Quality)
+#define CZL_UNLOCK_OBJ(obj) ((obj)->quality = CZL_OBJ_ELE)
 
 //解锁对象集合: unlock objs
 #define CZL_UNLOCK_OBJS(objs, quality, i, j) \
@@ -1048,7 +1048,9 @@ typedef struct czl_buf_file
 {
     char *path;
     FILE *fp;
-    long date;
+    long atime;
+    long mtime;
+    long ctime;
     unsigned long time;
     void **buf;
     struct czl_buf_file *next;
@@ -1077,7 +1079,7 @@ typedef struct czl_extsrc
     unsigned long rc;   //引用计数
     void *src;
     void (*src_free)(void*);
-    char *name;
+    const struct czl_sys_fun *lib;
     czl_sys_hash *hash;
     unsigned char type;
     unsigned char engine;
@@ -1511,7 +1513,9 @@ typedef struct czl_hot_update
 {
     char *path;
     FILE *fp;
-    long date;
+    long atime;
+    long mtime;
+    long ctime;
     unsigned long time;
     czl_fun *main_fun;
     unsigned long main_err_line;
@@ -1548,6 +1552,7 @@ typedef struct czl_analysis_gp
     czl_glo_var_list global_vars_tail;          //指向全局变量尾节点
     //
     czl_sentence_list sentences_tail;           //当前函数语句列表尾
+    czl_glo_sentence_list glo_vars_init_head;   //全局变量初始化表达式链表头
     czl_glo_sentence_list glo_vars_init_tail;   //全局变量初始化表达式链表尾
     //
     czl_class_var_list class_vars_tail;         //指向类变量链表尾节点
@@ -1687,8 +1692,6 @@ typedef struct czl_gp
     //
     czl_hot_update_datas huds; //热更新数据
     //
-    czl_glo_sentence_list glo_vars_init_head;
-    //
     czl_fun *cur_fun;   //当前函数
     //
     unsigned long runtime; //系统执行时间
@@ -1727,8 +1730,10 @@ typedef struct czl_gp
     czl_var *fun_ret;           //函数返回值
     //
     char log_buf[CZL_LOG_BUF_SIZE]; //log缓冲区
-    char exceptionCode;             //运行时异常码: czl_exception_code_enum
     czl_fun *exceptionFuns[CZL_EXCEPTION_CODE_NUM]; //运行时异常回调函数
+    char exceptionCode;             //运行时异常码: czl_exception_code_enum
+    //
+    char end_flag;              //脚本结束标志位
     //
     czl_exp_fun ef0, ef1, ef2; //运行时构造函数
     czl_para efp1, efp2;
@@ -1928,10 +1933,11 @@ czl_usrlib* czl_usrlib_create(czl_gp*, char*);
 char czl_sort_cmp_fun_ret(czl_gp*, czl_var*, czl_var*);
 void czl_buf_file_delete(czl_gp*, czl_buf_file*);
 unsigned long czl_bkdr_hash(char*, unsigned long);
-void* czl_extsrc_create(czl_gp*, void*, void*, char*);
-czl_extsrc* czl_extsrc_get(void**, char*);
+void* czl_extsrc_create(czl_gp*, void*, void*, char*, const czl_sys_fun*);
+czl_extsrc* czl_extsrc_get(void**, const czl_sys_fun*);
 void czl_extsrc_delete(czl_gp*, void**);
 char czl_tcp_event_handle(czl_gp*, czl_fun*, czl_var*, unsigned long);
+czl_tabkv* czl_tcp_sock_delete(czl_gp*, void*, long);
 ///////////////////////////////////////////////////////////////
 #ifdef CZL_TIMER
 void czl_timer_lock(czl_gp*);

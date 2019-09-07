@@ -85,14 +85,14 @@ char czl_udp_server(czl_gp *gp, czl_fun *fun)
     h->ip = service.sin_addr.s_addr;
     h->port = service.sin_port;
 
-    if (!(fun->ret.val.Obj=czl_extsrc_create(gp, h, czl_udp_close, CZL_LIB_UDP_NAME)))
+    if (!(fun->ret.val.Obj=czl_extsrc_create(gp, h, czl_udp_close,
+                                             CZL_LIB_UDP_NAME, czl_lib_udp)))
     {
         czl_udp_close(h);
         return 0;
     }
-    else
-        fun->ret.type = CZL_SOURCE;
 
+    fun->ret.type = CZL_SOURCE;
     return 1;
 }
 
@@ -128,7 +128,8 @@ char czl_udp_connect(czl_gp *gp, czl_fun *fun)
     h->ip = inet_addr(CZL_STR(fun->vars[0].val.str.Obj)->str);
     h->port = htons(fun->vars[1].val.inum);
 
-    if (!(fun->ret.val.Obj=czl_extsrc_create(gp, h, czl_udp_close, CZL_LIB_UDP_NAME)))
+    if (!(fun->ret.val.Obj=czl_extsrc_create(gp, h, czl_udp_close,
+                                             CZL_LIB_UDP_NAME, czl_lib_udp)))
     {
         czl_udp_close(h);
         return 0;
@@ -141,7 +142,7 @@ char czl_udp_connect(czl_gp *gp, czl_fun *fun)
 
 char czl_udp_recv(czl_gp *gp, czl_fun *fun)
 {
-    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, CZL_LIB_UDP_NAME);
+    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, czl_lib_udp);
     czl_udp_handle *h;
     long time = fun->vars[1].val.inum;
     SOCKET sock;
@@ -199,7 +200,7 @@ char czl_udp_recv(czl_gp *gp, czl_fun *fun)
 
 char czl_udp_send(czl_gp *gp, czl_fun *fun)
 {
-    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, CZL_LIB_UDP_NAME);
+    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, czl_lib_udp);
     czl_udp_handle *h;
     czl_string *buf = CZL_STR(fun->vars[1].val.str.Obj);
     long size = fun->vars[2].val.inum;
@@ -275,7 +276,7 @@ CZL_END:
 
 char czl_udp_ip(czl_gp *gp, czl_fun *fun)
 {
-    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, CZL_LIB_UDP_NAME);
+    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, czl_lib_udp);
     struct in_addr in;
     char *ip;
 

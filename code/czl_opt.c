@@ -1,6 +1,10 @@
 #include "czl_opt.h"
 #include "czl_lib.h"
 
+#ifdef CZL_LIB_TCP
+#include "czl_tcp.h" //TCP库
+#endif //CZL_LIB_TCP
+
 //////////////////////////////////////////////////////////////////
 char czl_number_not_cac(czl_gp *gp, czl_var *res, czl_var *opr)
 {
@@ -87,7 +91,18 @@ char czl_obj_cnt_cac(czl_gp *gp, czl_var *res, czl_var *opr)
         res->val.inum = czl_get_file_size(CZL_FIL(opr->val.Obj)->fp);
         break;
     case CZL_SOURCE:
-        res->val.inum = 1;
+    #ifdef CZL_LIB_TCP
+        if (czl_lib_tcp == CZL_SRC(opr->val.Obj)->lib)
+        {
+            czl_tcp_handle *h = CZL_SRC(opr->val.Obj)->src;
+            if (CZL_TCP_SRV_MASTER == h->type || CZL_TCP_SRV_WORKER == h->type)
+                res->val.inum = CZL_TAB(h->obj)->count;
+            else
+                res->val.inum = 1;
+        }
+        else
+    #endif
+            res->val.inum = 1;
         break;
     default:
         res->val.inum = 1;
@@ -251,7 +266,7 @@ char czl_addr_obj_ass_handle(czl_gp *gp, czl_var *left, czl_var *right)
         {
             CZL_LOCK_OBJ(var);
             ret = czl_val_del(gp, left);
-            CZL_UNLOCK_OBJ(var, CZL_OBJ_ELE);
+            CZL_UNLOCK_OBJ(var);
         }
         if (!ret)
             return 0;

@@ -3,9 +3,9 @@
 #ifdef CZL_LIB_WS
 
 //库函数声明，其中gp是CZL运行时用到的全局参数，fun是函数。
-char czl_ws_res(czl_gp *gp, czl_fun *fun);    //响应websocket连接请求
 char czl_ws_doc(czl_gp *gp, czl_fun *fun);    //解包websocket数据
-char czl_ws_mask(czl_gp *gp, czl_fun *fun);   //对数据进行掩码计算
+char czl_ws_connect(czl_gp *gp, czl_fun *fun);//连接websocket服务器
+char czl_ws_res(czl_gp *gp, czl_fun *fun);    //响应websocket连接
 char czl_ws_send(czl_gp *gp, czl_fun *fun);   //发送websocket数据
 char czl_ws_close(czl_gp *gp, czl_fun *fun);  //发送websocket关闭请求
 char czl_ws_ping(czl_gp *gp, czl_fun *fun);   //发送websocket心跳ping
@@ -15,9 +15,9 @@ char czl_ws_pong(czl_gp *gp, czl_fun *fun);   //发送websocket心跳pong
 const czl_sys_fun czl_lib_ws[] =
 {
     //函数名,     函数指针,        参数个数,  参数声明
-    {"res",      czl_ws_res,     2,        "int_v1,str_v2"},
-    {"doc",      czl_ws_doc,     1,        "str_v1"},
-    {"mask",     czl_ws_mask,    3,        "&str_v1,int_v2,int_v3"},
+    {"doc",      czl_ws_doc,     1,        NULL},
+    {"connect",  czl_ws_connect, 3,        "str_v1,int_v2,int_v3=-1"},
+    {"res",      czl_ws_res,     3,        "src_v1,int_v2,str_v3"},
     {"send",     czl_ws_send,    3,        "int_v1,str_v2,int_v3=0"},
     {"close",    czl_ws_close,   1,        "int_v1"},
     {"ping",     czl_ws_ping,    1,        "int_v1"},
@@ -229,44 +229,6 @@ void czl_base64(const unsigned char *a, unsigned long len, char *b)
     *b = '\0';
 }
 ///////////////////////////////////////////////////////////////
-char czl_ws_res(czl_gp *gp, czl_fun *fun)
-{
-    SOCKET sock = fun->vars[0].val.inum;
-    czl_string *key = CZL_STR(fun->vars[1].val.str.Obj);
-    char res[128] = "HTTP/1.1 101 Switching Protocols\r\nConnection:Upgrade\r\nUpgrade:websocket\r\nSec-WebSocket-Accept:";
-    unsigned long res_len = 94; //strlen(res)
-    const char *code = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-    char magic[128];
-    unsigned long magic_len = key->len + 36; //strlen(code)
-    czl_sha1 sha;
-    unsigned char msg_digest[CZL_SHA1_HASH_SIZE];
-    unsigned long base64_len = CZL_SHA1_HASH_SIZE/3*4 + (CZL_SHA1_HASH_SIZE%3 ? 4 : 0);
-
-    if (key->len > 64)
-    {
-        fun->ret.val.inum = 0;
-        return 1;
-    }
-
-    strcpy(magic, key->str);
-    strcat(magic, code);
-
-    czl_sha1_reset(&sha);
-    czl_sha1_compute(&sha, magic, magic_len);
-    czl_sha1_result(&sha, msg_digest);
-
-    czl_base64(msg_digest, CZL_SHA1_HASH_SIZE, res+res_len);
-    res_len += base64_len;
-
-    res[res_len++] = '\r';
-    res[res_len++] = '\n';
-    res[res_len++] = '\r';
-    res[res_len++] = '\n';
-
-    fun->ret.val.inum = czl_net_send(gp, sock, res, res_len);
-    return 1;
-}
-
 void czl_ws_mask_compute
 (
     unsigned char *s,
@@ -302,110 +264,257 @@ void czl_ws_mask_compute
     }
 }
 
-char czl_ws_doc(czl_gp *gp, czl_fun *fun)
+long czl_ws_data_size(unsigned char *s, unsigned char *e)
 {
-    czl_string *str = CZL_STR(fun->vars->val.str.Obj);
-    void **obj = czl_array_create(gp, 4, 0);
-    czl_array *arr;
-    czl_var *vars;
-    unsigned char *s, *e;
+    unsigned long size = 0;
 
-    if (!obj)
-        return 0;
-    arr = CZL_ARR(obj);
+    while (s < e)
+    {
+        unsigned char fin = *s&0x80;
+        unsigned char opcode = *s&0x0f;
+        unsigned char maskFlag;
+        unsigned long len;
+        if (opcode >= 0x03)
+            return (s+1 == e ? 0 : -1);
+        if (++s == e)
+            return -1;
+        maskFlag = *s&0x80;
+        len = *s&0x7f;
+        ++s;
+        if (126 == len)
+        {
+            if (s+2 > e)
+                return -1;
+            len = s[0]<<8 | s[1];
+            s += 2;
+        }
+        else if (127 == len)
+        {
+            if (s+8 > e)
+                return -1;
+            len = s[4]<<24 | s[5]<<16 | s[6]<<8 | s[7];
+            s += 8;
+        }
+        if (maskFlag)
+        {
+            if (s+4 > e)
+                return -1;
+            s += 4;
+        }
+        if (s+len > e)
+            return -1;
+        size += len;
+        if (fin)
+            return size;
+        s += len;
+    }
+
+    return -1;
+}
+
+void** czl_ws_pop(czl_gp *gp, czl_var *data, unsigned char flag)
+{
+    czl_string *str = CZL_STR(data->val.str.Obj);
+    unsigned char fin;
+    unsigned char *s, *e;
+    czl_str tmp;
+    void **obj;
+    long size;
+    char *buf;
+
+    if (flag && str->rc > 1 && !(str=czl_string_fork(gp, data)))
+        return NULL;
 
     s = str->str;
     e = s + str->len;
 
-    while (s < e)
+    if ((size=czl_ws_data_size(s, e)) < 0)
+        return NULL;
+
+    if (!czl_str_create(gp, &tmp, size+1, size, NULL))
+        return NULL;
+    obj = tmp.Obj;
+
+    if (!size)
     {
-        unsigned long size, cnt;
-        unsigned char maskFlag, opcode = *s&0x0f;
+        ++s;
+        goto CZL_END;
+    }
+    else
+        buf = CZL_STR(obj)->str;
 
-        if (arr->cnt == arr->sum && !czl_array_resize(gp, arr, arr->cnt))
-            goto CZL_OOM;
-
-        if (!(arr->vars[arr->cnt].val.Obj=czl_array_create(gp, 6, 6)))
-            return 0;
-        vars = CZL_ARR(arr->vars[arr->cnt].val.Obj)->vars;
-        arr->vars[arr->cnt++].type = CZL_ARRAY;
-
-        vars[0].val.inum = (*s&0x80)>>4;
-        vars[1].val.inum = opcode;
-        if (opcode >= 0x08 && opcode <= 0x0a && s+1 == e)
+    do {
+        unsigned char maskFlag;
+        unsigned long mask;
+        unsigned long len;
+        fin = *s&0x80;
+        ++s;
+        maskFlag = *s&0x80;
+        len = *s&0x7f;
+        ++s;
+        if (126 == len)
         {
-            ++s;
-            break;
+            len = s[0]<<8 | s[1];
+            s += 2;
         }
-
-        size = s[1]&0x7f;
-        if (size < 126)
-            cnt = 2;
-        else if (126 == size)
+        else if (127 == len)
         {
-            if (e-s < 4)
-                break;
-            size = s[2]<<8 | s[3];
-            cnt = 4;
+            len = s[4]<<24 | s[5]<<16 | s[6]<<8 | s[7];
+            s += 8;
+        }
+        if (maskFlag)
+        {
+            mask = *((unsigned long*)s);
+            s += 4;
+        }
+        memcpy(buf, s, len);
+        if (maskFlag)
+            czl_ws_mask_compute(buf, len, mask);
+        buf += len;
+        s += len;
+    } while (!fin);
+
+CZL_END:
+    if (flag)
+    {
+        if (s == e)
+        {
+            CZL_SF(gp, data->val.str);
+            data->type = CZL_INT;
+            data->val.inum = 0;
         }
         else
         {
-            if (e-s < 10)
-                break;
-            size = s[6]<<24 | s[7]<<16 | s[8]<<8 | s[9];
-            cnt = 10;
+            //清空s前面的数据，保留不全的请求
+            str->len = e - s;
+            memcpy(str->str, s, str->len);
+            str->str[str->len] = '\0';
         }
-        maskFlag = s[1]&0x80;
-        if (maskFlag)
-            cnt += 4;
-        if (s+cnt > e)
-            break;
-
-        vars[2].val.inum = size;
-        if (size > e-s-cnt)
-            size = e - s - cnt;
-
-        if (maskFlag)
-        {
-            unsigned long mask = *((unsigned long*)(s+cnt-4));
-            vars[3].val.inum = mask;
-            if (!czl_set_ret_str(gp, vars+4, s+cnt, size))
-                goto CZL_OOM;
-            if (vars[2].val.inum == size)
-                czl_ws_mask_compute(CZL_STR(vars[4].val.str.Obj)->str, size, mask);
-        }
-        else if (!czl_set_ret_str(gp, vars+4, s+cnt, size))
-            goto CZL_OOM;
-
-        s += (cnt+size);
     }
-
-    if (s < e && !czl_set_ret_str(gp, vars+4, s, e-s))
-        goto CZL_OOM;
-
-    fun->ret.type = CZL_ARRAY;
-    fun->ret.val.Obj = obj;
-    return 1;
-
-CZL_OOM:
-    czl_array_delete(gp, obj);
-    return 0;
+    return obj;
 }
 
-char czl_ws_mask(czl_gp *gp, czl_fun *fun)
+char czl_ws_doc(czl_gp *gp, czl_fun *fun)
 {
-    czl_var *data = CZL_GRV(fun->vars);
-    czl_string *str = CZL_STR(data->val.str.Obj);
-    unsigned long mask = fun->vars[1].val.inum;
-    unsigned long offset = fun->vars[2].val.inum;
+    if (fun->vars->type != CZL_STRING || !(fun->ret.val.str.Obj=czl_ws_pop(gp, fun->vars, 0)))
+        return (CZL_EXCEPTION_OUT_OF_MEMORY == gp->exceptionCode ? 0 : 1);
+    fun->ret.val.str.size = CZL_STR(fun->ret.val.str.Obj)->len + 1;
+    fun->ret.type = CZL_STRING;
+    return 1;
+}
 
-    if (0 == mask || offset > str->len)
-        return 1;
+char czl_ws_connect(czl_gp *gp, czl_fun *fun)
+{
+    SOCKET sock;
+    czl_tcp_handle *h;
+    long time = fun->vars[2].val.inum;
+    char req[256] = "GET / HTTP/1.1\r\nConnection:Upgrade\r\nSec-WebSocket-Extensions:permessage-deflate\r\nSec-WebSocket-Key:";
+    unsigned long req_len = 99; //strlen(req)
+    char buf[CZL_TCP_BUF_SIZE];
+    unsigned long len;
+    char *key, *tmp = buf;
+    unsigned long rands_len;
+    //
+    const char *code = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    czl_sha1 sha;
+    unsigned char msg_digest[CZL_SHA1_HASH_SIZE];
+    unsigned long base64_len = CZL_SHA1_HASH_SIZE/3*4 + (CZL_SHA1_HASH_SIZE%3 ? 4 : 0);
 
-    if (str->rc > 1 && !(str=czl_string_fork(gp, data)))
+    if (!czl_tcp_connect(gp, fun))
         return 0;
 
-    czl_ws_mask_compute(str->str+offset, str->len-offset, mask);
+    h = CZL_SRC(fun->ret.val.Obj)->src;
+    sock = h->sock;
+
+    rands_len = czl_rand_str(req+req_len);
+    req_len += rands_len;
+    req[req_len++] = '\r';
+    req[req_len++] = '\n';
+    req[req_len++] = '\r';
+    req[req_len++] = '\n';
+
+    if (czl_net_send(gp, sock, req, req_len) != req_len ||
+        !(len=czl_tcp_data(gp, sock, time, buf)))
+        goto CZL_ERROR;
+
+    buf[len] = '\0';
+    if (!(key=strstr(buf, "Sec-WebSocket-Accept")))
+        goto CZL_ERROR;
+
+    key += 20;
+    while (' ' == *key) ++key;
+    if (*key++ != ':')
+        goto CZL_ERROR;
+    while (' ' == *key) ++key;
+    while (*key && *key != '\r') *tmp++ = *key++;
+    if (*key != '\r')
+        goto CZL_ERROR;
+    *tmp = '\0';
+
+    strcpy(req+99+rands_len, code);
+    czl_sha1_reset(&sha);
+    czl_sha1_compute(&sha, req+99, rands_len+36); //strlen(code)
+    czl_sha1_result(&sha, msg_digest);
+    czl_base64(msg_digest, CZL_SHA1_HASH_SIZE, req);
+    req[base64_len] = '\0';
+
+    if (strcmp(buf, req) == 0)
+        return 1;
+
+CZL_ERROR:
+    czl_val_del(gp, &fun->ret);
+    fun->ret.type = CZL_INT;
+    fun->ret.val.inum = 0;
+    return 1;
+}
+
+char czl_ws_res(czl_gp *gp, czl_fun *fun)
+{
+    czl_tcp_handle *h;
+    czl_extsrc *extsrc;
+    czl_tabkv *c;
+    SOCKET sock = fun->vars[1].val.inum;
+    czl_string *key = CZL_STR(fun->vars[2].val.str.Obj);
+    char res[128] = "HTTP/1.1 101 Switching Protocols\r\nConnection:Upgrade\r\nUpgrade:websocket\r\nSec-WebSocket-Accept:";
+    unsigned long res_len = 94; //strlen(res)
+    //
+    const char *code = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    char magic[128];
+    unsigned long magic_len = key->len + 36; //strlen(code)
+    czl_sha1 sha;
+    unsigned char msg_digest[CZL_SHA1_HASH_SIZE];
+    unsigned long base64_len = CZL_SHA1_HASH_SIZE/3*4 + (CZL_SHA1_HASH_SIZE%3 ? 4 : 0);
+
+    fun->ret.type = CZL_INT;
+
+    if (!(extsrc=czl_extsrc_get(fun->vars->val.Obj, czl_lib_tcp)))
+        return 1;
+    h = extsrc->src;
+    if ((h->type != CZL_TCP_SRV_MASTER && h->type != CZL_TCP_SRV_WORKER) ||
+        !(c=czl_find_num_tabkv(CZL_TAB(h->obj), sock)))
+        return 1;
+
+    if (key->len > 64)
+        return 1;
+
+    strcpy(magic, key->str);
+    strcat(magic, code);
+    czl_sha1_reset(&sha);
+    czl_sha1_compute(&sha, magic, magic_len);
+    czl_sha1_result(&sha, msg_digest);
+    czl_base64(msg_digest, CZL_SHA1_HASH_SIZE, res+res_len);
+    res_len += base64_len;
+
+    res[res_len++] = '\r';
+    res[res_len++] = '\n';
+    res[res_len++] = '\r';
+    res[res_len++] = '\n';
+
+    if (czl_net_send(gp, sock, res, res_len) != res_len)
+        return 1;
+
+    c->ot = CZL_INT;
+    fun->ret.val.inum = 1;
     return 1;
 }
 
@@ -461,6 +570,7 @@ char czl_ws_send(czl_gp *gp, czl_fun *fun)
     else
         fun->ret.val.inum = str->len;
 
+    fun->ret.type = CZL_INT;
     CZL_TMP_FREE(gp, buf, 14+str->len);
     return 1;
 }
@@ -470,6 +580,7 @@ char czl_ws_close(czl_gp *gp, czl_fun *fun)
     SOCKET sock = fun->vars[0].val.inum;
     char order = 0x88;
     fun->ret.val.inum = czl_net_send(gp, sock, &order, 1);
+    fun->ret.type = CZL_INT;
     return 1;
 }
 
@@ -478,6 +589,7 @@ char czl_ws_ping(czl_gp *gp, czl_fun *fun)
     SOCKET sock = fun->vars[0].val.inum;
     char order = 0x89;
     fun->ret.val.inum = czl_net_send(gp, sock, &order, 1);
+    fun->ret.type = CZL_INT;
     return 1;
 }
 
@@ -486,6 +598,7 @@ char czl_ws_pong(czl_gp *gp, czl_fun *fun)
     SOCKET sock = fun->vars[0].val.inum;
     char order = 0x8a;
     fun->ret.val.inum = czl_net_send(gp, sock, &order, 1);
+    fun->ret.type = CZL_INT;
     return 1;
 }
 #endif //CZL_LIB_WS

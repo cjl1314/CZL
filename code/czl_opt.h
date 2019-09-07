@@ -179,7 +179,7 @@ else { \
     else { \
         CZL_LOCK_OBJ(lo); \
         ro = czl_get_opr(gp, pc->rt, pc->ro); \
-        CZL_UNLOCK_OBJ(lo, CZL_OBJ_ELE); \
+        CZL_UNLOCK_OBJ(lo); \
     } \
     if (!ro) { \
         if (CZL_USR_FUN == pc->rt) goto CZL_RUN_FUN; \
@@ -203,7 +203,7 @@ case CZL_MEMBER: \
     else { \
         CZL_LOCK_OBJ(ro); \
         pc->res = czl_get_member_res(gp, (czl_obj_member*)pc->lo); \
-        CZL_UNLOCK_OBJ(ro, CZL_OBJ_ELE); \
+        CZL_UNLOCK_OBJ(ro); \
     } \
     if (!pc->res) goto CZL_EXCEPTION_CATCH; \
     break; \
