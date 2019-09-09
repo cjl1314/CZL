@@ -258,7 +258,7 @@ char czl_addr_obj_ass_handle(czl_gp *gp, czl_var *left, czl_var *right)
     if (left->type != CZL_OBJ_REF)
     {
 		char ret;
-        if (CZL_VAR_EXIST_REF(left))
+        if (left->name && ((czl_ref_obj*)left->name)->cnt <= CZL_MAX_MEMBER_INDEX_LAYER)
             czl_ref_obj_delete(gp, left);
         if (var->quality != CZL_OBJ_ELE)
             ret = czl_val_del(gp, left);

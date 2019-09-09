@@ -918,15 +918,16 @@ CZL_AGAIN:
         CZL_MM_CMP(gp->mmp_selfAdapt, size, pool, q, page, cnt);
         q = q->freeLast;
     }
-    if (cnt < sum || !page->useHead)
+
+    if (cnt < sum)
         return 0;
+    else if (!page->useHead)
+        goto CZL_FREE;
 
     if (page->freeNext)
         { p = page->freeNext; q = NULL; }
-    else if (page->freeLast)
-        { p = page->freeLast; q = page; }
     else
-        return 0;
+        { p = page->freeLast; q = page; }
 
     for (;;)
     {

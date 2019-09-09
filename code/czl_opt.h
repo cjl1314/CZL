@@ -190,8 +190,14 @@ if (!czl_opt_cac_funs[pc->kind](gp, pc->res, ro)) \
     goto CZL_EXCEPTION_CATCH; \
 ++pc;
 
-//获取左操作数: get left opr
-#define CZL_GLO(gp, pc, ro) \
+//执行双目运算符指令: run binary opt
+#define CZL_RBO(gp, ro, pc) \
+if (CZL_REG_VAR == pc->rt && pc->ro->type != CZL_OBJ_REF) \
+    ro = pc->ro; \
+else if (!(ro=czl_get_opr(gp, pc->rt, pc->ro))) { \
+    if (CZL_USR_FUN == pc->rt) goto CZL_RUN_FUN; \
+    else goto CZL_EXCEPTION_CATCH; \
+} \
 switch (pc->lt) { \
 case CZL_REG_VAR: \
     if (CZL_OBJ_REF == pc->lo->type) pc->res = CZL_GRV(pc->lo); \
@@ -211,17 +217,7 @@ default: \
     pc->res = (CZL_OBJ_REF == ((czl_ins_var*)pc->lo)->var->type ? \
                CZL_GRV(((czl_ins_var*)pc->lo)->var) : ((czl_ins_var*)pc->lo)->var); \
     break; \
-}
-
-//执行双目运算符指令: run binary opt
-#define CZL_RBO(gp, ro, pc) \
-if (CZL_REG_VAR == pc->rt && pc->ro->type != CZL_OBJ_REF) \
-    ro = pc->ro; \
-else if (!(ro=czl_get_opr(gp, pc->rt, pc->ro))) { \
-    if (CZL_USR_FUN == pc->rt) goto CZL_RUN_FUN; \
-    else goto CZL_EXCEPTION_CATCH; \
 } \
-CZL_GLO(gp, pc, ro); \
 if (!czl_opt_cac_funs[pc->kind](gp, pc->res, ro)) \
     goto CZL_EXCEPTION_CATCH; \
 if (CZL_STR_ELE == pc->res->quality) \
@@ -232,26 +228,41 @@ if (CZL_STR_ELE == ro->quality) \
 
 //执行赋值运算符指令: run ass opt
 #define CZL_RAO(gp, ro, pc) \
-if (CZL_REG_VAR == pc->rt &&  \
-    (pc->ro->type != CZL_OBJ_REF || \
-     CZL_REF_ELE == pc->ro->quality)) \
+if (CZL_REG_VAR == pc->rt && \
+    (pc->ro->type != CZL_OBJ_REF || CZL_REF_ELE == pc->ro->quality)) \
     ro = pc->ro; \
 else if (!(ro=czl_get_opr(gp, pc->rt, pc->ro))) { \
     if (CZL_USR_FUN == pc->rt) goto CZL_RUN_FUN; \
     else goto CZL_EXCEPTION_CATCH; \
 } \
-if (CZL_MEMBER == pc->lt) \
+if (CZL_MEMBER == pc->lt) { \
     gp->cur_var = ro; \
-if (CZL_OBJ_REF == ro->type) { \
+    if (ro->quality != CZL_OBJ_ELE) \
+        pc->res = czl_get_member_res(gp, (czl_obj_member*)pc->lo); \
+    else { \
+        CZL_LOCK_OBJ(ro); \
+        pc->res = czl_get_member_res(gp, (czl_obj_member*)pc->lo); \
+        CZL_UNLOCK_OBJ(ro); \
+    } \
+    if (!pc->res) \
+        goto CZL_EXCEPTION_CATCH; \
+    if (CZL_CIRCLE_REF_VAR == gp->tmp_var.quality) \
+        ro = &gp->tmp_var; \
+} \
+else if (CZL_OBJ_REF == ro->type) { \
     if (CZL_INS_VAR == pc->lt) \
         pc->res = ((czl_ins_var*)pc->lo)->var; \
     else if (pc->res != pc->lo) \
         pc->res = pc->lo; \
 } \
-else \
-    CZL_GLO(gp, pc, ro); \
-if (CZL_CIRCLE_REF_VAR == gp->tmp_var.quality) \
-    ro = &gp->tmp_var; \
+else if (CZL_REG_VAR == pc->lt) { \
+    if (CZL_OBJ_REF == pc->lo->type) pc->res = CZL_GRV(pc->lo); \
+    else if (pc->res != pc->lo) pc->res = pc->lo; \
+} \
+else { \
+    pc->res = (CZL_OBJ_REF == ((czl_ins_var*)pc->lo)->var->type ? \
+               CZL_GRV(((czl_ins_var*)pc->lo)->var) : ((czl_ins_var*)pc->lo)->var); \
+} \
 if (!czl_ass_cac(gp, pc->res, ro)) \
     goto CZL_EXCEPTION_CATCH; \
 if (CZL_STR_ELE == pc->res->quality) \

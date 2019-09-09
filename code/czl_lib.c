@@ -681,8 +681,14 @@ char czl_print_obj(czl_gp *gp, const czl_var *obj, FILE *fout)
     case CZL_STACK: case CZL_QUEUE:
         czl_print_sq(gp, CZL_SQ(obj->val.Obj), fout);
         break;
-    case CZL_FUN_REF: case CZL_SOURCE:
-        fprintf(fout, "%d", (int)obj->val.fun);
+    case CZL_FUN_REF:
+        fprintf(fout, "fun(%d)", (int)obj->val.fun);
+        break;
+    case CZL_OBJ_REF:
+        fprintf(fout, "var(%d)", (int)CZL_GRV(obj));
+        break;
+    case CZL_SOURCE:
+        fprintf(fout, "src(%d)", (int)obj->val.Obj);
         break;
     case CZL_FILE:
         fprintf(fout, "%d[%d][%d]", (int)CZL_FIL(obj->val.Obj)->fp,
@@ -1103,11 +1109,10 @@ char czl_sizeof_obj
                        czl_sizeof_int(CZL_STR(obj->val.str.Obj)->len) + 1 :
                        obj->val.str.size;
         return 1;
-    case CZL_FILE:
-        *sum += flag ?
-         czl_sizeof_int(czl_get_file_size(CZL_FIL(obj->val.Obj)->fp))+1 : 4;
+    case CZL_FILE: case CZL_SOURCE: case CZL_OBJ_REF:
+        *sum += flag ? czl_sizeof_int(0)+1 : 4;
         return 1;
-    case CZL_FUN_REF: case CZL_SOURCE:
+    case CZL_FUN_REF:
         *sum += flag ? 5 : 4;
         return 1;
     case CZL_INSTANCE:
@@ -1402,10 +1407,10 @@ char* czl_get_obj_buf
         return czl_get_arr_buf(gp, CZL_ARR(obj->val.Obj), buf);
     case CZL_STACK: case CZL_QUEUE:
         return czl_get_sq_buf(gp, CZL_SQ(obj->val.Obj), buf);
-    case CZL_FILE:
-        *(buf-1) = CZL_INT; //文件只保存大小信息
-        return czl_get_int_buf(czl_get_file_size(CZL_FIL(obj->val.Obj)->fp), buf);
-    case CZL_FUN_REF: case CZL_SOURCE:
+    case CZL_FILE: case CZL_SOURCE: case CZL_OBJ_REF:
+        *(buf-1) = CZL_INT;
+        return czl_get_int_buf(0, buf);
+    case CZL_FUN_REF:
         *((unsigned long*)buf) = (unsigned long)obj->val.fun;
         return buf+4;
     case CZL_ARRAY_LIST:
@@ -1714,7 +1719,7 @@ char* czl_analysis_ele_buf(czl_gp *gp, char *buf, czl_var *obj)
 
     switch (obj->type)
     {
-    case CZL_INT: //CZL_FILE/CZL_SOURCE类型只保存文件大小
+    case CZL_INT: //case CZL_FILE: case CZL_SOURCE: case CZL_OBJ_REF:
         return czl_analysis_int_buf(buf, &obj->val.inum);
     case CZL_FLOAT:
         obj->val.fnum = *((czl_float*)buf);
@@ -5127,17 +5132,9 @@ char czl_sys_wait(czl_gp *gp, czl_fun *fun)
     {
         if (!gp->thread_pipe)
             return 1;
+        czl_event_wait(&gp->thread_pipe->notify_event);
         czl_thread_lock(&gp->thread_pipe->notify_lock); //lock
-        if (gp->thread_pipe->nb_cnt)
-            czl_notify_buf_get(gp, &fun->ret, gp->thread_pipe);
-        else
-        {
-            czl_thread_unlock(&gp->thread_pipe->notify_lock); //unlock
-            czl_event_wait(&gp->thread_pipe->notify_event);
-            czl_thread_lock(&gp->thread_pipe->notify_lock); //lock
-            if (gp->thread_pipe->nb_cnt)
-                czl_notify_buf_get(gp, &fun->ret, gp->thread_pipe);
-        }
+        czl_notify_buf_get(gp, &fun->ret, gp->thread_pipe);
         czl_thread_unlock(&gp->thread_pipe->notify_lock); //unlock
     }
     else
@@ -5145,17 +5142,9 @@ char czl_sys_wait(czl_gp *gp, czl_fun *fun)
         czl_thread *p = czl_thread_find(gp, (unsigned long)fun->vars->val.inum, fun);
         if (!p)
             return 1;
+        czl_event_wait(&p->pipe->report_event);
         czl_thread_lock(&p->pipe->report_lock); //lock
-        if (p->pipe->rb_cnt)
-            czl_report_buf_get(gp, &fun->ret, p->pipe);
-        else
-        {
-            czl_thread_unlock(&p->pipe->report_lock); //unlock
-            czl_event_wait(&p->pipe->report_event);
-            czl_thread_lock(&p->pipe->report_lock); //lock
-            if (p->pipe->rb_cnt)
-                czl_report_buf_get(gp, &fun->ret, p->pipe);
-        }
+        czl_report_buf_get(gp, &fun->ret, p->pipe);
         czl_thread_unlock(&p->pipe->report_lock); //unlock
     }
 

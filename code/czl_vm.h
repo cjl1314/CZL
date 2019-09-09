@@ -42,8 +42,7 @@
 ///////////////////////////////////////////////////////////////
 //变量是否存在&引用: var exist ref
 #define CZL_VAR_EXIST_REF(var) \
-(var->name && var->type != CZL_OBJ_REF && \
- ((czl_ref_obj*)var->name)->cnt <= CZL_MAX_MEMBER_INDEX_LAYER)
+(var->name && var->type != CZL_OBJ_REF)
 ///////////////////////////////////////////////////////////////
 //字符串长度: string length
 #define CZL_SL(size) (8+size)
@@ -1169,7 +1168,7 @@ typedef struct czl_member_index
 typedef struct czl_obj_member
 {
     unsigned char type;         //原始对象类型: czl_opr_type_enum
-    unsigned char flag;         //CZL_ASS: 成员赋值， CZL_SWAP: 成员交换， CZL_REF_VAR: 取成员引用
+    unsigned char flag;         //0: 访问, >0: 修改, 0xff: 地址赋值
     unsigned char kind;         //最终成员索引类型: czl_index_type_enum
     unsigned char ot;           //最终成员强类型: czl_opr_type_enum
     czl_var *obj;               //原始对象值: 实例、数组、表、字符串
@@ -1913,6 +1912,7 @@ void czl_block_delete(czl_gp*, char, void*, char);
 unsigned long czl_hash_key_create(unsigned long, unsigned long);
 unsigned long czl_str_hash(char*, unsigned long,
                            unsigned long, unsigned long);
+unsigned char czl_get_opr_ot(unsigned char, void*);
 char czl_ass_type_check(czl_gp*, unsigned char, void*, unsigned char, void*);
 char czl_copy_ot_check(czl_gp*, unsigned char, unsigned char, void*);
 czl_exp_ele* czl_opr_create(czl_gp*, czl_exp_node*);

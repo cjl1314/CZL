@@ -2699,9 +2699,18 @@ char* czl_foreach_obj_start_para(czl_gp *gp, char *code, char flag)
                 return NULL;
         }
     }
-    else if (CZL_IS_NOT_VAR(node))
+    else if (3 == flag)
     {
-        sprintf(gp->log_buf, "para of for should be a variable, ");
+        unsigned char ot = czl_get_opr_ot(node->type, node->op.obj);
+        if (ot != CZL_NIL && ot != CZL_INT  && ot != CZL_FLOAT)
+        {
+            sprintf(gp->log_buf, "para of for count should be int/float, ");
+            return NULL;
+        }
+    }
+    else if (node->type != CZL_LG_VAR && node->type != CZL_INS_VAR)
+    {
+        sprintf(gp->log_buf, "para of for should be a simple variable, ");
         return NULL;
     }
 
@@ -2828,14 +2837,6 @@ char* czl_foreach_paras_match(czl_gp *gp, char *code)
         code = czl_ignore_sign_filt(gp, code);
         if ('&' == *code)
         {
-            if ((gp->tmp->for_condition &&
-                 CZL_MEMBER == ((czl_exp_ele*)gp->tmp->for_condition)->kind) ||
-                (!gp->tmp->for_condition &&
-                 CZL_MEMBER == ((czl_exp_ele*)gp->tmp->for_paras_start)->kind))
-            {
-                sprintf(gp->log_buf, "member of object should not be &, ");
-                return NULL;
-            }
             ++code;
             gp->tmp->foreach_type = 2;
         }
