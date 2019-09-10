@@ -218,7 +218,8 @@ char czl_addr_obj_ass_handle(czl_gp *gp, czl_var *left, czl_var *right)
 {
 	czl_var *var;
 
-    right->quality = CZL_DYNAMIC_VAR;
+    if (CZL_REF_ELE == right->quality)
+        right->quality = CZL_DYNAMIC_VAR;
 
     if (CZL_NULL == right->ot) // = null
     {
@@ -275,10 +276,8 @@ char czl_addr_obj_ass_handle(czl_gp *gp, czl_var *left, czl_var *right)
     if (!czl_ref_copy(gp, left, var))
         return 0;
 
-    left->val.ref = right->val.ref;
-    if (left->type != CZL_OBJ_REF)
-        left->type = CZL_OBJ_REF;
-
+    left->type = CZL_OBJ_REF;
+    left->val = right->val;
     return 1;
 }
 
@@ -393,7 +392,7 @@ char czl_ass_cac_diff_type(czl_gp *gp, czl_var *left, czl_var *right)
                 return 0;
             left->type = right->type;
             left->val = right->val;
-            right->type = CZL_INT;
+            right->type = CZL_NIL;
             return 1;
         case CZL_ARRBUF_VAR:
             right->quality = CZL_DYNAMIC_VAR;

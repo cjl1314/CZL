@@ -1438,14 +1438,25 @@ char czl_exp_const_merge(czl_gp *gp, czl_exp_node *node)
             }
             if (CZL_REF_VAR == node->type)
             {
-                if ((!node->parent || node->parent->flag != CZL_BINARY_OPT ||
-                     node->parent->type != CZL_ASS))
+                if (!node->parent)
                 {
-                    sprintf(gp->log_buf, " & should be used with =, ");
-                    return 0;
+                    if (gp->ry_flag != 1 || node->left ||
+                        node->right->left || node->right->right)
+                        return 0;
+                    else
+                        gp->ry_flag = 2;
                 }
-                if (CZL_LG_VAR == node->parent->left->type)
-                    ((czl_loc_var*)node->parent->left->op.obj)->optimizable = 0;
+                else
+                {
+                    if (node->parent->flag != CZL_BINARY_OPT ||
+                        node->parent->type != CZL_ASS)
+                    {
+                        sprintf(gp->log_buf, " & should be used with =, ");
+                        return 0;
+                    }
+                    if (CZL_LG_VAR == node->parent->left->type)
+                        ((czl_loc_var*)node->parent->left->op.obj)->optimizable = 0;
+                }
             }
         }
         else
@@ -2121,6 +2132,8 @@ char czl_val_del(czl_gp *gp, czl_var *var)
     case CZL_INT: case CZL_FLOAT: case CZL_FUN_REF: case CZL_NIL:
         break;
     case CZL_OBJ_REF:
+        if (CZL_FUNRET_VAR == var->quality)
+            break;
         czl_ref_break(gp, (czl_ref_var*)var->name, CZL_GRV(var));
         CZL_REF_FREE(gp, var->name);
         var->name = NULL;
@@ -5198,10 +5211,15 @@ char czl_ref_copy(czl_gp *gp, czl_var *left, czl_var *var)
 
 char czl_ref_set(czl_gp *gp, czl_var *left, czl_var *right)
 {
-    czl_var *var = CZL_GRV(right);
+    czl_var *var;
 
     if (CZL_REF_ELE == right->quality)
         right->quality = CZL_DYNAMIC_VAR;
+
+    if (CZL_FUNRET_VAR == left->quality)
+        goto CZL_END;
+
+    var = CZL_GRV(right);
 
     if (left->ot > CZL_NIL)
     {
@@ -5221,6 +5239,7 @@ char czl_ref_set(czl_gp *gp, czl_var *left, czl_var *right)
     if (!czl_ref_copy(gp, left, var))
         return 0;
 
+CZL_END:
     left->type = CZL_OBJ_REF;
     left->val = right->val;
     return 1;

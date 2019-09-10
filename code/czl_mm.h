@@ -49,6 +49,14 @@
         typedef unsigned long czl_ulong;
         typedef float czl_float;
     #endif
+#else
+    #include <sys/stat.h>
+    typedef long czl_long;
+    typedef unsigned long czl_ulong;
+    typedef float czl_float;
+    #undef CZL_NUMBER_64bit
+    #undef CZL_MULT_THREAD
+    #undef CZL_TIMER
 #endif
 ///////////////////////////////////////////////////////////////
 #define CZL_MM_4GB   0xFFFFFFFFUL

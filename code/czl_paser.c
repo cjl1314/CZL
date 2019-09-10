@@ -1975,9 +1975,9 @@ char czl_is_unary_opt(czl_gp *gp, char **code, czl_exp_node **node, czl_exp_hand
 
     if (czl_exp_is_integrity(gp, h, 0))
     {
-        char sign = *(*code-1);
+        char sign = *(s-1);
         if (' ' == sign || '\t' == sign || '\n' == sign || '\r' == sign ||
-            (**code != '+' && !('-' == **code && '-' == *(*code+1))))
+            (*s != '+' && !('-' == *s && '-' == *(s+1))))
             return 0;
     }
 
@@ -2019,8 +2019,8 @@ char czl_is_binary_opt(czl_gp *gp, char **code, czl_exp_node **node)
     char *s = *code;
     unsigned long i, j, len;
 
-    if (('+' == **code && '+' == *(*code+1) && *(*code+2) != '+') ||
-        ('-' == **code && '-' == *(*code+1) && *(*code+2) != '-'))
+    if (('+' == *s && '+' == *(s+1) && *(s+2) != '+') ||
+        ('-' == *s && '-' == *(s+1) && *(s+2) != '-'))
         return 0;
 
     for (i = 0; i < czl_binary_opt_table_num; i++)
@@ -2116,6 +2116,8 @@ char* czl_exp_analysis(czl_gp *gp, char *code, czl_exp_handle *h)
                 return czl_exp_integrity_check(gp, h) ? code : NULL;
             if (!(code=czl_child_exp_analysis_start(gp, code, h)))
                 return NULL;
+            if (2 == gp->ry_flag)
+                return code;
             continue;
         }
         else if (')' == *code)
@@ -3278,8 +3280,10 @@ char* czl_context_analysis(czl_gp *gp, char *code, int index)
             return NULL;
         break;
     case CZL_RETURN_INDEX: case CZL_YEILD_INDEX:
+        gp->ry_flag = 1;
         if (!(code=czl_exp_sentence_match(gp, code)))
             return NULL;
+        gp->ry_flag = 0;
         if (!czl_code_block_create(gp, index))
             return NULL;
         break;

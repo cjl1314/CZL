@@ -1427,6 +1427,7 @@ typedef struct czl_coroutine
 #ifdef CZL_MULT_THREAD
 typedef struct czl_pipe_buf
 {
+    unsigned long size;
     struct czl_pipe_buf *next;
     char buf[1];
 } czl_pipe_buf;
@@ -1449,10 +1450,12 @@ typedef struct czl_thread_pipe
     //
     czl_pipe_buf *rb_head;
     czl_pipe_buf *rb_tail;
+    czl_pipe_buf *rb_buf;
     unsigned long rb_cnt;
     //
     czl_pipe_buf *nb_head;
     czl_pipe_buf *nb_tail;
+    czl_pipe_buf *nb_buf;
     unsigned long nb_cnt;
     //线程同步标志位必须加volatile声明，否则会被编译器优化无法检测到真实的状态
     volatile unsigned char alive;
@@ -1733,6 +1736,8 @@ typedef struct czl_gp
     char exceptionCode;             //运行时异常码: czl_exception_code_enum
     //
     char end_flag;              //脚本结束标志位
+    //
+    char ry_flag; //return/yeild语句标志位
     //
     czl_exp_fun ef0, ef1, ef2; //运行时构造函数
     czl_para efp1, efp2;

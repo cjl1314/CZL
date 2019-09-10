@@ -123,9 +123,10 @@ char czl_sys_corsta(czl_gp*, czl_fun*);
 char czl_sys_resume(czl_gp*, czl_fun*);
 char czl_sys_kill(czl_gp*, czl_fun*);
 //
-#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
+#if (defined CZL_SYSTEM_WINDOWS || defined CZL_SYSTEM_LINUX) && \
+    (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
 char czl_sys_dns(czl_gp*, czl_fun*);
-#endif //#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
+#endif
 //
 #ifdef CZL_MULT_THREAD
 char czl_sys_thread(czl_gp*, czl_fun*);
@@ -266,10 +267,11 @@ const czl_sys_fun czl_lib_os[] =
     //线程、协程和定时器共用kill函数
     {"resume",    czl_sys_resume,     -1, NULL},
     {"kill",      czl_sys_kill,       1,  "int_v1"},
-#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
+#if (defined CZL_SYSTEM_WINDOWS || defined CZL_SYSTEM_LINUX) && \
+    (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
     //域名解析函数
     {"dns",       czl_sys_dns,        1,  "str_v1"},
-#endif //#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
+#endif
 #ifdef CZL_MULT_THREAD
     //多线程框架接口函数
     #ifdef CZL_CONSOLE
@@ -1109,12 +1111,6 @@ char czl_sizeof_obj
                        czl_sizeof_int(CZL_STR(obj->val.str.Obj)->len) + 1 :
                        obj->val.str.size;
         return 1;
-    case CZL_FILE: case CZL_SOURCE: case CZL_OBJ_REF:
-        *sum += flag ? czl_sizeof_int(0)+1 : 4;
-        return 1;
-    case CZL_FUN_REF:
-        *sum += flag ? 5 : 4;
-        return 1;
     case CZL_INSTANCE:
         czl_sizeof_ins(gp, flag, CZL_INS(obj->val.Obj), sum);
         if (flag)
@@ -1146,6 +1142,9 @@ char czl_sizeof_obj
             return 0;
         if (flag)
             *sum += 14;
+        return 1;
+    case CZL_FILE: case CZL_SOURCE: case CZL_OBJ_REF: case CZL_FUN_REF:
+        *sum += flag ? czl_sizeof_int(0)+1 : 4;
         return 1;
     default:
         return 1;
@@ -1407,18 +1406,15 @@ char* czl_get_obj_buf
         return czl_get_arr_buf(gp, CZL_ARR(obj->val.Obj), buf);
     case CZL_STACK: case CZL_QUEUE:
         return czl_get_sq_buf(gp, CZL_SQ(obj->val.Obj), buf);
-    case CZL_FILE: case CZL_SOURCE: case CZL_OBJ_REF:
-        *(buf-1) = CZL_INT;
-        return czl_get_int_buf(0, buf);
-    case CZL_FUN_REF:
-        *((unsigned long*)buf) = (unsigned long)obj->val.fun;
-        return buf+4;
     case CZL_ARRAY_LIST:
         *(buf-1) = CZL_ARRAY;
         return czl_get_arr_list_buf(gp, CZL_ARR_LIST(obj->val.Obj), buf);
     case CZL_TABLE_LIST:
         *(buf-1) = CZL_TABLE;
         return czl_get_tab_list_buf(gp, CZL_TAB_LIST(obj->val.Obj), buf);
+    case CZL_FILE: case CZL_SOURCE: case CZL_OBJ_REF: case CZL_FUN_REF:
+        *(buf-1) = CZL_INT;
+        return czl_get_int_buf(0, buf);
     default:
         return NULL;
     }
@@ -1719,16 +1715,13 @@ char* czl_analysis_ele_buf(czl_gp *gp, char *buf, czl_var *obj)
 
     switch (obj->type)
     {
-    case CZL_INT: //case CZL_FILE: case CZL_SOURCE: case CZL_OBJ_REF:
+    case CZL_INT: //case CZL_FILE: case CZL_SOURCE: case CZL_OBJ_REF: case CZL_FUN_REF:
         return czl_analysis_int_buf(buf, &obj->val.inum);
     case CZL_FLOAT:
         obj->val.fnum = *((czl_float*)buf);
         return buf+sizeof(czl_float);
     case CZL_STRING:
         return czl_analysis_str_buf(gp, buf, obj);
-    case CZL_FUN_REF:
-        obj->val.fun = (czl_fun*)(*((unsigned long*)buf));
-        return buf+4;
     case CZL_INSTANCE:
         return czl_analysis_ins_buf(gp, buf, obj);
     case CZL_TABLE:
@@ -4473,7 +4466,8 @@ char czl_sys_kill(czl_gp *gp, czl_fun *fun)
     return 1;
 }
 ///////////////////////////////////////////////////////////////
-#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
+#if (defined CZL_SYSTEM_WINDOWS || defined CZL_SYSTEM_LINUX) && \
+    (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
 char czl_sys_dns(czl_gp *gp, czl_fun *fun)
 {
     char *domain = CZL_STR(fun->vars[0].val.str.Obj)->str;
@@ -4537,7 +4531,7 @@ char* czl_dns(char *domain)
 
     return inet_ntoa(*(struct in_addr*)host->h_addr_list[0]);
 }
-#endif //#if (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
+#endif
 
 #if (defined CZL_LIB_TCP || defined CZL_LIB_HTTP || defined CZL_LIB_WS)
 long czl_net_send(czl_gp *gp, int sock, char *buf, long len)
@@ -4761,10 +4755,30 @@ char czl_report_buf_create
     czl_pipe_buf *p;
     unsigned long obj_size = 0;
 
-    if (!czl_sizeof_obj(gp, 1, obj, &obj_size) || !(p=malloc(4+obj_size)))
+    if (!czl_sizeof_obj(gp, 1, obj, &obj_size))
         return 0;
 
     czl_thread_lock(&pipe->report_lock); //lock
+
+    if (pipe->rb_buf && pipe->rb_buf->size >= obj_size)
+    {
+        p = pipe->rb_buf;
+        pipe->rb_buf = NULL;
+    }
+    else
+    {
+        if (pipe->rb_buf)
+        {
+            free(pipe->rb_buf);
+            pipe->rb_buf = NULL;
+        }
+        if (!(p=malloc(8+obj_size)))
+        {
+            czl_thread_unlock(&pipe->report_lock); //unlock
+            return 0;
+        }
+        p->size = obj_size;
+    }
 
     p->next = NULL;
     if (NULL == pipe->rb_head)
@@ -4790,10 +4804,30 @@ char czl_notify_buf_create
     czl_pipe_buf *p;
     unsigned long obj_size = 0;
 
-    if (!czl_sizeof_obj(gp, 1, obj, &obj_size) || !(p=malloc(4+obj_size)))
+    if (!czl_sizeof_obj(gp, 1, obj, &obj_size))
         return 0;
 
     czl_thread_lock(&pipe->notify_lock); //lock
+
+    if (pipe->nb_buf && pipe->nb_buf->size >= obj_size)
+    {
+        p = pipe->nb_buf;
+        pipe->nb_buf = NULL;
+    }
+    else
+    {
+        if (pipe->nb_buf)
+        {
+            free(pipe->nb_buf);
+            pipe->nb_buf = NULL;
+        }
+        if (!(p=malloc(8+obj_size)))
+        {
+            czl_thread_unlock(&pipe->notify_lock); //unlock
+            return 0;
+        }
+        p->size = obj_size;
+    }
 
     p->next = NULL;
     if (NULL == pipe->nb_head)
@@ -4848,9 +4882,13 @@ char czl_report_buf_get
             return 0;
         }
 
-    czl_pipe_buf_delete(pipe->rb_head);
-    pipe->rb_head = NULL;
-    pipe->rb_cnt = 0;
+    if (pipe->rb_head)
+    {
+        pipe->rb_buf = pipe->rb_head;
+        czl_pipe_buf_delete(pipe->rb_head->next);
+        pipe->rb_head = NULL;
+        pipe->rb_cnt = 0;
+    }
 
     res->type = CZL_ARRAY;
     res->val.Obj = obj;
@@ -4880,9 +4918,13 @@ char czl_notify_buf_get
             return 0;
         }
 
-    czl_pipe_buf_delete(pipe->nb_head);
-    pipe->nb_head = NULL;
-    pipe->nb_cnt = 0;
+    if (pipe->nb_head)
+    {
+        pipe->nb_buf = pipe->nb_head;
+        czl_pipe_buf_delete(pipe->nb_head->next);
+        pipe->nb_head = NULL;
+        pipe->nb_cnt = 0;
+    }
 
     res->type = CZL_ARRAY;
     res->val.Obj = obj;
@@ -4907,6 +4949,8 @@ char czl_thread_para_get
 void czl_thread_pipe_delete(czl_thread_pipe *pipe)
 {
     free(pipe->para);
+    free(pipe->rb_buf);
+    free(pipe->nb_buf);
     czl_pipe_buf_delete(pipe->rb_head);
     czl_pipe_buf_delete(pipe->nb_head);
     czl_lock_destroy(&pipe->notify_lock);
