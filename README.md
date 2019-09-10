@@ -19,6 +19,7 @@
 2. 语言接口层: CZL_STR_MALLOC/CZL_STR_FREE、CZL_STACK_MALLOC/CZL_STACK_CALLOC...，不同模块采用不同接口；
 3. 对象管理层: 引用计数和引用标记；
 4. 临时内存管理: 回收时机精确到指令级别。
+
 这四层模型让CZL做到了如下：
 1. O(1)时间复杂度内完成czl_malloc/czl_free；
 2. 内存池碎片实时整理；
