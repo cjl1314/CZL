@@ -13,6 +13,7 @@
 #include "czl_vm.h"
 extern czl_sys_lib czl_syslibs[];
 extern const unsigned long czl_syslibs_num;
+extern const czl_sys_fun czl_lib_os[];
 ///////////////////////////////////////////////////////////////
 //获取引用变量: get ref var
 #define CZL_GRV(p) \
@@ -43,15 +44,27 @@ char czl_bytes_read(czl_gp*, FILE*, unsigned char, czl_var*, long);
 #else
 char czl_bytes_read(czl_gp*, FILE*, czl_var*, long);
 #endif
-#if (defined CZL_SYSTEM_WINDOWS || defined CZL_SYSTEM_LINUX) && \
-    (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
 char* czl_dns(char*);
-#endif
-#if (defined CZL_LIB_TCP || defined CZL_LIB_HTTP || defined CZL_LIB_WS)
 long czl_net_send(czl_gp*, int, char*, long);
-#endif //#if (defined CZL_LIB_TCP || defined CZL_LIB_HTTP || defined CZL_LIB_WS)
 ///////////////////////////////////////////////////////////////
 #ifdef CZL_MULT_THREAD
+typedef struct czl_threads_handler
+{
+    czl_gp *gp;
+    czl_thread *head;
+    czl_thread *cur;
+    czl_thread *recv;
+    unsigned long count;
+    unsigned long limit;
+    unsigned long cnt;
+    unsigned long sum;
+    czl_str shell_path;
+#ifndef CZL_CONSOLE
+    czl_str log_path;
+#endif
+    czl_var para;
+} czl_threads_handler;
+
 void czl_thread_lock
 (
 #ifdef CZL_SYSTEM_WINDOWS

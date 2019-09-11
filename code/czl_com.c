@@ -18,39 +18,40 @@ const czl_sys_fun czl_lib_com[] =
 };
 
 #ifdef CZL_SYSTEM_WINDOWS
-typedef struct czl_com_handle
+typedef struct czl_com_handler
 {
     czl_gp *gp;
     HANDLE hCom;
     OVERLAPPED wOv;
     OVERLAPPED rOv;
-} czl_com_handle;
+} czl_com_handler;
 
-void czl_com_close(czl_com_handle *h)
+void czl_com_close(czl_com_handler *h)
 {
     CloseHandle(h->hCom);
     CloseHandle(h->wOv.hEvent);
     CloseHandle(h->rOv.hEvent);
-    CZL_TMP_FREE(h->gp, h, sizeof(czl_com_handle));
+    if (!h->gp->end_flag)
+        CZL_TMP_FREE(h->gp, h, sizeof(czl_com_handler));
 }
 #else //CZL_SYSTEM_LINUX
-typedef struct czl_com_handle
+typedef struct czl_com_handler
 {
     czl_gp *gp;
     int fd;
     unsigned long timeout;
-} czl_com_handle;
+} czl_com_handler;
 
-void czl_com_close(czl_com_handle *h)
+void czl_com_close(czl_com_handler *h)
 {
     close(h->fd);
-    CZL_TMP_FREE(h->gp, h, sizeof(czl_com_handle));
+    CZL_TMP_FREE(h->gp, h, sizeof(czl_com_handler));
 }
 #endif
 
 char czl_com_open(czl_gp *gp, czl_fun *fun)
 {
-    czl_com_handle *h;
+    czl_com_handler *h;
 
 #ifdef CZL_SYSTEM_WINDOWS
     DCB sDcb;
@@ -95,7 +96,7 @@ char czl_com_open(czl_gp *gp, czl_fun *fun)
     sDcb.Parity = NOPARITY;     //设置校验模式
     SetCommState(hCom, &sDcb);  //设置DCB结构参数
 
-    if (!(h=(czl_com_handle*)CZL_TMP_MALLOC(gp, sizeof(czl_com_handle))))
+    if (!(h=(czl_com_handler*)CZL_TMP_MALLOC(gp, sizeof(czl_com_handler))))
     {
         CloseHandle(hCom);
         return 1;
@@ -111,7 +112,7 @@ char czl_com_open(czl_gp *gp, czl_fun *fun)
     {
         CloseHandle(h->hCom);
         CloseHandle(h->wOv.hEvent);
-        CZL_TMP_FREE(gp, h, sizeof(czl_com_handle));
+        CZL_TMP_FREE(gp, h, sizeof(czl_com_handler));
         return 1;
     }
 #else //CZL_SYSTEM_LINUX
@@ -167,7 +168,7 @@ char czl_com_open(czl_gp *gp, czl_fun *fun)
     tcflush(fd, TCIOFLUSH);
 
     if (tcsetattr(fd, TCSANOW, &uart) < 0 ||
-        !(h=(czl_com_handle*)CZL_TMP_MALLOC(gp, sizeof(czl_com_handle))))
+        !(h=(czl_com_handler*)CZL_TMP_MALLOC(gp, sizeof(czl_com_handler))))
     {
         close(fd);
         return 1;
@@ -197,7 +198,7 @@ char czl_com_write(czl_gp *gp, czl_fun *fun)
 #ifdef CZL_SYSTEM_WINDOWS
     char *buf = CZL_STR(fun->vars[1].val.str.Obj)->str;
     DWORD len = CZL_STR(fun->vars[1].val.str.Obj)->len;
-    czl_com_handle *h;
+    czl_com_handler *h;
 
     if (!extsrc)
         return 1;
@@ -225,7 +226,7 @@ char czl_com_write(czl_gp *gp, czl_fun *fun)
     if (!extsrc)
         return 1;
 
-    fd = ((czl_com_handle*)(extsrc->src))->fd;
+    fd = ((czl_com_handler*)(extsrc->src))->fd;
 
     if ((fun->ret.val.inum=write(fd, buf->str, buf->len)) >= 0)
         return 1;
@@ -253,7 +254,7 @@ char czl_com_read(czl_gp *gp, czl_fun *fun)
     char tmp[1024];
     char *buf = tmp;
     char ret = 1;
-    czl_com_handle *h;
+    czl_com_handler *h;
 
     if (!extsrc)
         return 1;
@@ -295,8 +296,8 @@ char czl_com_read(czl_gp *gp, czl_fun *fun)
     if (!extsrc)
         return 1;
 
-    fd = ((czl_com_handle*)(extsrc->src))->fd;
-    timeout = ((czl_com_handle*)(extsrc->src))->timeout;
+    fd = ((czl_com_handler*)(extsrc->src))->fd;
+    timeout = ((czl_com_handler*)(extsrc->src))->timeout;
 
     ev.events = EPOLLIN;
     ev.data.fd = fd;

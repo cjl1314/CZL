@@ -406,7 +406,7 @@ char czl_ws_doc(czl_gp *gp, czl_fun *fun)
 char czl_ws_connect(czl_gp *gp, czl_fun *fun)
 {
     SOCKET sock;
-    czl_tcp_handle *h;
+    czl_tcp_handler *h;
     long time = fun->vars[2].val.inum;
     char req[256] = "GET / HTTP/1.1\r\nConnection:Upgrade\r\nSec-WebSocket-Extensions:permessage-deflate\r\nSec-WebSocket-Key:";
     unsigned long req_len = 99; //strlen(req)
@@ -470,7 +470,7 @@ CZL_ERROR:
 
 char czl_ws_res(czl_gp *gp, czl_fun *fun)
 {
-    czl_tcp_handle *h;
+    czl_tcp_handler *h;
     czl_extsrc *extsrc;
     czl_tabkv *c;
     SOCKET sock = fun->vars[1].val.inum;

@@ -40,7 +40,7 @@
         CZL_TCP_SRV_WORKER
     };
     //
-    typedef struct czl_tcp_handle
+    typedef struct czl_tcp_handler
     {
         czl_gp *gp;
         SOCKET sock;
@@ -65,7 +65,7 @@
         unsigned long count;
         struct epoll_event *events;
     #endif
-    } czl_tcp_handle;
+    } czl_tcp_handler;
     char czl_tcp_connect(czl_gp*, czl_fun*);
     unsigned long czl_tcp_data(czl_gp*, SOCKET, long, char*);
 #endif //CZL_LIB_TCP

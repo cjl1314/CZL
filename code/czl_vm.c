@@ -671,7 +671,7 @@ char czl_fun_paras_check
     }
 }
 //////////////////////////////////////////////////////////////////
-static char czl_val_copy(czl_gp *gp, czl_var *left, czl_var *right)
+char czl_val_copy(czl_gp *gp, czl_var *left, czl_var *right)
 {
     if (!right) return 0;
 
@@ -3859,7 +3859,7 @@ czl_tabkv* czl_tcp_sock_delete
     long sock
 )
 {
-    czl_tcp_handle *h = srv;
+    czl_tcp_handler *h = srv;
     czl_table *tab = CZL_TAB(h->obj);
     czl_tabkv *p;
     long index; //必须为有符号Long型
@@ -7059,7 +7059,7 @@ static czl_var* czl_get_src_member_res
     else
     {
     #ifdef CZL_LIB_TCP
-        czl_tcp_handle *h;
+        czl_tcp_handler *h;
         czl_var *res;
         if (inx->index.arr.exp_fun || !(res=czl_exp_stack_cac(gp, inx->index.arr.exp)))
             return NULL;
@@ -8884,8 +8884,7 @@ static char czl_foreach_object
         if (loop->d) ++loop->cnt;
         break;
     default:
-        gp->exceptionCode = CZL_EXCEPTION_OBJECT_TYPE_NOT_MATCH;
-        break;
+        return 0;
     }
 
 CZL_END:
@@ -11078,11 +11077,7 @@ char czl_resume_shell(czl_gp *gp, czl_fun *fun)
 	char ret;
 
     if (!fun->pc)
-    {
-        if (!czl_global_vars_init(gp))
-            return 0;
         fun->pc = fun->opcode;
-    }
     else if (fun->ret.type != CZL_NIL)
     {
         czl_val_del(gp, &fun->ret);

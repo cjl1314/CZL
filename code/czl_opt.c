@@ -94,12 +94,17 @@ char czl_obj_cnt_cac(czl_gp *gp, czl_var *res, czl_var *opr)
     #ifdef CZL_LIB_TCP
         if (czl_lib_tcp == CZL_SRC(opr->val.Obj)->lib)
         {
-            czl_tcp_handle *h = CZL_SRC(opr->val.Obj)->src;
+            czl_tcp_handler *h = CZL_SRC(opr->val.Obj)->src;
             if (CZL_TCP_SRV_MASTER == h->type || CZL_TCP_SRV_WORKER == h->type)
                 res->val.inum = CZL_TAB(h->obj)->count;
             else
                 res->val.inum = 1;
         }
+        else
+    #endif
+    #ifdef CZL_MULT_THREAD
+        if (czl_lib_os == CZL_SRC(opr->val.Obj)->lib)
+            res->val.inum = ((czl_threads_handler*)CZL_SRC(opr->val.Obj)->src)->count;
         else
     #endif
             res->val.inum = 1;

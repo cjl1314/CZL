@@ -124,7 +124,7 @@ char czl_sys_resume(czl_gp*, czl_fun*);
 char czl_sys_kill(czl_gp*, czl_fun*);
 //
 #if (defined CZL_SYSTEM_WINDOWS || defined CZL_SYSTEM_LINUX) && \
-    (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
+    (defined CZL_LIB_TCP || defined CZL_LIB_UDP)
 char czl_sys_dns(czl_gp*, czl_fun*);
 #endif
 //
@@ -138,6 +138,10 @@ char czl_sys_notify(czl_gp*, czl_fun*);
 char czl_sys_notifyAll(czl_gp*, czl_fun*);
 char czl_sys_thrsta(czl_gp*, czl_fun*);
 char czl_sys_suspend(czl_gp*, czl_fun*);
+//
+char czl_sys_threads(czl_gp*, czl_fun*);
+char czl_sys_send(czl_gp*, czl_fun*);
+char czl_sys_recv(czl_gp*, czl_fun*);
 #endif //#ifdef CZL_MULT_THREAD
 //
 #ifndef CZL_CONSOLE
@@ -268,7 +272,7 @@ const czl_sys_fun czl_lib_os[] =
     {"resume",    czl_sys_resume,     -1, NULL},
     {"kill",      czl_sys_kill,       1,  "int_v1"},
 #if (defined CZL_SYSTEM_WINDOWS || defined CZL_SYSTEM_LINUX) && \
-    (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
+    (defined CZL_LIB_TCP || defined CZL_LIB_UDP)
     //域名解析函数
     {"dns",       czl_sys_dns,        1,  "str_v1"},
 #endif
@@ -287,6 +291,14 @@ const czl_sys_fun czl_lib_os[] =
     {"notifyAll", czl_sys_notifyAll,  1,  "v1=0"},
     {"thrsta",    czl_sys_thrsta,     1,  "int_v1=0"},
     {"suspend",   czl_sys_suspend,    1,  "int_v1"},
+    //
+    #ifdef CZL_CONSOLE
+    {"threads",   czl_sys_threads,    3,  "str_v1,int_v2=100,v3=0"},
+    #else
+    {"threads",   czl_sys_threads,    4,  "str_v1,int_v2=100,v3=0,str_v4=\"\""},
+    #endif
+    {"send",      czl_sys_send,       2,  "src_v1"},
+    {"recv",      czl_sys_recv,       1,  "src_v1"},
 #endif //#ifdef CZL_MULT_THREAD
 #ifndef CZL_CONSOLE
     //与C/C++栈交互接口函数
@@ -4466,8 +4478,7 @@ char czl_sys_kill(czl_gp *gp, czl_fun *fun)
     return 1;
 }
 ///////////////////////////////////////////////////////////////
-#if (defined CZL_SYSTEM_WINDOWS || defined CZL_SYSTEM_LINUX) && \
-    (defined CZL_LIB_TCP || defined CZL_LIB_UDP || defined CZL_LIB_HTTP)
+#if defined CZL_LIB_TCP || defined CZL_LIB_UDP
 char czl_sys_dns(czl_gp *gp, czl_fun *fun)
 {
     char *domain = CZL_STR(fun->vars[0].val.str.Obj)->str;
@@ -4514,9 +4525,6 @@ char* czl_dns(char *domain)
 {
     struct hostent *host;
 
-    if (!domain)
-        return NULL;
-
     if (*domain >= '0' && *domain <= '9')
         return domain;
 
@@ -4531,9 +4539,9 @@ char* czl_dns(char *domain)
 
     return inet_ntoa(*(struct in_addr*)host->h_addr_list[0]);
 }
-#endif
+#endif //#if defined CZL_LIB_TCP || defined CZL_LIB_UDP
 
-#if (defined CZL_LIB_TCP || defined CZL_LIB_HTTP || defined CZL_LIB_WS)
+#ifdef CZL_LIB_TCP
 long czl_net_send(czl_gp *gp, int sock, char *buf, long len)
 {
     long cnt = 0;
@@ -4594,7 +4602,7 @@ long czl_net_send(czl_gp *gp, int sock, char *buf, long len)
 
     return cnt;
 }
-#endif //#if (defined CZL_LIB_TCP || defined CZL_LIB_HTTP || defined CZL_LIB_WS)
+#endif //#ifdef CZL_LIB_TCP
 ///////////////////////////////////////////////////////////////
 #ifdef CZL_MULT_THREAD
 void czl_thread_lock
@@ -4980,30 +4988,14 @@ void czl_thread_delete(czl_gp *gp, czl_thread *p)
     CZL_THREAD_FREE(gp, p);
 }
 
-czl_thread* czl_thread_create(czl_gp *gp)
+void czl_thread_free(czl_gp *gp, czl_thread *p)
 {
-    czl_thread *p = CZL_THREAD_MALLOC(gp);
-    if (!p)
-        return NULL;
-
-    if (!czl_sys_hash_insert(gp, CZL_INT, p, &gp->threads_hash))
-    {
-        CZL_THREAD_FREE(gp, p);
-        return NULL;
-    }
-
 #ifdef CZL_SYSTEM_WINDOWS
-    p->id = NULL;
+    CloseHandle(p->id);
 #endif
-    p->pipe = NULL;
-
-    p->last = NULL;
-    p->next = gp->threads_head;
-    if (gp->threads_head)
-        gp->threads_head->last = p;
-    gp->threads_head = p;
-
-    return p;
+    if (p->pipe)
+        czl_thread_pipe_delete(p->pipe);
+    CZL_THREAD_FREE(gp, p);
 }
 
 czl_thread_pipe* czl_thread_pipe_create(czl_gp *gp, czl_var *obj)
@@ -5088,45 +5080,50 @@ CZL_OOM:
     return 0;
 }
 
-char czl_sys_thread(czl_gp *gp, czl_fun *fun)
+czl_thread* czl_thread_create
+(
+    czl_gp *gp,
+    czl_string *shell,
+    czl_var *para
+#ifndef CZL_CONSOLE
+    , czl_string *log
+#endif
+)
 {
-	czl_thread *p;
-	char *shell_path = NULL;
+    czl_thread *p = CZL_THREAD_MALLOC(gp);
+    char *shell_path = NULL;
 #ifndef CZL_CONSOLE
     char *log_path = NULL;
 #endif //#ifndef CZL_CONSOLE
     void **argv = NULL;
 
-    fun->ret.type = CZL_INT;
+    if (!p)
+        return NULL;
 
-    if (!(p=czl_thread_create(gp)))
-        return 1;
+#ifdef CZL_SYSTEM_WINDOWS
+    p->id = NULL;
+#endif
+    p->pipe = NULL;
+    p->last = NULL;
 
-    if (!(p->pipe=czl_thread_pipe_create(gp, fun->vars+1)))
-        goto CZL_OOM;
-
-    if (!(argv=(void**)calloc(3, sizeof(void*))))
+    if (!(p->pipe=czl_thread_pipe_create(gp, para)) ||
+        !(argv=(void**)calloc(3, sizeof(void*))) ||
+        !(shell_path=(char*)malloc(shell->len+1)))
         goto CZL_OOM;
 
     argv[0] = p->pipe;
 
-    if (!(shell_path=(char*)malloc(CZL_STR(fun->vars->val.str.Obj)->len+1)))
-        goto CZL_OOM;
-    memcpy(shell_path,
-           CZL_STR(fun->vars->val.str.Obj)->str,
-           CZL_STR(fun->vars->val.str.Obj)->len);
-    shell_path[CZL_STR(fun->vars->val.str.Obj)->len] = '\0';
+    memcpy(shell_path, shell->str, shell->len);
+    shell_path[shell->len] = '\0';
     argv[1] = shell_path;
 
 #ifndef CZL_CONSOLE
-    if (CZL_STR(fun->vars[2].val.str.Obj)->len)
+    if (log->len)
     {
-        if (!(log_path=(char*)malloc(CZL_STR(fun->vars[2].val.str.Obj)->len+1)))
+        if (!(log_path=(char*)malloc(log->len+1)))
             goto CZL_OOM;
-        memcpy(log_path,
-               CZL_STR(fun->vars[2].val.str.Obj)->str,
-               CZL_STR(fun->vars[2].val.str.Obj)->len);
-        log_path[CZL_STR(fun->vars[2].val.str.Obj)->len] = '\0';
+        memcpy(log_path, log->str, log->len);
+        log_path[log->len] = '\0';
     }
     argv[2] = log_path;
 #endif //#ifndef CZL_CONSOLE
@@ -5139,8 +5136,7 @@ char czl_sys_thread(czl_gp *gp, czl_fun *fun)
         goto CZL_OOM;
 #endif
 
-    fun->ret.val.inum = (unsigned long)p;
-    return 1;
+    return p;
 
 CZL_OOM:
     free(argv);
@@ -5148,7 +5144,37 @@ CZL_OOM:
 #ifndef CZL_CONSOLE
     free(log_path);
 #endif
-    czl_thread_delete(gp, p);
+    czl_thread_free(gp, p);
+    return NULL;
+}
+
+char czl_sys_thread(czl_gp *gp, czl_fun *fun)
+{
+    czl_thread *p = czl_thread_create(gp,
+                                      CZL_STR(fun->vars->val.str.Obj),
+                                      fun->vars+1
+                                      #ifndef CZL_CONSOLE
+                                      , CZL_STR(fun->vars[2].val.str.Obj)
+                                      #endif
+                                      );
+
+    fun->ret.type = CZL_INT;
+
+    if (!p)
+        return 1;
+
+    if (!czl_sys_hash_insert(gp, CZL_INT, p, &gp->threads_hash))
+    {
+        czl_thread_free(gp, p);
+        return 0;
+    }
+
+    p->next = gp->threads_head;
+    if (gp->threads_head)
+        gp->threads_head->last = p;
+    gp->threads_head = p;
+
+    fun->ret.val.inum = (unsigned long)p;
     return 1;
 }
 
@@ -5178,7 +5204,8 @@ char czl_sys_wait(czl_gp *gp, czl_fun *fun)
             return 1;
         czl_event_wait(&gp->thread_pipe->notify_event);
         czl_thread_lock(&gp->thread_pipe->notify_lock); //lock
-        czl_notify_buf_get(gp, &fun->ret, gp->thread_pipe);
+        if (gp->thread_pipe->nb_cnt)
+            czl_notify_buf_get(gp, &fun->ret, gp->thread_pipe);
         czl_thread_unlock(&gp->thread_pipe->notify_lock); //unlock
     }
     else
@@ -5188,7 +5215,8 @@ char czl_sys_wait(czl_gp *gp, czl_fun *fun)
             return 1;
         czl_event_wait(&p->pipe->report_event);
         czl_thread_lock(&p->pipe->report_lock); //lock
-        czl_report_buf_get(gp, &fun->ret, p->pipe);
+        if (p->pipe->rb_cnt)
+            czl_report_buf_get(gp, &fun->ret, p->pipe);
         czl_thread_unlock(&p->pipe->report_lock); //unlock
     }
 
@@ -5334,6 +5362,203 @@ char czl_sys_suspend(czl_gp *gp, czl_fun *fun)
         t->pipe->suspend = 1;
         fun->ret.val.inum = 1;
     }
+
+    return 1;
+}
+
+void czl_threads_free(czl_threads_handler *h)
+{
+    czl_thread *p = h->head, *q;
+
+    while (p)
+    {
+        q = p->next;
+        p->pipe->alive = 0;
+        p->pipe->kill = 1;
+        czl_event_send(&p->pipe->notify_event);
+    #ifdef CZL_SYSTEM_WINDOWS
+        CloseHandle(p->id);
+    #endif
+        if (!h->gp->end_flag)
+            CZL_THREAD_FREE(h->gp, p);
+        p = q;
+    }
+
+    if (!h->gp->end_flag)
+    {
+        CZL_SRCD1(h->gp, h->shell_path);
+    #ifndef CZL_CONSOLE
+        CZL_SRCD1(h->gp, h->log_path);
+    #endif
+        czl_val_del(h->gp, &h->para);
+        CZL_TMP_FREE(h->gp, h, sizeof(czl_threads_handler));
+    }
+}
+
+char czl_sys_threads(czl_gp *gp, czl_fun *fun)
+{
+    czl_threads_handler *h = CZL_TMP_MALLOC(gp, sizeof(czl_threads_handler));
+
+    if (!h)
+        return 0;
+
+    memset(h, 0, sizeof(czl_threads_handler));
+
+    h->shell_path = fun->vars->val.str;
+    CZL_SRCA1(h->shell_path);
+
+    h->limit = fun->vars[1].val.inum;
+
+    h->para.ot = CZL_NIL;
+    if (fun->vars[2].type != CZL_SOURCE)
+        czl_val_copy(gp, &h->para, fun->vars+2);
+
+#ifndef CZL_CONSOLE
+    h->log_path = fun->vars[3].val.str;
+    CZL_SRCA1(h->log_path);
+#endif
+
+    h->gp = gp;
+
+    if (!(fun->ret.val.Obj=czl_extsrc_create(gp, h, czl_threads_free,
+                                             CZL_LIB_OS_NAME, czl_lib_os)))
+    {
+        czl_threads_free(h);
+        return 0;
+    }
+
+    fun->ret.type = CZL_SOURCE;
+    return 1;
+}
+
+char czl_sys_send(czl_gp *gp, czl_fun *fun)
+{
+    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, czl_lib_os);
+    czl_threads_handler *h;
+    czl_thread *t;
+
+    fun->ret.type = CZL_INT;
+    if (!extsrc)
+        return 1;
+
+    h = extsrc->src;
+    t = h->cur;
+
+CZL_AGAIN:
+    if (t)
+    {
+        //负载均衡策略: 轮询
+        ++h->cnt;
+        h->sum += t->pipe->nb_cnt;
+        if (h->sum > h->cnt) //统计平均繁忙度是否大于某个阀值
+        {
+            //比较相邻线程繁忙度选取较闲者，这样可以抑制线程增长过快
+            if (t->next)
+            {
+                if (t->next->pipe->nb_cnt < t->pipe->nb_cnt)
+                    t = t->next;
+                else if (t->next->next && t->next->next->pipe->nb_cnt < t->pipe->nb_cnt)
+                    t = t->next->next;
+            }
+            //整体线程过于繁忙开启新线程
+            else if (h->count < h->limit)
+                goto CZL_CREATE;
+        }
+        if (!t->pipe->alive)
+        {
+            czl_thread *next = t->next;
+            if (t->last)
+                t->last->next = t->next;
+            else
+                h->head = t->next;
+            if (t->next)
+                t->next->last = t->last;
+            if (t == h->cur)
+                h->cur = next;
+            if (t == h->recv)
+                h->recv = next;
+            czl_thread_free(gp, t);
+            t = next;
+            goto CZL_AGAIN;
+        }
+        if (czl_notify_buf_create(gp, t->pipe, fun->vars+1))
+            fun->ret.val.inum = 1;
+        czl_event_send(&t->pipe->notify_event);
+        if (t->next)
+            h->cur = t->next;
+        else
+        {
+            h->cur = h->head;
+            h->cnt = h->sum = 0;
+        }
+    }
+    else
+    {
+    CZL_CREATE:
+        t = czl_thread_create(gp,
+                              CZL_STR(h->shell_path.Obj),
+                              &h->para
+                              #ifndef CZL_CONSOLE
+                              , CZL_STR(h->log_path.Obj)
+                              #endif
+                              );
+        if (!t)
+        {
+            if (h->count < h->limit)
+            {
+                h->limit = h->count;
+                t = h->cur;
+                goto CZL_AGAIN;
+            }
+            return 1;
+        }
+        ++h->count;
+        if (h->cur)
+            h->cur = h->cur->next;
+        t->next = h->cur;
+        if (h->cur)
+        {
+            if (h->cur->last)
+            {
+                t->last = h->cur->last;
+                h->cur->last->next = t;
+            }
+            h->cur->last = t;
+        }
+        else
+        {
+            t->next = h->head;
+            if (h->head)
+                h->head->last = t;
+            h->head = t;
+        }
+        h->cur = (t->next ? t->next : h->head);
+        goto CZL_AGAIN;
+    }
+
+    fun->ret.val.inum = 1;
+    return 1;
+}
+
+char czl_sys_recv(czl_gp *gp, czl_fun *fun)
+{
+    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, czl_lib_os);
+    czl_threads_handler *h;
+    czl_thread *t;
+
+    if (!extsrc)
+        return 1;
+
+    h = extsrc->src;
+    t = (h->recv ? h->recv : h->head);
+    if (!t)
+        return 1;
+    h->recv = t->next;
+
+    czl_thread_lock(&t->pipe->report_lock); //lock
+    if (t->pipe->rb_cnt)
+        czl_report_buf_get(gp, &fun->ret, t->pipe);
+    czl_thread_unlock(&t->pipe->report_lock); //unlock
 
     return 1;
 }

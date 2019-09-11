@@ -49,7 +49,7 @@ enum czl_tcp_event_type_enum
     CZL_TCP_EVENT_WS
 };
 
-void czl_tcp_free(czl_tcp_handle *h)
+void czl_tcp_free(czl_tcp_handler *h)
 {
     if (h->type != CZL_TCP_SRV_WORKER)
     {
@@ -84,7 +84,8 @@ void czl_tcp_free(czl_tcp_handle *h)
         }
     }
 
-    CZL_TMP_FREE(h->gp, h, sizeof(czl_tcp_handle));
+    if (!h->gp->end_flag)
+        CZL_TMP_FREE(h->gp, h, sizeof(czl_tcp_handler));
 }
 
 unsigned char czl_tcp_busy = 0; //用于避免accept惊群现象
@@ -113,7 +114,7 @@ void czl_tcp_unlock(void)
 #endif
 }
 
-char czl_tcp_server_create(czl_gp *gp, czl_tcp_handle *h)
+char czl_tcp_server_create(czl_gp *gp, czl_tcp_handler *h)
 {
     if (!(h->obj=czl_table_create(gp, 0, 0, 0)))
     {
@@ -145,7 +146,7 @@ char czl_tcp_server_create(czl_gp *gp, czl_tcp_handle *h)
 //库函数定义
 char czl_tcp_server(czl_gp *gp, czl_fun *fun)
 {
-    czl_tcp_handle *h;
+    czl_tcp_handler *h;
     struct sockaddr_in service;
     SOCKET sock;
     unsigned long type = 1; //非阻塞模式
@@ -179,7 +180,7 @@ char czl_tcp_server(czl_gp *gp, czl_fun *fun)
     #endif
         SOCKET_ERROR == bind(sock, (struct sockaddr*)&service, sizeof(service)) ||
         SOCKET_ERROR == listen(sock, 5) ||
-        !(h=(czl_tcp_handle*)CZL_TMP_MALLOC(gp, sizeof(czl_tcp_handle))))
+        !(h=(czl_tcp_handler*)CZL_TMP_MALLOC(gp, sizeof(czl_tcp_handler))))
     {
     #ifdef CZL_SYSTEM_WINDOWS
         closesocket(sock);
@@ -235,7 +236,7 @@ char czl_tcp_server(czl_gp *gp, czl_fun *fun)
 
 char czl_tcp_fork(czl_gp *gp, czl_fun *fun)
 {
-    czl_tcp_handle *h = (czl_tcp_handle*)CZL_TMP_MALLOC(gp, sizeof(czl_tcp_handle));
+    czl_tcp_handler *h = (czl_tcp_handler*)CZL_TMP_MALLOC(gp, sizeof(czl_tcp_handler));
 
     if (!h)
         return 0;
@@ -281,23 +282,29 @@ char czl_tcp_fork(czl_gp *gp, czl_fun *fun)
 
 char czl_tcp_connect(czl_gp *gp, czl_fun *fun)
 {
-    czl_tcp_handle *h;
+    czl_tcp_handler *h;
     struct sockaddr_in service;
     SOCKET sock;
+    char *ip = czl_dns(CZL_STR(fun->vars[0].val.str.Obj)->str);
 
 #ifdef CZL_SYSTEM_WINDOWS
     WSADATA wsaData;
+#endif //#ifdef CZL_SYSTEM_WINDOWS
+
+    if (!ip) return 1;
+
+#ifdef CZL_SYSTEM_WINDOWS
     if (SOCKET_ERROR == WSAStartup(MAKEWORD(2, 2), &wsaData))
         return 1;
 #endif //#ifdef CZL_SYSTEM_WINDOWS
 
     service.sin_family = AF_INET;
-    service.sin_addr.s_addr = inet_addr(CZL_STR(fun->vars[0].val.str.Obj)->str);
+    service.sin_addr.s_addr = inet_addr(ip);
     service.sin_port = htons(fun->vars[1].val.inum);
 
     if ((sock=socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) <= 0 ||
         SOCKET_ERROR == connect(sock, (struct sockaddr*)&service, sizeof(service)) ||
-        !(h=(czl_tcp_handle*)CZL_TMP_MALLOC(gp, sizeof(czl_tcp_handle))))
+        !(h=(czl_tcp_handler*)CZL_TMP_MALLOC(gp, sizeof(czl_tcp_handler))))
     {
     #ifdef CZL_SYSTEM_WINDOWS
         closesocket(sock);
@@ -329,13 +336,13 @@ char czl_tcp_sock(czl_gp *gp, czl_fun *fun)
         return 1;
 
     fun->ret.type = CZL_INT;
-    fun->ret.val.inum = ((czl_tcp_handle*)extsrc->src)->sock;
+    fun->ret.val.inum = ((czl_tcp_handler*)extsrc->src)->sock;
     return 1;
 }
 
 char czl_tcp_listen_0(czl_gp *gp, czl_fun *fun, SOCKET sock)
 {
-    czl_tcp_handle *h;
+    czl_tcp_handler *h;
     long time = fun->vars[1].val.inum;
 #ifdef CZL_SYSTEM_WINDOWS
     fd_set fdRead;
@@ -369,7 +376,7 @@ char czl_tcp_listen_0(czl_gp *gp, czl_fun *fun, SOCKET sock)
     if (!sock)
         return 1;
 
-    if (!(h=(czl_tcp_handle*)CZL_TMP_MALLOC(gp, sizeof(czl_tcp_handle))))
+    if (!(h=(czl_tcp_handler*)CZL_TMP_MALLOC(gp, sizeof(czl_tcp_handler))))
     {
     #ifdef CZL_SYSTEM_WINDOWS
         closesocket(sock);
@@ -546,7 +553,7 @@ char czl_tcp_recv_data(czl_gp *gp, czl_tabkv *q, unsigned long limit)
 
 char czl_tcp_get_data(czl_gp *gp, czl_var *var, czl_tabkv *q)
 {
-    czl_tcp_handle *h = CZL_SRC(var->val.Obj)->src;
+    czl_tcp_handler *h = CZL_SRC(var->val.Obj)->src;
     char ret = czl_tcp_recv_data(gp, q, h->limit);
 
     if (0 == ret)
@@ -580,7 +587,7 @@ char czl_tcp_get_data(czl_gp *gp, czl_var *var, czl_tabkv *q)
 #ifdef CZL_SYSTEM_WINDOWS
 char czl_tcp_listen_1(czl_gp *gp, czl_fun *fun, czl_var *var)
 {
-    czl_tcp_handle *h = CZL_SRC(var->val.Obj)->src;
+    czl_tcp_handler *h = CZL_SRC(var->val.Obj)->src;
     long time = fun->vars[1].val.inum;
     czl_table *tab = CZL_TAB(h->obj);
     czl_tabkv *p;
@@ -661,7 +668,7 @@ char czl_tcp_listen_1(czl_gp *gp, czl_fun *fun, czl_var *var)
 #else //CZL_SYSTEM_LINUX
 char czl_tcp_listen_1(czl_gp *gp, czl_fun *fun, czl_var *var)
 {
-    czl_tcp_handle *h = CZL_SRC(var->val.Obj)->src;
+    czl_tcp_handler *h = CZL_SRC(var->val.Obj)->src;
     long time = fun->vars[1].val.inum;
     czl_table *tab = CZL_TAB(h->obj);
     int i, cnt;
@@ -764,7 +771,7 @@ CZL_END:
 
 char czl_tcp_listen(czl_gp *gp, czl_fun *fun)
 {
-    czl_tcp_handle *h;
+    czl_tcp_handler *h;
     czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, czl_lib_tcp);
 
     if (!extsrc)
@@ -780,7 +787,7 @@ char czl_tcp_listen(czl_gp *gp, czl_fun *fun)
 char czl_tcp_close(czl_gp *gp, czl_fun *fun)
 {
     czl_tabkv *p;
-    czl_tcp_handle *h;
+    czl_tcp_handler *h;
     czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, czl_lib_tcp);
     SOCKET sock = fun->vars[1].val.inum;
 
@@ -854,7 +861,7 @@ unsigned long czl_tcp_data(czl_gp *gp, SOCKET sock, long time, char *buf)
 
 char czl_tcp_recv(czl_gp *gp, czl_fun *fun)
 {
-    czl_tcp_handle *h;
+    czl_tcp_handler *h;
     czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, czl_lib_tcp);
     long time = fun->vars[1].val.inum;
     char buf[CZL_TCP_BUF_SIZE];
@@ -885,14 +892,14 @@ char czl_tcp_send(czl_gp *gp, czl_fun *fun)
         return 1;
 
     fun->ret.val.inum = czl_net_send(gp,
-                                     ((czl_tcp_handle*)extsrc->src)->sock,
+                                     ((czl_tcp_handler*)extsrc->src)->sock,
                                      buf->str, buf->len);
     return 1;
 }
 
 char czl_tcp_event(czl_gp *gp, czl_fun *fun)
 {
-    czl_tcp_handle *h;
+    czl_tcp_handler *h;
     czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, czl_lib_tcp);
     char *event = CZL_STR(fun->vars[1].val.str.Obj)->str;
     czl_fun *cb_fun = fun->vars[2].val.fun;
@@ -930,7 +937,7 @@ char czl_tcp_event(czl_gp *gp, czl_fun *fun)
 
 char czl_tcp_limit(czl_gp *gp, czl_fun *fun)
 {
-    czl_tcp_handle *h;
+    czl_tcp_handler *h;
     czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, czl_lib_tcp);
 
     if (!extsrc)
@@ -957,7 +964,7 @@ char czl_tcp_ip(czl_gp *gp, czl_fun *fun)
         czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, czl_lib_tcp);
         if (!extsrc)
             return 1;
-        sock = ((czl_tcp_handle*)extsrc->src)->sock;
+        sock = ((czl_tcp_handler*)extsrc->src)->sock;
     }
     else
         return 1;

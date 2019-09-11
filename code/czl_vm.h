@@ -1890,6 +1890,7 @@ void czl_goto_node_insert(czl_goto_flag**, czl_goto_flag*);
 char czl_sentence_block_create(czl_gp*, char);
 void czl_else_block_to_elif(czl_gp*);
 void czl_res_check(czl_var*);
+char czl_val_copy(czl_gp*, czl_var*, czl_var*);
 czl_var* czl_exp_cac(czl_gp*, czl_exp_stack);
 char czl_store_device_check(czl_gp*);
 czl_loc_var* czl_loc_var_create(czl_gp*, czl_loc_var**, czl_loc_var**,

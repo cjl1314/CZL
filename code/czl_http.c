@@ -5,20 +5,251 @@
 #define CZL_HTTP_BUF_SIZE 50*1024
 
 //库函数声明，其中gp是CZL运行时用到的全局参数，fun是函数。
+char czl_http_doc(czl_gp *gp, czl_fun *fun);    //解析http请求
+char czl_http_connect(czl_gp *gp, czl_fun *fun);//连接http服务器
 char czl_http_req(czl_gp *gp, czl_fun *fun);    //发送http请求
 char czl_http_res(czl_gp *gp, czl_fun *fun);    //发送http响应
-char czl_http_doc(czl_gp *gp, czl_fun *fun);    //解析http请求
 char czl_http_kv(czl_gp *gp, czl_fun *fun);     //解析http头部声明键值对
 
 //库函数表定义
 const czl_sys_fun czl_lib_http[] =
 {
     //函数名,     函数指针,          参数个数,  参数声明
+    {"doc",      czl_http_doc,     1,        NULL},
+    {"connect",  czl_http_connect, 2,        "str_v1,int_v2=80"},
     {"req",      czl_http_req,     3,        "int_v1,str_v3=\"\""},
     {"res",      czl_http_res,     3,        "int_v1,str_v3=\"\""},
-    {"doc",      czl_http_doc,     1,        NULL},
     {"kv",       czl_http_kv,      1,        "str_v1"},
 };
+
+unsigned long czl_strchr(const char *s, const char *e, const char ch)
+{
+    unsigned long cnt = 0;
+
+    while (s < e)
+        if (*s++ == ch)
+            ++cnt;
+
+    return cnt;
+}
+
+void czl_get_form_data(unsigned char *a, const unsigned char *s, const unsigned char *e)
+{
+    while (s < e)
+    {
+        if ('%' == *s)
+        {
+            unsigned char n;
+            ++s;
+            if (*s >= 'A' && *s <= 'F')
+                n = ((*s-'A')+10) * 16;
+            else if (*s >= 'a' && *s <= 'f')
+                n = ((*s-'a')+10) * 16;
+            else
+                n = (*s-'0') * 16;
+            //
+            ++s;
+            if (*s >= 'A' && *s <= 'F')
+                *a = n + (*s-'A')+10;
+            else if (*s >= 'a' && *s <= 'f')
+                *a = n + (*s-'a')+10;
+            else
+                *a = n + (*s-'0');
+
+            ++a; ++s;
+        }
+        else if ('+' == *s)
+        {
+            *a++ = ' ';
+            ++s;
+        }
+        else
+            *a++ = *s++;
+    }
+}
+
+void** czl_form_create(czl_gp *gp, char *s, unsigned long len)
+{
+    void **obj;
+    czl_table *tab;
+    char *e = s + len;
+
+    //申请一张哈希表格式化存储表单键值对
+    if (!(obj=czl_table_create(gp, 12, 0, 0)))
+        return 0;
+    tab = CZL_TAB(obj);
+
+    //解析表单键值对
+    do {
+        //usr=czl&pwd=czl&text=hello%2C%5B3
+        char *t;
+        czl_var key;
+        czl_tabkv *ele;
+        unsigned long len;
+        unsigned long count = tab->count;
+        //解析键
+        if (!(t=strchr(s, '=')))
+            goto CZL_ERROR;
+        key.quality = CZL_TMP_VAR;
+        if (!czl_str_create(gp, &key.val.str, t-s+1, t-s, s) ||
+            !(ele=czl_create_key_str_tabkv(gp, tab, &key, NULL, 1)) ||
+            tab->count == count)
+        {
+            CZL_SF(gp, key.val.str);
+            goto CZL_ERROR;
+        }
+        s = t+1;
+        //解析值
+        if (!(t=strchr(s, '&')))
+            t = e;
+        len = t-s-2*czl_strchr(s, t, '%');
+        if (!czl_str_create(gp, &ele->val.str, len+1, len, NULL))
+            goto CZL_ERROR;
+        czl_get_form_data(CZL_STR(ele->val.str.Obj)->str, s, t);
+        ele->type = CZL_STRING;
+        s = t+1;
+    } while (s < e);
+
+    return obj;
+
+CZL_ERROR:
+    czl_table_delete(gp, obj);
+    return NULL;
+}
+
+void** czl_http_pop(czl_gp *gp, czl_var *data, unsigned char flag)
+{
+    czl_string *str = CZL_STR(data->val.str.Obj);
+    long content_length = 0;
+    czl_table *tab;
+    czl_tabkv *ele;
+    czl_var key;
+    char *s, *e;
+    void **obj;
+
+    if (flag && str->rc > 1 && !(str=czl_string_fork(gp, data)))
+        return NULL;
+    s = str->str;
+    e = s + str->len;
+
+    //申请一张哈希表格式化存储一次请求
+    if (!(obj=czl_table_create(gp, 12, 0, 0)))
+        return NULL;
+    tab = CZL_TAB(obj);
+
+    //解析http请求
+    do {
+        //HTTP/1.1 200 OK
+        //GET /shell?k1=v1&k2=v2 HTTP/1.1
+        //POST /shell HTTP/1.1
+        //Content-Type: text/html
+        char ch;
+        char *t;
+        unsigned long count = tab->count;
+        //解析键
+        if (tab->count <= 1) ch = ('H' == s[0] ? '/' : ' ');
+        else ch = ':';
+        while (' ' == *s) ++s; //过滤空格
+        if (!(t=strchr(s, ch)))
+            goto CZL_ERROR;
+        key.quality = CZL_TMP_VAR;
+        if (!czl_str_create(gp, &key.val.str, t-s+1, t-s, s) ||
+            !(ele=czl_create_key_str_tabkv(gp, tab, &key, NULL, 1)) ||
+            tab->count == count)
+        {
+            CZL_SF(gp, key.val.str);
+            goto CZL_ERROR;
+        }
+        s = t+1;
+        //解析值
+        ch = (1 == tab->count ? ' ' : '\r');
+        while (' ' == *s) ++s; //过滤空格
+        if (!(t=strchr(s, ch)))
+            goto CZL_ERROR;
+        if (0 == content_length && //获取请求数据长度
+            czl_strcmp("Content-Length", CZL_STR(key.val.str.Obj)->str))
+        {
+            if (!czl_get_number_from_str(s, (czl_var*)ele))
+                ele->val.inum = 0;
+            content_length = ele->val.inum;
+        }
+        else
+        {
+            if (!czl_str_create(gp, &ele->val.str, t-s+1, t-s, s))
+                goto CZL_ERROR;
+            ele->type = CZL_STRING;
+        }
+        s = t + (1 == tab->count ? 1 : 2);
+    } while (s < e && (*s != '\r' || *(s+1) != '\n'));
+
+    if ((*s != '\r' || *(s+1) != '\n'))
+        goto CZL_ERROR;
+    else
+        s += 2; //\r\n
+
+    if (content_length)
+    {
+        unsigned long count = tab->count;
+        if (e-s < content_length)
+            goto CZL_ERROR;
+        key.quality = CZL_TMP_VAR;
+        if (!czl_str_create(gp, &key.val.str, 5, 4, "form") ||
+            !(ele=czl_create_key_str_tabkv(gp, tab, &key, NULL, 1)) ||
+            tab->count == count)
+        {
+            CZL_SF(gp, key.val.str);
+            goto CZL_ERROR;
+        }
+        if ('H' == str->str[0]) //html
+        {
+            if (!czl_str_create(gp, &ele->val.str, content_length+1, content_length, s))
+                goto CZL_ERROR;
+            ele->type = CZL_STRING;
+        }
+        else //表单
+        {
+            if (!(ele->val.Obj=czl_form_create(gp, s, content_length)))
+                goto CZL_ERROR;
+            ele->type = CZL_TABLE;
+        }
+        s += content_length;
+    }
+
+    if (flag)
+    {
+        if (s == e)
+        {
+            CZL_SF(gp, data->val.str);
+            data->type = CZL_INT;
+            data->val.inum = 0;
+        }
+        else
+        {
+            //清空s前面的数据，保留不全的请求
+            str->len = e - s;
+            memcpy(str->str, s, str->len);
+            str->str[str->len] = '\0';
+        }
+    }
+    return obj;
+
+CZL_ERROR:
+    czl_table_delete(gp, obj);
+    return NULL;
+}
+
+char czl_http_doc(czl_gp *gp, czl_fun *fun)
+{
+    if (fun->vars->type != CZL_STRING || !(fun->ret.val.Obj=czl_http_pop(gp, fun->vars, 0)))
+        return (CZL_EXCEPTION_OUT_OF_MEMORY == gp->exceptionCode ? 0 : 1);
+    fun->ret.type = CZL_TABLE;
+    return 1;
+}
+
+char czl_http_connect(czl_gp *gp, czl_fun *fun)
+{
+    return czl_tcp_connect(gp, fun);
+}
 
 unsigned long czl_key_num_filt(const czl_string *str)
 {
@@ -253,230 +484,6 @@ char czl_http_res(czl_gp *gp, czl_fun *fun)
     else
         fun->ret.val.inum += len;
 
-    return 1;
-}
-
-unsigned long czl_strchr(const char *s, const char *e, const char ch)
-{
-    unsigned long cnt = 0;
-
-    while (s < e)
-        if (*s++ == ch)
-            ++cnt;
-
-    return cnt;
-}
-
-void czl_get_form_data(unsigned char *a, const unsigned char *s, const unsigned char *e)
-{
-    while (s < e)
-    {
-        if ('%' == *s)
-        {
-            unsigned char n;
-            ++s;
-            if (*s >= 'A' && *s <= 'F')
-                n = ((*s-'A')+10) * 16;
-            else if (*s >= 'a' && *s <= 'f')
-                n = ((*s-'a')+10) * 16;
-            else
-                n = (*s-'0') * 16;
-            //
-            ++s;
-            if (*s >= 'A' && *s <= 'F')
-                *a = n + (*s-'A')+10;
-            else if (*s >= 'a' && *s <= 'f')
-                *a = n + (*s-'a')+10;
-            else
-                *a = n + (*s-'0');
-
-            ++a; ++s;
-        }
-        else if ('+' == *s)
-        {
-            *a++ = ' ';
-            ++s;
-        }
-        else
-            *a++ = *s++;
-    }
-}
-
-void** czl_form_create(czl_gp *gp, char *s, unsigned long len)
-{
-    void **obj;
-    czl_table *tab;
-    char *e = s + len;
-
-    //申请一张哈希表格式化存储表单键值对
-    if (!(obj=czl_table_create(gp, 12, 0, 0)))
-        return 0;
-    tab = CZL_TAB(obj);
-
-    //解析表单键值对
-    do {
-        //usr=czl&pwd=czl&text=hello%2C%5B3
-        char *t;
-        czl_var key;
-        czl_tabkv *ele;
-        unsigned long len;
-        unsigned long count = tab->count;
-        //解析键
-        if (!(t=strchr(s, '=')))
-            goto CZL_ERROR;
-        key.quality = CZL_TMP_VAR;
-        if (!czl_str_create(gp, &key.val.str, t-s+1, t-s, s) ||
-            !(ele=czl_create_key_str_tabkv(gp, tab, &key, NULL, 1)) ||
-            tab->count == count)
-        {
-            CZL_SF(gp, key.val.str);
-            goto CZL_ERROR;
-        }
-        s = t+1;
-        //解析值
-        if (!(t=strchr(s, '&')))
-            t = e;
-        len = t-s-2*czl_strchr(s, t, '%');
-        if (!czl_str_create(gp, &ele->val.str, len+1, len, NULL))
-            goto CZL_ERROR;
-        czl_get_form_data(CZL_STR(ele->val.str.Obj)->str, s, t);
-        ele->type = CZL_STRING;
-        s = t+1;
-    } while (s < e);
-
-    return obj;
-
-CZL_ERROR:
-    czl_table_delete(gp, obj);
-    return NULL;
-}
-
-void** czl_http_pop(czl_gp *gp, czl_var *data, unsigned char flag)
-{
-    czl_string *str = CZL_STR(data->val.str.Obj);
-    long content_length = 0;
-    czl_table *tab;
-    czl_tabkv *ele;
-    czl_var key;
-    char *s, *e;
-    void **obj;
-
-    if (flag && str->rc > 1 && !(str=czl_string_fork(gp, data)))
-        return NULL;
-    s = str->str;
-    e = s + str->len;
-
-    //申请一张哈希表格式化存储一次请求
-    if (!(obj=czl_table_create(gp, 12, 0, 0)))
-        return NULL;
-    tab = CZL_TAB(obj);
-
-    //解析http请求
-    do {
-        //HTTP/1.1 200 OK
-        //GET /shell?k1=v1&k2=v2 HTTP/1.1
-        //POST /shell HTTP/1.1
-        //Content-Type: text/html
-        char ch;
-        char *t;
-        unsigned long count = tab->count;
-        //解析键
-        if (tab->count <= 1) ch = ('H' == s[0] ? '/' : ' ');
-        else ch = ':';
-        while (' ' == *s) ++s; //过滤空格
-        if (!(t=strchr(s, ch)))
-            goto CZL_ERROR;
-        key.quality = CZL_TMP_VAR;
-        if (!czl_str_create(gp, &key.val.str, t-s+1, t-s, s) ||
-            !(ele=czl_create_key_str_tabkv(gp, tab, &key, NULL, 1)) ||
-            tab->count == count)
-        {
-            CZL_SF(gp, key.val.str);
-            goto CZL_ERROR;
-        }
-        s = t+1;
-        //解析值
-        ch = (1 == tab->count ? ' ' : '\r');
-        while (' ' == *s) ++s; //过滤空格
-        if (!(t=strchr(s, ch)))
-            goto CZL_ERROR;
-        if (0 == content_length && //获取请求数据长度
-            czl_strcmp("Content-Length", CZL_STR(key.val.str.Obj)->str))
-        {
-            if (!czl_get_number_from_str(s, (czl_var*)ele))
-                ele->val.inum = 0;
-            content_length = ele->val.inum;
-        }
-        else
-        {
-            if (!czl_str_create(gp, &ele->val.str, t-s+1, t-s, s))
-                goto CZL_ERROR;
-            ele->type = CZL_STRING;
-        }
-        s = t + (1 == tab->count ? 1 : 2);
-    } while (s < e && (*s != '\r' || *(s+1) != '\n'));
-
-    if ((*s != '\r' || *(s+1) != '\n'))
-        goto CZL_ERROR;
-    else
-        s += 2; //\r\n
-
-    if (content_length)
-    {
-        unsigned long count = tab->count;
-        if (e-s < content_length)
-            goto CZL_ERROR;
-        key.quality = CZL_TMP_VAR;
-        if (!czl_str_create(gp, &key.val.str, 5, 4, "form") ||
-            !(ele=czl_create_key_str_tabkv(gp, tab, &key, NULL, 1)) ||
-            tab->count == count)
-        {
-            CZL_SF(gp, key.val.str);
-            goto CZL_ERROR;
-        }
-        if ('H' == str->str[0]) //html
-        {
-            if (!czl_str_create(gp, &ele->val.str, content_length+1, content_length, s))
-                goto CZL_ERROR;
-            ele->type = CZL_STRING;
-        }
-        else //表单
-        {
-            if (!(ele->val.Obj=czl_form_create(gp, s, content_length)))
-                goto CZL_ERROR;
-            ele->type = CZL_TABLE;
-        }
-        s += content_length;
-    }
-
-    if (flag)
-    {
-        if (s == e)
-        {
-            CZL_SF(gp, data->val.str);
-            data->type = CZL_INT;
-            data->val.inum = 0;
-        }
-        else
-        {
-            //清空s前面的数据，保留不全的请求
-            str->len = e - s;
-            memcpy(str->str, s, str->len);
-            str->str[str->len] = '\0';
-        }
-    }
-    return obj;
-
-CZL_ERROR:
-    czl_table_delete(gp, obj);
-    return NULL;
-}
-
-char czl_http_doc(czl_gp *gp, czl_fun *fun)
-{
-    if (fun->vars->type != CZL_STRING || !(fun->ret.val.Obj=czl_http_pop(gp, fun->vars, 0)))
-        return (CZL_EXCEPTION_OUT_OF_MEMORY == gp->exceptionCode ? 0 : 1);
-    fun->ret.type = CZL_TABLE;
     return 1;
 }
 
