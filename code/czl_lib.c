@@ -140,6 +140,7 @@ char czl_sys_thrsta(czl_gp*, czl_fun*);
 char czl_sys_suspend(czl_gp*, czl_fun*);
 //
 char czl_sys_threads(czl_gp*, czl_fun*);
+char czl_sys_scheduler(czl_gp*, czl_fun*);
 char czl_sys_send(czl_gp*, czl_fun*);
 char czl_sys_recv(czl_gp*, czl_fun*);
 #endif //#ifdef CZL_MULT_THREAD
@@ -293,9 +294,11 @@ const czl_sys_fun czl_lib_os[] =
     {"suspend",   czl_sys_suspend,    1,  "int_v1"},
     //
     #ifdef CZL_CONSOLE
-    {"threads",   czl_sys_threads,    3,  "str_v1,int_v2=100,v3=0"},
+    {"threads",   czl_sys_threads,    3,  "str_v1,int_v2,v3=0"},
+    {"scheduler", czl_sys_scheduler,  3,  "str_v1,int_v2=100,v3=0"},
     #else
-    {"threads",   czl_sys_threads,    4,  "str_v1,int_v2=100,v3=0,str_v4=\"\""},
+    {"threads",   czl_sys_threads,    4,  "str_v1,int_v2,v3=0,str_v4=\"\""},
+    {"scheduler", czl_sys_scheduler,  4,  "str_v1,int_v2=100,v3=0,str_v4=\"\""},
     #endif
     {"send",      czl_sys_send,       2,  "src_v1"},
     {"recv",      czl_sys_recv,       1,  "src_v1"},
@@ -5385,24 +5388,87 @@ void czl_threads_free(czl_threads_handler *h)
     }
 
     if (!h->gp->end_flag)
+        CZL_TMP_FREE(h->gp, h, sizeof(czl_threads_handler));
+}
+
+char czl_sys_threads(czl_gp *gp, czl_fun *fun)
+{
+    unsigned long i, j = fun->vars[1].val.inum;
+    czl_threads_handler *h = CZL_TMP_MALLOC(gp, sizeof(czl_threads_handler));
+
+    if (!h)
+        return 0;
+
+    h->gp = gp;
+    h->head = h->recv = NULL;
+
+    if (!(fun->ret.val.Obj=czl_extsrc_create(gp, h, czl_threads_free,
+                                             CZL_LIB_OS_NAME, czl_lib_os)))
+    {
+        czl_threads_free(h);
+        return 0;
+    }
+    CZL_SRC(fun->ret.val.Obj)->type = CZL_SYS_SRC_THREADS;
+    fun->ret.type = CZL_SOURCE;
+
+    for (i = 0; i < j; ++i)
+    {
+        czl_thread *t = czl_thread_create(gp,
+                                          CZL_STR(fun->vars->val.str.Obj),
+                                          fun->vars+2
+                                          #ifndef CZL_CONSOLE
+                                          , CZL_STR(fun->vars[3].val.str.Obj)
+                                          #endif
+                                          );
+        if (!t)
+            break;
+        t->next = h->head;
+        if (h->head)
+            h->head->last = t;
+        h->head = t;
+    }
+    h->count = j;
+
+    return 1;
+}
+
+void czl_scheduler_free(czl_scheduler_handler *h)
+{
+    czl_thread *p = h->head, *q;
+
+    while (p)
+    {
+        q = p->next;
+        p->pipe->alive = 0;
+        p->pipe->kill = 1;
+        czl_event_send(&p->pipe->notify_event);
+    #ifdef CZL_SYSTEM_WINDOWS
+        CloseHandle(p->id);
+    #endif
+        if (!h->gp->end_flag)
+            CZL_THREAD_FREE(h->gp, p);
+        p = q;
+    }
+
+    if (!h->gp->end_flag)
     {
         CZL_SRCD1(h->gp, h->shell_path);
     #ifndef CZL_CONSOLE
         CZL_SRCD1(h->gp, h->log_path);
     #endif
         czl_val_del(h->gp, &h->para);
-        CZL_TMP_FREE(h->gp, h, sizeof(czl_threads_handler));
+        CZL_TMP_FREE(h->gp, h, sizeof(czl_scheduler_handler));
     }
 }
 
-char czl_sys_threads(czl_gp *gp, czl_fun *fun)
+char czl_sys_scheduler(czl_gp *gp, czl_fun *fun)
 {
-    czl_threads_handler *h = CZL_TMP_MALLOC(gp, sizeof(czl_threads_handler));
+    czl_scheduler_handler *h = CZL_TMP_MALLOC(gp, sizeof(czl_scheduler_handler));
 
     if (!h)
         return 0;
 
-    memset(h, 0, sizeof(czl_threads_handler));
+    memset(h, 0, sizeof(czl_scheduler_handler));
 
     h->shell_path = fun->vars->val.str;
     CZL_SRCA1(h->shell_path);
@@ -5420,29 +5486,38 @@ char czl_sys_threads(czl_gp *gp, czl_fun *fun)
 
     h->gp = gp;
 
-    if (!(fun->ret.val.Obj=czl_extsrc_create(gp, h, czl_threads_free,
+    if (!(fun->ret.val.Obj=czl_extsrc_create(gp, h, czl_scheduler_free,
                                              CZL_LIB_OS_NAME, czl_lib_os)))
     {
-        czl_threads_free(h);
+        czl_scheduler_free(h);
         return 0;
     }
+    CZL_SRC(fun->ret.val.Obj)->type = CZL_SYS_SRC_SCHEDULER;
 
     fun->ret.type = CZL_SOURCE;
     return 1;
 }
 
-char czl_sys_send(czl_gp *gp, czl_fun *fun)
+char czl_threads_send(czl_gp *gp, czl_scheduler_handler *h, czl_var *para)
 {
-    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, czl_lib_os);
-    czl_threads_handler *h;
-    czl_thread *t;
+    char ret = 1;
+    czl_thread *t = h->head;
 
-    fun->ret.type = CZL_INT;
-    if (!extsrc)
-        return 1;
+    while (t)
+    {
+        if (!czl_notify_buf_create(gp, t->pipe, para))
+            ret = 0;
+        czl_event_send(&t->pipe->notify_event);
+        t = t->next;
+    }
 
-    h = extsrc->src;
-    t = h->cur;
+    return ret;
+}
+
+char czl_scheduler_send(czl_gp *gp, czl_scheduler_handler *h, czl_var *para)
+{
+    char ret = 1;
+    czl_thread *t = h->cur;
 
 CZL_AGAIN:
     if (t)
@@ -5481,8 +5556,8 @@ CZL_AGAIN:
             t = next;
             goto CZL_AGAIN;
         }
-        if (czl_notify_buf_create(gp, t->pipe, fun->vars+1))
-            fun->ret.val.inum = 1;
+        if (!czl_notify_buf_create(gp, t->pipe, para))
+            ret = 0;
         czl_event_send(&t->pipe->notify_event);
         if (t->next)
             h->cur = t->next;
@@ -5510,7 +5585,7 @@ CZL_AGAIN:
                 t = h->cur;
                 goto CZL_AGAIN;
             }
-            return 1;
+            return 0;
         }
         ++h->count;
         if (h->cur)
@@ -5536,24 +5611,53 @@ CZL_AGAIN:
         goto CZL_AGAIN;
     }
 
-    fun->ret.val.inum = 1;
+    return ret;
+}
+
+char czl_sys_send(czl_gp *gp, czl_fun *fun)
+{
+    czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, czl_lib_os);
+    char ret;
+
+    fun->ret.type = CZL_INT;
+    if (!extsrc)
+        return 1;
+
+    if (CZL_SYS_SRC_THREADS == extsrc->type)
+        ret = czl_threads_send(gp, extsrc->src, fun->vars+1);
+    else //CZL_SYS_SRC_SCHEDULER
+        ret = czl_scheduler_send(gp, extsrc->src, fun->vars+1);
+
+    if (ret)
+        fun->ret.val.inum = 1;
+
     return 1;
 }
 
 char czl_sys_recv(czl_gp *gp, czl_fun *fun)
 {
     czl_extsrc *extsrc = czl_extsrc_get(fun->vars->val.Obj, czl_lib_os);
-    czl_threads_handler *h;
     czl_thread *t;
 
     if (!extsrc)
         return 1;
 
-    h = extsrc->src;
-    t = (h->recv ? h->recv : h->head);
-    if (!t)
-        return 1;
-    h->recv = t->next;
+    if (CZL_SYS_SRC_THREADS == extsrc->type)
+    {
+        czl_threads_handler *h = extsrc->src;
+        t = (h->recv ? h->recv : h->head);
+        if (!t)
+            return 1;
+        h->recv = t->next;
+    }
+    else //CZL_SYS_SRC_SCHEDULER
+    {
+        czl_scheduler_handler *h = extsrc->src;
+        t = (h->recv ? h->recv : h->head);
+        if (!t)
+            return 1;
+        h->recv = t->next;
+    }
 
     czl_thread_lock(&t->pipe->report_lock); //lock
     if (t->pipe->rb_cnt)

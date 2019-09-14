@@ -104,7 +104,13 @@ char czl_obj_cnt_cac(czl_gp *gp, czl_var *res, czl_var *opr)
     #endif
     #ifdef CZL_MULT_THREAD
         if (czl_lib_os == CZL_SRC(opr->val.Obj)->lib)
-            res->val.inum = ((czl_threads_handler*)CZL_SRC(opr->val.Obj)->src)->count;
+        {
+            czl_extsrc *src = CZL_SRC(opr->val.Obj);
+            if (CZL_SYS_SRC_THREADS == src->type)
+                res->val.inum = ((czl_threads_handler*)src->src)->count;
+            else //CZL_SYS_SRC_SCHEDULER
+                res->val.inum = ((czl_scheduler_handler*)src->src)->count;
+        }
         else
     #endif
             res->val.inum = 1;
@@ -992,7 +998,7 @@ char czl_str_add(czl_gp *gp, czl_var *left, czl_var *right)
         if (l->rc > 1)
         {
             czl_str str;
-            if (!czl_str_create(gp, &str, 2*l->len+rlen, l->len, l->str))
+            if (!czl_str_create(gp, &str, 2*l->len+rlen+1, l->len, l->str))
                 return 0;
             --l->rc;
             left->val.str = str;
@@ -1000,7 +1006,7 @@ char czl_str_add(czl_gp *gp, czl_var *left, czl_var *right)
         }
         else if (l->len+rlen >= left->val.str.size)
         {
-            unsigned long size = 2*l->len+rlen;
+            unsigned long size = 2*l->len+rlen+1;
             void **obj = CZL_SR(gp, left->val.str, size);
             if (!obj)
                 return 0;

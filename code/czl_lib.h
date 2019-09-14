@@ -48,7 +48,21 @@ char* czl_dns(char*);
 long czl_net_send(czl_gp*, int, char*, long);
 ///////////////////////////////////////////////////////////////
 #ifdef CZL_MULT_THREAD
+typedef enum czl_sys_src_type_enum
+{
+    CZL_SYS_SRC_THREADS,
+    CZL_SYS_SRC_SCHEDULER,
+} czl_sys_src_type_enum;
+
 typedef struct czl_threads_handler
+{
+    czl_gp *gp;
+    czl_thread *head;
+    czl_thread *recv;
+    unsigned long count;
+} czl_threads_handler;
+
+typedef struct czl_scheduler_handler
 {
     czl_gp *gp;
     czl_thread *head;
@@ -63,7 +77,7 @@ typedef struct czl_threads_handler
     czl_str log_path;
 #endif
     czl_var para;
-} czl_threads_handler;
+} czl_scheduler_handler;
 
 void czl_thread_lock
 (
